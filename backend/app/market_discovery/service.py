@@ -28,21 +28,32 @@ class MarketDiscovery:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._client: httpx.AsyncClient | None = None
+        self._clob: httpx.AsyncClient | None = None
         self._series_id: str | None = None
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
+        headers = {"User-Agent": self._settings.http_user_agent, "Accept": "application/json"}
         if self._client is None:
             self._client = httpx.AsyncClient(
                 base_url=self._settings.gamma_base_url,
                 timeout=httpx.Timeout(15.0),
-                headers={"User-Agent": self._settings.http_user_agent, "Accept": "application/json"},
+                headers=headers,
+            )
+        if self._clob is None:
+            self._clob = httpx.AsyncClient(
+                base_url=self._settings.clob_base_url,
+                timeout=httpx.Timeout(15.0),
+                headers=headers,
             )
 
     async def close(self) -> None:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+        if self._clob is not None:
+            await self._clob.aclose()
+            self._clob = None
 
     async def _get(self, path: str, params: dict | None = None) -> object:
         if self._client is None:
@@ -162,8 +173,46 @@ class MarketDiscovery:
             min_order_size=_float(market.get("orderMinSize"), 5.0),
         )
 
-    async def get_resolution(self, market: MarketInfo) -> ResolutionInfo:
-        """Query the event by slug. Only a closed market with 1/0 prices is resolved."""
+    @staticmethod
+    def _side_from_label(label: object) -> str | None:
+        text = str(label or "").strip().lower()
+        if text == "up":
+            return "UP"
+        if text == "down":
+            return "DOWN"
+        return None
+
+    async def _clob_resolution(self, market: MarketInfo) -> ResolutionInfo | None:
+        """Official CLOB market object: ``closed`` plus ``tokens[].winner``.
+
+        GET /markets/{condition_id} (docs.polymarket.com, Markets > Get market).
+        A token with ``winner: true`` is the authoritative resolved outcome.
+        """
+        if self._clob is None:
+            await self.start()
+        assert self._clob is not None
+        try:
+            response = await self._clob.get(f"/markets/{market.market_id}")
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:
+            logger.debug("clob resolution lookup failed for %s: %s", market.market_id[:10], exc)
+            return None
+        if not isinstance(data, dict):
+            return None
+        for token in data.get("tokens") or []:
+            if isinstance(token, dict) and token.get("winner") is True:
+                side = self._side_from_label(token.get("outcome"))
+                if side is None and str(token.get("token_id") or "") == market.up_token_id:
+                    side = "UP"
+                elif side is None and str(token.get("token_id") or "") == market.down_token_id:
+                    side = "DOWN"
+                if side is not None:
+                    return ResolutionInfo(market.market_id, True, side)
+        return ResolutionInfo(market.market_id, bool(data.get("closed")), None)
+
+    async def _gamma_resolution(self, market: MarketInfo) -> ResolutionInfo:
+        """Gamma fallback. ``closed`` alone only means trading stopped; need 1/0 prices."""
         if not market.event_slug:
             return ResolutionInfo(market.market_id, False, None)
         try:
@@ -186,13 +235,26 @@ class MarketDiscovery:
             return ResolutionInfo(market.market_id, True, None)
         for name, price in zip(outcomes, prices):
             if price >= 0.99:
-                side = "UP" if str(name).strip().lower() == "up" else "DOWN"
-                return ResolutionInfo(market.market_id, True, side)
+                side = self._side_from_label(name)
+                if side is not None:
+                    return ResolutionInfo(market.market_id, True, side)
         return ResolutionInfo(market.market_id, True, None)
+
+    async def get_resolution(self, market: MarketInfo) -> ResolutionInfo:
+        """Resolve a finished market: CLOB ``winner`` flag first, Gamma 1/0 prices second."""
+        clob = await self._clob_resolution(market)
+        if clob is not None and clob.outcome:
+            return clob
+        gamma = await self._gamma_resolution(market)
+        if gamma.outcome:
+            return gamma
+        return ResolutionInfo(market.market_id, bool(gamma.closed or (clob and clob.closed)), None)
 
 
 class MarketMonitor:
     """Keeps the active market current. Polling here is discovery only."""
+
+    GIVE_UP_SECONDS = 6 * 3600
 
     def __init__(self, discovery: MarketDiscovery, settings: Settings, on_market) -> None:
         self._discovery = discovery
@@ -248,20 +310,31 @@ class MarketMonitor:
             await asyncio.sleep(self._settings.discovery_refresh_seconds)
 
     async def poll_resolution(self) -> list[ResolutionInfo]:
+        """Check finished markets. A market stays tracked until its outcome is known.
+
+        Previously a market whose Gamma ``closed`` flag flipped before the winner was
+        published was dropped here and never checked again, so its position stayed
+        open (shown as "Unrealized") forever and the balance was never credited.
+        """
         results: list[ResolutionInfo] = []
         for slug, market in list(self._open_events.items()):
             if market.remaining_seconds() > -5:
                 continue
             info = await self._discovery.get_resolution(market)
-            if info.closed:
+            if info.outcome:
                 results.append(info)
                 self._open_events.pop(slug, None)
-            elif market.remaining_seconds() < -30 * 60:
+            elif info.closed:
+                results.append(info)  # closed but winner not published yet: keep polling
+            elif market.remaining_seconds() < -self.GIVE_UP_SECONDS:
                 self._open_events.pop(slug, None)
         return results
 
     def track(self, market: MarketInfo) -> None:
         self._open_events[market.slug] = market
+
+    def is_tracked(self, slug: str) -> bool:
+        return slug in self._open_events
 
 
 __all__ = [

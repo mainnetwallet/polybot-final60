@@ -121,7 +121,13 @@ export function PositionsTable({
               <td className="mono text-right text-slate-300">{fmtUsd(position.cost_basis)}</td>
               <td className="mono text-right text-slate-500">{fmtUsd(position.fees, 3)}</td>
               <td className={cx("mono text-right", pnlClass(position.unrealized_pnl))}>
-                {fmtSignedUsd(position.unrealized_pnl)}
+                {position.awaiting_settlement ? (
+                  <span title="Window ended. Waiting for Polymarket to publish the winner; balance updates on settlement.">
+                    settling…
+                  </span>
+                ) : (
+                  fmtSignedUsd(position.unrealized_pnl)
+                )}
               </td>
               <td className={cx("mono text-right", pnlClass(position.realized_pnl))}>
                 {fmtSignedUsd(position.realized_pnl)}
@@ -130,7 +136,9 @@ export function PositionsTable({
                 <td className="mono text-slate-600">{fmtDateTime(position.opened_at)}</td>
               ) : (
                 <td>
-                  <StatusChip status={position.status} />
+                  <StatusChip
+                    status={position.awaiting_settlement ? "settling" : position.status}
+                  />
                 </td>
               )}
             </tr>

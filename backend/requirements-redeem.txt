@@ -1,0 +1,2 @@
+# Only needed for LIVE_AUTO_REDEEM=true (official Polymarket Python SDK).
+polymarket-client>=0.18

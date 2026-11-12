@@ -101,6 +101,9 @@ class TradingBot:
         self._risk_halt_reason: str | None = None
         self._risk_halt_logged = False
         self._tick_pending = False
+        # market_id -> {"attempts": int, "next_at": monotonic seconds}
+        self._redeem_queue: dict[str, dict] = {}
+        self._redeem_notice_logged: set[str] = set()
 
     @property
     def status(self) -> str:
@@ -584,6 +587,8 @@ class TradingBot:
                 ):
                     self._last_live_reconcile = now
                     await self._reconcile_open_live_orders()
+                if self._mode == "live" and self._redeem_queue:
+                    await self._process_redeem_queue()
                 if self._mode == "live" and now - self._live_balance_at >= 15.0:
                     await self._refresh_live_balance()
             except asyncio.CancelledError:
@@ -610,7 +615,42 @@ class TradingBot:
         self.data.set_market(None)
         await self._broadcast_state()
 
+    async def _retrack_unsettled_markets(self) -> None:
+        """Re-register markets that still hold open positions (e.g. after a restart).
+
+        Resolution polling used to rely on in-memory tracking only, so a position whose
+        market was no longer tracked stayed "Unrealized" forever.
+        """
+        with session_scope() as session:
+            market_ids = set(
+                session.execute(
+                    select(Position.market_id).where(Position.status == "open")
+                ).scalars().all()
+            )
+            if not market_ids:
+                return
+            rows = session.execute(select(Market).where(Market.market_id.in_(market_ids))).scalars().all()
+            infos = [
+                MarketInfo(
+                    market_id=r.market_id,
+                    slug=r.slug,
+                    event_slug=r.event_slug or r.slug,
+                    series_id=r.series_id or "",
+                    window_start=r.window_start,
+                    window_end=r.window_end,
+                    up_token_id=r.up_token_id,
+                    down_token_id=r.down_token_id,
+                    tick_size=r.tick_size or 0.01,
+                    min_order_size=r.min_order_size or 5.0,
+                )
+                for r in rows
+            ]
+        for info in infos:
+            if info.slug and not self.monitor.is_tracked(info.slug):
+                self.monitor.track(info)
+
     async def _poll_resolutions(self) -> None:
+        await self._retrack_unsettled_markets()
         results = await self.monitor.poll_resolution()
         for info in results:
             with session_scope() as session:
@@ -626,6 +666,8 @@ class TradingBot:
                 for mode in ("paper", "live"):
                     with session_scope() as session:
                         closed = self.portfolio.settle(session, mode, info.market_id, info.outcome)
+                    if closed and mode == "live" and any(p.resolution == p.side for p in closed):
+                        self._queue_live_redeem(info.market_id)
                     if closed:
                         pnl = round(sum(p.realized_pnl for p in closed), 6)
                         self.logs.log(
@@ -653,6 +695,83 @@ class TradingBot:
                     payload={"market_id": info.market_id},
                     mode=self._mode,
                 )
+
+    # ------------------------------------------------------------------
+    def _queue_live_redeem(self, market_id: str) -> None:
+        """A live win only becomes pUSD after redemption (official Polymarket docs)."""
+        if not self.settings.live_auto_redeem:
+            if market_id not in self._redeem_notice_logged:
+                self._redeem_notice_logged.add(market_id)
+                self.logs.log(
+                    "WARNING",
+                    "settlement",
+                    "live win settled but winning tokens are not redeemed yet; pUSD balance "
+                    "updates after you claim on polymarket.com (Portfolio) or set LIVE_AUTO_REDEEM=true",
+                    payload={"market_id": market_id},
+                    mode="live",
+                )
+            return
+        self._redeem_queue.setdefault(market_id, {"attempts": 0, "next_at": 0.0})
+
+    async def _process_redeem_queue(self) -> None:
+        now = time.monotonic()
+        for market_id, entry in list(self._redeem_queue.items()):
+            if now < entry["next_at"]:
+                continue
+            entry["attempts"] += 1
+            try:
+                result = await self.live_engine.redeem_market(market_id)
+            except Exception as exc:
+                result = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+            status = result.get("status")
+            if status == "redeemed":
+                self._redeem_queue.pop(market_id, None)
+                self.logs.log(
+                    "INFO",
+                    "settlement",
+                    "winning tokens redeemed into pUSD",
+                    payload={"market_id": market_id, **result},
+                    mode="live",
+                )
+                self._live_balance_at = 0.0  # force a fresh balance read
+                await self._refresh_live_balance()
+                await self._broadcast_state()
+            elif entry["attempts"] >= 8:
+                self._redeem_queue.pop(market_id, None)
+                self.logs.log(
+                    "ERROR",
+                    "settlement",
+                    f"auto-redeem gave up after {entry['attempts']} attempts; claim manually on polymarket.com",
+                    payload={"market_id": market_id, **result},
+                    mode="live",
+                )
+            else:
+                entry["next_at"] = now + 15.0 * entry["attempts"]
+                if status == "error":
+                    self.logs.log(
+                        "WARNING",
+                        "settlement",
+                        f"auto-redeem attempt {entry['attempts']} failed; will retry",
+                        payload={"market_id": market_id, **result},
+                        mode="live",
+                    )
+
+    async def _queue_unredeemed_live_wins(self) -> None:
+        """On live start: queue redeemable wins on markets this bot traded."""
+        if not self.settings.live_auto_redeem:
+            return
+        redeemable = await self.live_engine.redeemable_condition_ids()
+        if not redeemable:
+            return
+        with session_scope() as session:
+            known = {
+                m.lower()
+                for m in session.execute(
+                    select(Position.market_id).where(Position.mode == "live")
+                ).scalars().all()
+            }
+        for market_id in redeemable & known:
+            self._redeem_queue.setdefault(market_id, {"attempts": 0, "next_at": 0.0})
 
     async def _reconcile_open_live_orders(self) -> None:
         with session_scope() as session:
@@ -685,6 +804,7 @@ class TradingBot:
     async def _reconcile_live_positions(self) -> None:
         if self._mode != "live":
             return
+        await self._queue_unredeemed_live_wins()
         positions = await self.live_engine.fetch_onchain_positions()
         if positions is None:
             self.logs.log(
@@ -772,6 +892,13 @@ class TradingBot:
                     Order.status.in_(["PENDING", "SUBMITTED", "PARTIALLY_FILLED"]),
                 )
             ).scalars().all()
+            ends = {
+                m.market_id: m.window_end
+                for m in session.execute(
+                    select(Market).where(Market.market_id.in_({p.market_id for p in positions}))
+                ).scalars().all()
+            } if positions else {}
+            now_naive = utcnow()
             position_rows = [
                 {
                     "id": p.id,
@@ -785,6 +912,12 @@ class TradingBot:
                     "realized_pnl": p.realized_pnl,
                     "status": p.status,
                     "resolution": p.resolution,
+                    # window over, waiting for the exchange to publish the winner
+                    "awaiting_settlement": bool(
+                        p.status == "open"
+                        and ends.get(p.market_id) is not None
+                        and ends[p.market_id] <= now_naive
+                    ),
                     "opened_at": iso_z(p.opened_at),
                     "closed_at": iso_z(p.closed_at),
                 }
@@ -873,6 +1006,10 @@ class TradingBot:
                 "starting_balance": round(account.starting_balance, 6),
                 **pnl,
                 "trades_today": trades_today,
+                "positions_awaiting_settlement": sum(
+                    1 for row in position_rows if row["awaiting_settlement"]
+                ),
+                "pending_redeems": len(self._redeem_queue),
             },
             "latency": {
                 "last_ms": self._latencies[-1] if self._latencies else None,

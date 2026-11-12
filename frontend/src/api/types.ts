@@ -50,6 +50,8 @@ export interface AccountState {
   unrealized_pnl: number;
   daily_pnl: number;
   trades_today: number;
+  positions_awaiting_settlement?: number;
+  pending_redeems?: number;
 }
 
 export interface PositionRow {
@@ -64,6 +66,7 @@ export interface PositionRow {
   realized_pnl: number;
   status: string;
   resolution: string | null;
+  awaiting_settlement?: boolean;
   opened_at: string | null;
   closed_at: string | null;
 }

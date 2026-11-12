@@ -71,6 +71,7 @@ function statusTone(status: string): string {
     case "partially_filled":
     case "PENDING":
     case "pending":
+    case "settling":
       return "border-amber/30 bg-amber/10 text-amber";
     case "SUBMITTED":
     case "submitted_pending":

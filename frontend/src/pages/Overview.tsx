@@ -263,7 +263,18 @@ function AccountPanel() {
 
       <div className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4 border-t hairline pt-4">
         <Stat label="Realized" value={fmtSignedUsd(account?.realized_pnl)} tone={(account?.realized_pnl ?? 0) >= 0 ? "up" : "down"} />
-        <Stat label="Unrealized" value={fmtSignedUsd(account?.unrealized_pnl)} tone={(account?.unrealized_pnl ?? 0) >= 0 ? "up" : "down"} />
+        <Stat
+          label="Unrealized"
+          value={fmtSignedUsd(account?.unrealized_pnl)}
+          tone={(account?.unrealized_pnl ?? 0) >= 0 ? "up" : "down"}
+          hint={
+            account?.positions_awaiting_settlement
+              ? `${account.positions_awaiting_settlement} settling…`
+              : account?.pending_redeems
+                ? `${account.pending_redeems} redeeming…`
+                : undefined
+          }
+        />
         <Stat label="Trades today" value={account?.trades_today ?? 0} hint={`max ${String(config.max_trades_per_day ?? "—")} / day`} />
         <Stat
           label="Open positions"

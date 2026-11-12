@@ -23,6 +23,20 @@ Paper trading is the default. Live trading is implemented but disabled by defaul
 
 ---
 
+## Settlement & balance after a 5m market ends
+
+When the 5-minute window ends the position shows **settling…** until Polymarket publishes the winner
+(Up/Down markets resolve from a Chainlink TWAP, no UMA delay). The bot checks the CLOB market's
+`tokens[].winner` flag first and Gamma's `1/0` outcome prices second, polls every 5 s, and keeps polling
+until the winner is known (also after a restart). Then:
+
+- **Paper:** the position closes, realized PnL is booked and the balance is credited (`+1 USDC` per winning share).
+- **Live:** per the official docs (`trading/positions/manage`) winning tokens become pUSD only after
+  **redemption**. Either claim on polymarket.com (Portfolio), or set `LIVE_AUTO_REDEEM=true`,
+  `pip install -r backend/requirements-redeem.txt` (official `polymarket-client` SDK) and optionally a
+  Relayer API key for gasless redeem (otherwise an EOA transaction that needs a little POL). The live balance
+  is refreshed right after a successful redeem.
+
 ## Quick start
 
 Three scripts control the app: `setup.bat` (one-time install), `start.bat` (start backend + dashboard), `stop.bat` (stop both). In PowerShell run them as `.\setup.bat`, `.\start.bat`, `.\stop.bat`.

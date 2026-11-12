@@ -408,5 +408,57 @@ class LiveExecutionEngine(ExecutionEngine):
             logger.warning("on-chain position fetch failed: %s", exc)
             return None
 
+    async def redeemable_condition_ids(self) -> set[str] | None:
+        """Condition ids of wallet positions the Data API flags ``redeemable``."""
+        positions = await self.fetch_onchain_positions()
+        if positions is None:
+            return None
+        found: set[str] = set()
+        for item in positions:
+            cid = item.get("conditionId") or item.get("condition_id")
+            if cid and item.get("redeemable") and _num(item.get("size")) > 0:
+                found.add(str(cid).lower())
+        return found
+
+    async def redeem_market(self, condition_id: str) -> dict:
+        """Redeem winning tokens of a resolved market into pUSD.
+
+        Uses the official ``polymarket-client`` SDK ``redeem_positions`` (gasless via a
+        Relayer API key, otherwise an EOA transaction). Redemption has no amount: it
+        redeems the wallet's balances for both outcomes; losing tokens pay 0.
+        Raises LiveTradingUnavailable when it cannot be attempted.
+        """
+        self._validate_gates()
+        if not self._settings.live_auto_redeem:
+            raise LiveTradingUnavailable("LIVE_AUTO_REDEEM is false")
+        redeemable = await self.redeemable_condition_ids()
+        if redeemable is not None and condition_id.lower() not in redeemable:
+            return {"status": "not_redeemable_yet"}
+        try:
+            from polymarket import AsyncSecureClient, RelayerApiKey
+        except ImportError as exc:
+            raise LiveTradingUnavailable(
+                "auto-redeem needs the official SDK: pip install polymarket-client"
+            ) from exc
+
+        relayer = None
+        if self._settings.polymarket_relayer_api_key and self._settings.polymarket_relayer_api_key_address:
+            relayer = RelayerApiKey(
+                key=self._settings.polymarket_relayer_api_key,
+                address=self._settings.polymarket_relayer_api_key_address,
+            )
+        client = await AsyncSecureClient.create(
+            private_key=self._settings.polymarket_private_key,
+            wallet=self._settings.polymarket_funder_address or None,
+            api_key=relayer,
+        )
+        async with client:
+            handle = await client.redeem_positions(
+                condition_id=condition_id, metadata="polybot final-60s auto-redeem"
+            )
+            outcome = await handle.wait()
+        tx_hash = getattr(outcome, "transaction_hash", None)
+        return {"status": "redeemed", "transaction_hash": str(tx_hash) if tx_hash else None}
+
     async def close(self) -> None:
         self._client = None

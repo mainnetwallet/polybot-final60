@@ -80,10 +80,15 @@ class Settings(BaseSettings):
     polymarket_api_secret: str = ""
     polymarket_api_passphrase: str = ""
     polymarket_geo_verified: bool = False
+    # After a market resolves, winning tokens only become pUSD once redeemed on-chain
+    # (docs.polymarket.com/trading/positions/manage). Opt-in: submits real transactions.
+    live_auto_redeem: bool = False
+    polymarket_relayer_api_key: str = ""  # gasless redeem; empty = EOA tx paid in POL
+    polymarket_relayer_api_key_address: str = ""
 
     # --- runtime loops --------------------------------------------------
     discovery_refresh_seconds: float = 3.0
-    resolution_poll_seconds: float = 10.0
+    resolution_poll_seconds: float = 5.0
     ws_heartbeat_seconds: float = 10.0
     ws_price_persist_interval_ms: int = 500
 
