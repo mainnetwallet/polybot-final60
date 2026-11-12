@@ -4,9 +4,9 @@ Polymarket's 5-minute BTC markets resolve UP when the Chainlink BTC/USD price at
 window end is >= the price at the window start (the "price to beat"). Only official
 Polymarket data is used here, with no estimates:
   * current price  -> Chainlink BTC/USD stream from Polymarket's real-time data socket (RTDS)
-  * price to beat  -> Polymarket's own value (Gamma event metadata, or the crypto-price
-                      endpoint the website uses)
-If a value is not available yet it is shown as missing rather than guessed.
+  * price to beat  -> the crypto-price endpoint the Polymarket website itself calls
+No fallback values: if the official value is not available yet it is shown as missing
+(with the reason in `last_error` / `price_to_beat_error`), never guessed or substituted.
 
 It is display-only: nothing here feeds the strategy or order path, and every failure
 degrades to "no value" instead of raising.
@@ -29,8 +29,22 @@ logger = logging.getLogger(__name__)
 
 STALE_AFTER_MS = 10_000
 FIRST_TICK_TIMEOUT_SECONDS = 8.0  # no BTC tick this long after subscribing -> try the next subscription form
-OPEN_LOOKUP_RETRY_SECONDS = 4.0
-OPEN_LOOKUP_MAX_ATTEMPTS = 30  # ~2 min of retries: the official value can appear a bit after the window opens
+TICK_SILENCE_RECONNECT_SECONDS = 15.0  # stream was alive but went quiet -> reconnect
+OPEN_LOOKUP_RETRY_SECONDS = 3.0  # keeps asking until the official value is published
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://polymarket.com",
+    "Referer": "https://polymarket.com/",
+}
+# Every variant is the same official RTDS Chainlink BTC/USD stream; they only differ in how the
+# connection is opened, so a server/proxy quirk on one form cannot leave the price blank.
+#   mode: 0 server-side btc/usd filter, 1 whole topic filtered client-side, 2/3 same but sending Origin
+_WS_VARIANT_COUNT = 4
 
 
 def _now_ms() -> int:
@@ -53,12 +67,13 @@ class BtcPriceFeed:
         self._last_error: str | None = None
         self._reconnects = 0
         self._messages = 0  # BTC ticks received
-        self._sub_mode = 0  # index into _SUBSCRIPTION_MODES that last produced data
+        self._sub_mode = 0  # connection variant that last produced data
+        self._beat_error: str | None = None
         self._running = False
         self._tasks: list[asyncio.Task] = []
         self._market: MarketInfo | None = None
         self._market_changed = asyncio.Event()
-        # market_id -> (price, source) with source "gamma" or "polymarket"
+        # market_id -> (price, source) (source is always "polymarket")
         self._opens: dict[str, tuple[float, str]] = {}
         self._http: httpx.AsyncClient | None = None
 
@@ -77,12 +92,8 @@ class BtcPriceFeed:
         self._running = True
         self._http = httpx.AsyncClient(
             timeout=httpx.Timeout(5.0),
-            headers={
-                "User-Agent": self._settings.http_user_agent,
-                "Accept": "application/json",
-                "Origin": "https://polymarket.com",
-                "Referer": "https://polymarket.com/",
-            },
+            headers=BROWSER_HEADERS,
+            follow_redirects=True,
         )
         self._tasks = [
             asyncio.create_task(self._stream(), name="btc-price-ws"),
@@ -131,6 +142,8 @@ class BtcPriceFeed:
             "last_error": self._last_error,
             "ticks": self._messages,
             "reconnects": self._reconnects,
+            "ws_mode": self._sub_mode,
+            "price_to_beat_error": self._beat_error if beat is None else None,
         }
 
     # ----------------------------------------------------------------- internals
@@ -175,6 +188,7 @@ class BtcPriceFeed:
         if price is None:
             return
         self._messages += 1
+        self._last_error = None
         try:
             ts_ms = int(row.get("timestamp"))
         except (TypeError, ValueError):
@@ -183,21 +197,24 @@ class BtcPriceFeed:
 
     @staticmethod
     def _subscribe_frame(mode: int) -> str:
-        """RTDS subscription frames. Mode 0 filters server-side, mode 1 subscribes to the whole
-        Chainlink topic and filters BTC/USD client-side (handle_message already does)."""
+        """RTDS subscription frame. Even modes filter btc/usd server-side; odd modes subscribe to
+        the whole Chainlink topic and rely on the client-side symbol filter in handle_message."""
         subscription: dict = {"topic": "crypto_prices_chainlink", "type": "*"}
-        if mode == 0:
+        if mode % 2 == 0:
             subscription["filters"] = json.dumps({"symbol": "btc/usd"})
         return json.dumps({"action": "subscribe", "subscriptions": [subscription]})
 
-    def _connect(self):
-        kwargs = dict(
-            ping_interval=20,
-            ping_timeout=20,
+    def _connect(self, mode: int = 0):
+        kwargs: dict = dict(
+            # RTDS keeps the socket alive with the text "PING" frame (sent below); protocol-level
+            # pings are not required and a missed pong must not drop a healthy stream.
+            ping_interval=None,
             close_timeout=5,
-            origin="https://polymarket.com",
             open_timeout=10,
+            max_size=2**22,
         )
+        if mode >= 2:
+            kwargs["origin"] = "https://polymarket.com"
         return websockets.connect(self._settings.rtds_ws_url, **kwargs)
 
     async def _stream(self) -> None:
@@ -206,34 +223,40 @@ class BtcPriceFeed:
         while self._running:
             got_tick = False
             try:
-                async with self._connect() as ws:
+                async with self._connect(mode) as ws:
                     await ws.send(self._subscribe_frame(mode))
                     self._connected = True
-                    self._last_error = None
-                    logger.info("btc price ws connected (subscription mode %s)", mode)
+                    logger.info("btc price ws connected (mode %s)", mode)
                     opened = time.monotonic()
-                    ticks_before = self._messages
-                    next_ping = time.monotonic() + 5.0
+                    ticks_seen = self._messages
+                    last_tick = opened
+                    next_ping = opened + 5.0
                     while self._running:
-                        if time.monotonic() >= next_ping:
+                        now = time.monotonic()
+                        if now >= next_ping:
                             await ws.send("PING")
-                            next_ping = time.monotonic() + 5.0
-                        if self._messages == ticks_before and time.monotonic() - opened > FIRST_TICK_TIMEOUT_SECONDS:
-                            raise RuntimeError("no BTC/USD ticks after subscribing")
+                            next_ping = now + 5.0
+                        if self._messages != ticks_seen:
+                            ticks_seen = self._messages
+                            last_tick = now
+                            if not got_tick:
+                                got_tick = True
+                                self._sub_mode = mode
+                                backoff = 0.5
+                                logger.info("btc price ws streaming (mode %s)", mode)
+                        elif not got_tick and now - opened > FIRST_TICK_TIMEOUT_SECONDS:
+                            raise RuntimeError(f"no BTC/USD ticks {FIRST_TICK_TIMEOUT_SECONDS:.0f}s after subscribing (mode {mode})")
+                        elif got_tick and now - last_tick > TICK_SILENCE_RECONNECT_SECONDS:
+                            raise RuntimeError("BTC/USD stream went silent")
                         try:
                             raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
-                        except TimeoutError:
+                        except (TimeoutError, asyncio.TimeoutError):
                             continue
                         if isinstance(raw, bytes):
                             raw = raw.decode("utf-8", errors="replace")
                         if not raw.strip() or raw.strip().upper() == "PONG":
                             continue
                         self.handle_message(raw)
-                        if not got_tick and self._messages > ticks_before:
-                            got_tick = True
-                            self._sub_mode = mode
-                            backoff = 0.5
-                            logger.info("btc price ws streaming (subscription mode %s)", mode)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -241,51 +264,46 @@ class BtcPriceFeed:
                 self._reconnects += 1
                 logger.warning("btc price ws error: %s", self._last_error)
                 if not got_tick:
-                    mode = (mode + 1) % 2  # this subscription form produced nothing: try the other one
+                    mode = (mode + 1) % _WS_VARIANT_COUNT  # nothing from this form: try the next one
             finally:
                 self._connected = False
             if self._running:
-                await asyncio.sleep(backoff)
+                await asyncio.sleep(backoff if got_tick else 1.0)
                 backoff = min(backoff * 2, 10.0)
 
     async def _open_price_loop(self) -> None:
         """Fetch Polymarket's official price to beat for the current window.
 
-        Keeps asking until Polymarket publishes it (it can appear a little after the window opens).
+        Keeps asking until the website endpoint publishes it; there is no substitute value.
         """
-        attempts: dict[str, int] = {}
         while self._running:
             self._market_changed.clear()  # before reading the market, so a change during the fetch is not lost
             market = self._market
-            if market is not None:
-                known = self._opens.get(market.market_id)
-                # Nothing yet, or only the provisional Gamma value: keep asking for the value the
-                # Polymarket website itself uses, so the number matches what the site shows.
-                if known is None or known[1] != "polymarket":
-                    tries = attempts.get(market.market_id, 0)
-                    if tries < OPEN_LOOKUP_MAX_ATTEMPTS:
-                        attempts[market.market_id] = tries + 1
-                        found = await self._fetch_open_price(market, known is None)
-                        if found is not None:
-                            self._opens[market.market_id] = found
-                            self._trim_opens()
-                            logger.info("price to beat %s = %s (%s)", market.slug, found[0], found[1])
-                        if len(attempts) > 48:
-                            attempts.pop(next(iter(attempts)))
+            if market is not None and market.market_id not in self._opens:
+                found = await self._fetch_open_price(market)
+                if found is not None:
+                    self._opens[market.market_id] = found
+                    self._trim_opens()
+                    self._beat_error = None
+                    logger.info("price to beat %s = %s", market.slug, found[0])
             try:
                 await asyncio.wait_for(self._market_changed.wait(), timeout=OPEN_LOOKUP_RETRY_SECONDS)
-            except TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 pass
 
-    async def _fetch_open_price(self, market: MarketInfo, allow_gamma: bool = True) -> tuple[float, str] | None:
+    async def _fetch_open_price(self, market: MarketInfo) -> tuple[float, str] | None:
+        """Official value from the crypto-price endpoint the Polymarket website calls."""
         if self._http is None:
             return None
-        # 1) The crypto-price endpoint the Polymarket website itself calls for "Price To Beat"
         variant = {300: "fiveminute", 900: "fifteen"}.get(int(market.duration_seconds))
-        if variant:
+        if not variant:
+            self._beat_error = f"unsupported window length {int(market.duration_seconds)}s"
+            return None
+        error: str | None = None
+        for suffix in ("Z", ".000Z"):  # the endpoint's accepted timestamp form; try both
+            start = market.window_start.strftime("%Y-%m-%dT%H:%M:%S") + suffix
+            end = market.window_end.strftime("%Y-%m-%dT%H:%M:%S") + suffix
             try:
-                start = market.window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
-                end = market.window_end.strftime("%Y-%m-%dT%H:%M:%SZ")
                 response = await self._http.get(
                     self._settings.crypto_price_api_url,
                     params={"symbol": "BTC", "eventStartTime": start, "variant": variant, "endDate": end},
@@ -295,27 +313,11 @@ class BtcPriceFeed:
                 value = _to_float(data.get("openPrice")) if isinstance(data, dict) else None
                 if value is not None:
                     return value, "polymarket"
+                error = "crypto-price has no openPrice yet"
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._last_error = f"price-to-beat: {type(exc).__name__}: {exc}"
-                logger.warning("price-to-beat crypto-price lookup failed: %s", exc)
-        # 2) Gamma event metadata (official, provisional until the website endpoint answers)
-        if allow_gamma and market.event_slug:
-            try:
-                response = await self._http.get(
-                    f"{self._settings.gamma_base_url}/events", params={"slug": market.event_slug}
-                )
-                response.raise_for_status()
-                events = response.json()
-                if isinstance(events, list) and events and isinstance(events[0], dict):
-                    meta = events[0].get("eventMetadata")
-                    if isinstance(meta, dict):
-                        value = _to_float(meta.get("priceToBeat"))
-                        if value is not None:
-                            return value, "gamma"
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.debug("price-to-beat gamma lookup failed: %s", exc)
+                error = f"crypto-price: {type(exc).__name__}: {exc}"
+        self._beat_error = error
+        logger.warning("price-to-beat unavailable: %s", error)
         return None

@@ -105,15 +105,15 @@ def test_official_price_to_beat_and_gap():
     feed = BtcPriceFeed(Settings())
     feed.handle_message(_frame(int(time.time() * 1000), 71_050.0))
     market = _market(start)
-    feed._opens[market.market_id] = (71_010.5, "gamma")  # what the loop stores once Polymarket answers
+    feed._opens[market.market_id] = (71_010.5, "polymarket")  # what the loop stores once Polymarket answers
 
     snap = feed.snapshot(market)
     assert snap["price_to_beat"] == 71_010.5
-    assert snap["price_to_beat_source"] == "gamma"
+    assert snap["price_to_beat_source"] == "polymarket"
     assert round(snap["diff"], 2) == 39.5
 
 
-async def test_fetch_prefers_website_endpoint_then_gamma():
+async def test_fetch_uses_only_the_website_endpoint_no_fallback():
     start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
     market = _market(start)
     feed = BtcPriceFeed(Settings())
@@ -122,12 +122,15 @@ async def test_fetch_prefers_website_endpoint_then_gamma():
     feed._http = _FakeHttp(both)
     assert await feed._fetch_open_price(market) == (70_222.0, "polymarket")
 
+    # Gamma has a value but the official endpoint does not: nothing is shown, no substitution
     feed._http = _FakeHttp({"/events": [{"eventMetadata": {"priceToBeat": 70_123.45}}], "crypto-price": {"openPrice": None}})
-    assert await feed._fetch_open_price(market) == (70_123.45, "gamma")
-    assert await feed._fetch_open_price(market, allow_gamma=False) is None
-
-    feed._http = _FakeHttp({"/events": RuntimeError("down"), "crypto-price": RuntimeError("down")})
     assert await feed._fetch_open_price(market) is None
+    assert feed.snapshot(market)["price_to_beat"] is None
+    assert feed.snapshot(market)["price_to_beat_error"]
+
+    feed._http = _FakeHttp({"crypto-price": RuntimeError("down")})
+    assert await feed._fetch_open_price(market) is None
+    assert "down" in feed.snapshot(market)["price_to_beat_error"]
 
 
 def test_subscription_frames():
@@ -136,6 +139,8 @@ def test_subscription_frames():
     assert json.loads(filtered["subscriptions"][0]["filters"]) == {"symbol": "btc/usd"}
     unfiltered = json.loads(BtcPriceFeed._subscribe_frame(1))
     assert "filters" not in unfiltered["subscriptions"][0]
+    assert "filters" in json.loads(BtcPriceFeed._subscribe_frame(2))["subscriptions"][0]
+    assert "filters" not in json.loads(BtcPriceFeed._subscribe_frame(3))["subscriptions"][0]
     feed = BtcPriceFeed(Settings())
     feed.handle_message(_frame(5, 3000.0, symbol="eth/usd"))  # unfiltered stream: other symbols ignored
     feed.handle_message(_frame(6, 71_111.0))

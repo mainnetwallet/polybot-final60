@@ -64,6 +64,11 @@ export function PriceToBeatBar({ className }: { className?: string }) {
       </div>
 
       <div className="flex items-center gap-4">
+        {btc && btc.enabled && beat === null && btc.price_to_beat_error ? (
+          <span className="chip border-amber/30 bg-amber/10 text-amber" title={btc.price_to_beat_error}>
+            waiting for official price to beat
+          </span>
+        ) : null}
         {btc && (!btc.connected || btc.stale) && btc.enabled ? (
           <span className="chip border-amber/30 bg-amber/10 text-amber" title={btc.last_error ?? undefined}>
             {btc.connected ? "stale price" : "price feed offline"}

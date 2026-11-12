@@ -120,6 +120,10 @@ export interface BtcState {
   connected: boolean;
   enabled: boolean;
   last_error: string | null;
+  ticks?: number;
+  reconnects?: number;
+  ws_mode?: number;
+  price_to_beat_error?: string | null;
 }
 
 export interface Snapshot {
