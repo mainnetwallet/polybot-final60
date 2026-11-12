@@ -9,7 +9,9 @@ from sqlalchemy import select
 from app.api.schemas import (
     KillSwitchRequest,
     ModeRequest,
+    ResetDailyRequest,
     ResetPaperRequest,
+    ResetServerRequest,
     SettingsPatch,
     StartRequest,
 )
@@ -18,7 +20,7 @@ from app.config.settings import Settings
 from app.database.models import LogEntry, utcnow
 from app.database.migrate import current_revision
 from app.database.session import session_scope
-from app.services.bot import BotError, LiveGateError, ModeSwitchError, TradingBot, iso_z
+from app.services.bot import RESET_SERVER_PHRASE, BotError, LiveGateError, ModeSwitchError, TradingBot, iso_z
 
 
 def build_router(
@@ -159,6 +161,29 @@ def build_router(
             raise HTTPException(status_code=400, detail="confirm must be true")
         try:
             return await bot.reset_paper_account(request.balance)
+        except BotError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/daily/reset")
+    async def reset_daily(request: ResetDailyRequest) -> dict:
+        if not request.confirm:
+            raise HTTPException(status_code=400, detail="confirm must be true")
+        try:
+            return await bot.reset_daily_stats()
+        except BotError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/server/reset")
+    async def reset_server(request: ResetServerRequest) -> dict:
+        if not request.confirm:
+            raise HTTPException(status_code=400, detail="confirm must be true")
+        if request.confirmation_phrase.strip() != RESET_SERVER_PHRASE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"type {RESET_SERVER_PHRASE} to confirm the full reset",
+            )
+        try:
+            return await bot.reset_server()
         except BotError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

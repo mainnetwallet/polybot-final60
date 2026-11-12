@@ -215,7 +215,7 @@ function CheckRow({ ok, label, detail }: { ok: boolean; label: string; detail?: 
 }
 
 export function Settings() {
-  const { snapshot, notify, resetPaper } = useBot();
+  const { snapshot, notify, resetPaper, resetDaily, resetServer } = useBot();
   const [settings, setSettings] = useState<SettingsState | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -224,6 +224,11 @@ export function Settings() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetValue, setResetValue] = useState("");
   const [resetBusy, setResetBusy] = useState(false);
+  const [dailyOpen, setDailyOpen] = useState(false);
+  const [dailyBusy, setDailyBusy] = useState(false);
+  const [serverOpen, setServerOpen] = useState(false);
+  const [serverPhrase, setServerPhrase] = useState("");
+  const [serverBusy, setServerBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -318,6 +323,31 @@ export function Settings() {
     const result = await resetPaper(balance);
     setResetBusy(false);
     if (result.ok) setResetOpen(false);
+  };
+
+  const confirmDailyReset = async () => {
+    setDailyBusy(true);
+    const result = await resetDaily();
+    setDailyBusy(false);
+    if (result.ok) setDailyOpen(false);
+  };
+
+  const confirmServerReset = async () => {
+    setServerBusy(true);
+    const result = await resetServer(serverPhrase.trim());
+    setServerBusy(false);
+    if (result.ok) {
+      setServerOpen(false);
+      setServerPhrase("");
+      try {
+        const fresh = await api.settings();
+        setSettings(fresh);
+        setDraft(draftFrom(fresh));
+        setResetValue(String(fresh.paper_starting_balance));
+      } catch {
+        /* settings reload is best effort */
+      }
+    }
   };
 
   if (!settings) {
@@ -534,7 +564,151 @@ export function Settings() {
             <div className="mt-3 text-[10.5px] text-amber/80">Stop the bot before resetting the paper account.</div>
           ) : null}
         </section>
+
+        <section className="panel border-amber/20 p-5 xl:col-span-12">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-amber/20 bg-amber/[0.07] text-amber">
+                <IconAlert size={16} />
+              </div>
+              <div>
+                <div className="text-[13px] font-semibold text-slate-100">Reset daily trades &amp; profit/loss</div>
+                <div className="mt-0.5 text-[11px] text-slate-500">
+                  Sets today&apos;s trade count and daily profit/loss back to zero for the current mode, so the
+                  daily loss stop, profit target and max-trades limits start fresh. Order history, positions and
+                  balance are kept.
+                </div>
+              </div>
+            </div>
+            <button type="button" className="btn btn-danger" onClick={() => setDailyOpen(true)}>
+              Reset daily
+            </button>
+          </div>
+        </section>
+
+        <section className="panel border-down/30 p-5 xl:col-span-12">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-down/30 bg-down/[0.09] text-down">
+                <IconAlert size={16} />
+              </div>
+              <div>
+                <div className="text-[13px] font-semibold text-slate-100">Full server reset</div>
+                <div className="mt-0.5 text-[11px] text-slate-500">
+                  Wipes the whole database: orders, fills, positions, markets, price history, triggers, logs and
+                  dashboard setting overrides. Mode returns to paper, the bot stays stopped and settings go back to
+                  the <span className="mono">.env</span> defaults.
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={running}
+              title={running ? "Stop the bot before resetting" : "Wipe all data"}
+              onClick={() => setServerOpen(true)}
+            >
+              Reset everything
+            </button>
+          </div>
+          {running ? (
+            <div className="mt-3 text-[10.5px] text-amber/80">Stop the bot before resetting the server.</div>
+          ) : null}
+        </section>
       </div>
+
+      <Modal
+        open={dailyOpen}
+        onClose={() => setDailyOpen(false)}
+        eyebrow="Daily counters"
+        title="Reset daily trades and profit/loss?"
+        subtitle="Today's counters restart from zero. No history is deleted."
+        footer={
+          <>
+            <button type="button" className="btn" onClick={() => setDailyOpen(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={dailyBusy}
+              onClick={() => void confirmDailyReset()}
+            >
+              {dailyBusy ? "Resetting…" : "Reset daily"}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-[12px] leading-relaxed text-slate-400">
+          <p>
+            This clears the daily trade count and daily realized profit/loss for the{" "}
+            <span className="mono text-slate-200">{snapshot?.bot.mode ?? "current"}</span> mode and lifts any daily
+            loss/profit halt. It can be used while the bot is running.
+          </p>
+          <div className="flex items-center gap-2 rounded-lg border border-amber/20 bg-amber/[0.06] px-3 py-2 text-[11px] text-amber/90">
+            <IconAlert size={13} />
+            Risk limits will allow new trades again after this reset.
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={serverOpen}
+        onClose={() => {
+          setServerOpen(false);
+          setServerPhrase("");
+        }}
+        eyebrow="Danger zone"
+        title="Reset the entire server?"
+        subtitle="This permanently deletes all data in the local database."
+        danger
+        footer={
+          <>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setServerOpen(false);
+                setServerPhrase("");
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={serverBusy || serverPhrase.trim() !== "RESET ALL"}
+              onClick={() => void confirmServerReset()}
+            >
+              {serverBusy ? "Resetting…" : "Wipe everything"}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-[12px] leading-relaxed text-slate-400">
+          <p>
+            Paper and live records, logs, price history and setting overrides are deleted. The bot returns to
+            paper mode, stopped, with settings from <span className="mono">.env</span>. Real exchange balances are
+            never touched, and the reset is refused while live positions or orders are still open.
+          </p>
+          <div>
+            <label className="mb-1 block text-[11px] text-slate-500">
+              Type <span className="mono text-slate-200">RESET ALL</span> to confirm
+            </label>
+            <input
+              className="input mono"
+              value={serverPhrase}
+              onChange={(event) => setServerPhrase(event.target.value)}
+              placeholder="RESET ALL"
+              autoComplete="off"
+            />
+          </div>
+          <div className="flex items-center gap-2 rounded-lg border border-down/20 bg-down/[0.06] px-3 py-2 text-[11px] text-down/90">
+            <IconAlert size={13} />
+            This cannot be undone.
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={resetOpen}

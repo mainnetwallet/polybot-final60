@@ -332,3 +332,31 @@ def test_logs_endpoint_returns_persisted_events():
         logs = client.get("/api/logs", params={"limit": 50}).json()
         assert isinstance(logs, list)
         assert any(entry["category"] in {"system", "market"} for entry in logs)
+
+
+def test_daily_reset_requires_confirmation():
+    with TestClient(create_app()) as client:
+        assert client.post("/api/daily/reset", json={}).status_code == 400
+        ok = client.post("/api/daily/reset", json={"confirm": True})
+        assert ok.status_code == 200
+
+
+def test_server_reset_requires_phrase_and_wipes_data():
+    with TestClient(create_app()) as client:
+        assert client.post("/api/server/reset", json={"confirm": True}).status_code == 400
+        assert (
+            client.post(
+                "/api/server/reset", json={"confirm": True, "confirmation_phrase": "nope"}
+            ).status_code
+            == 400
+        )
+        client.patch("/api/settings", json={"trigger_threshold": 0.83})
+        ok = client.post(
+            "/api/server/reset",
+            json={"confirm": True, "confirmation_phrase": "RESET ALL"},
+        )
+        assert ok.status_code == 200
+        assert ok.json()["bot"]["status"] == "STOPPED"
+        assert ok.json()["bot"]["mode"] == "paper"
+        # setting overrides are gone -> back to .env default
+        assert client.get("/api/settings").json()["trigger_threshold"] == 0.80

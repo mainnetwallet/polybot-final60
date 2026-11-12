@@ -32,6 +32,8 @@ from app.strategy.types import StrategyEvaluation
 logger = logging.getLogger(__name__)
 
 
+RESET_SERVER_PHRASE = "RESET ALL"
+
 class BotError(RuntimeError):
     pass
 
@@ -519,6 +521,75 @@ class TradingBot:
                 f"bot started in {self._mode.upper()} mode",
                 payload={"mode": self._mode, "live_balance": gate.get("balance")},
                 mode=self._mode,
+            )
+        await self._broadcast_state()
+        return await self.snapshot()
+
+    async def reset_daily_stats(self) -> dict:
+        """Reset today's trade count and daily profit/loss for the active mode.
+
+        History (orders, fills, positions, analytics) is kept. The daily loss stop,
+        profit target and max-trades-per-day limits start counting from zero again.
+        """
+        async with self._lock:
+            with session_scope() as session:
+                self.portfolio.reset_daily(session, self._mode)
+            self._risk_halt_reason = None
+            self._risk_halt_logged = False
+            self.orders.reset_trigger_cache()
+            self.logs.log(
+                "WARNING",
+                "system",
+                f"daily trades and profit/loss reset ({self._mode})",
+                mode=self._mode,
+            )
+        await self._broadcast_state()
+        return await self.snapshot()
+
+    async def reset_server(self) -> dict:
+        """Wipe the whole database (paper + live records, logs, setting overrides) and
+        return the app to a fresh STOPPED paper state. Requires the bot to be stopped."""
+        if self._status == "RUNNING":
+            raise BotError("stop the bot before resetting the server")
+        async with self._lock:
+            with session_scope() as session:
+                live_open = self.portfolio.open_positions(session, "live")
+                live_orders = session.execute(
+                    select(Order.id).where(
+                        Order.mode == "live",
+                        Order.status.in_(["PENDING", "SUBMITTED", "PARTIALLY_FILLED"]),
+                    )
+                ).scalars().all()
+                if live_open or live_orders:
+                    raise BotError(
+                        "live positions/orders are still open; settle or redeem them first "
+                        "so real-money records are not lost"
+                    )
+                self.portfolio.reset_all(session)
+            with session_scope() as session:
+                self.runtime.load(session)
+            self._mode = "paper"
+            self._kill_switch = False
+            self._status = "STOPPED"
+            self._started_at = None
+            self._evaluation = None
+            self._last_order = None
+            self._live_balance = None
+            self._live_balance_at = 0.0
+            self._latencies.clear()
+            self._last_price_persist_ms.clear()
+            self._market_finalized.clear()
+            self._resolution_pending_logged.clear()
+            self._redeem_queue.clear()
+            self._redeem_notice_logged.clear()
+            self._risk_halt_reason = None
+            self._risk_halt_logged = False
+            self.orders.reset_trigger_cache()
+            self.logs.log(
+                "WARNING",
+                "system",
+                "full server reset: database wiped, settings back to .env defaults",
+                mode="paper",
             )
         await self._broadcast_state()
         return await self.snapshot()

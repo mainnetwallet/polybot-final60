@@ -8,7 +8,19 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.config.settings import Settings
-from app.database.models import Account, Fill, Order, Position, utcnow
+from app.database.models import (
+    Account,
+    AppState,
+    BotSetting,
+    Fill,
+    LogEntry,
+    Market,
+    Order,
+    Position,
+    PriceUpdate,
+    TriggerEvent,
+    utcnow,
+)
 from app.execution.base import ExecutionReport
 
 def start_of_day_utc(now: datetime | None = None) -> datetime:
@@ -18,9 +30,59 @@ def start_of_day_utc(now: datetime | None = None) -> datetime:
     return datetime.combine(now.date(), time.min)
 
 
+DAILY_RESET_KEY = "daily_reset_at:{mode}"
+
+
 class Portfolio:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+
+    # ------------------------------------------------------------------
+    def daily_floor(self, session: Session, mode: str) -> datetime:
+        """Start of the current daily window: UTC midnight or the last manual daily reset."""
+        floor = start_of_day_utc()
+        row = session.get(BotSetting, DAILY_RESET_KEY.format(mode=mode))
+        if row is not None and isinstance(row.value, str):
+            try:
+                marker = datetime.fromisoformat(row.value)
+            except ValueError:
+                return floor
+            if marker.tzinfo is not None:
+                marker = marker.astimezone(timezone.utc).replace(tzinfo=None)
+            if marker > floor:
+                floor = marker
+        return floor
+
+    def reset_daily(self, session: Session, mode: str) -> None:
+        """Zero today's trade count and daily profit/loss without deleting any history."""
+        key = DAILY_RESET_KEY.format(mode=mode)
+        stamp = utcnow().replace(tzinfo=None).isoformat()
+        row = session.get(BotSetting, key)
+        if row is None:
+            session.add(BotSetting(key=key, value=stamp))
+        else:
+            row.value = stamp
+        session.flush()
+
+    def reset_all(self, session: Session) -> None:
+        """Wipe every table (orders, fills, positions, markets, prices, triggers, logs,
+        setting overrides, bot state) and recreate fresh accounts."""
+        for model in (
+            Fill,
+            Order,
+            Position,
+            TriggerEvent,
+            PriceUpdate,
+            Market,
+            LogEntry,
+            BotSetting,
+            AppState,
+            Account,
+        ):
+            session.execute(delete(model))
+        session.flush()
+        session.add(AppState(id=1, status="STOPPED", mode="paper", kill_switch=False))
+        self.ensure_accounts(session)
 
     # ------------------------------------------------------------------
     def ensure_accounts(self, session: Session) -> None:
@@ -146,7 +208,7 @@ class Portfolio:
             select(func.coalesce(func.sum(Position.realized_pnl), 0.0)).where(
                 Position.mode == mode,
                 Position.status == "closed",
-                Position.closed_at >= start_of_day_utc(),
+                Position.closed_at >= self.daily_floor(session, mode),
             )
         ).scalar_one()
         return round(float(value), 10)
@@ -163,7 +225,7 @@ class Portfolio:
         value = session.execute(
             select(func.count(Order.id)).where(
                 Order.mode == mode,
-                Order.created_at >= start_of_day_utc(),
+                Order.created_at >= self.daily_floor(session, mode),
                 Order.status.in_(["SUBMITTED", "PARTIALLY_FILLED", "FILLED", "CANCELED", "EXPIRED"]),
             )
         ).scalar_one()

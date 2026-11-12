@@ -25,6 +25,15 @@ class ResetPaperRequest(BaseModel):
     confirm: bool = False
 
 
+class ResetDailyRequest(BaseModel):
+    confirm: bool = False
+
+
+class ResetServerRequest(BaseModel):
+    confirm: bool = False
+    confirmation_phrase: str = ""
+
+
 class SettingsPatch(BaseModel):
     trigger_threshold: float | None = Field(default=None, ge=0.01, le=0.999)
     final_window_seconds: int | None = Field(default=None, ge=1, le=300)

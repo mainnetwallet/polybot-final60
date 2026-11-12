@@ -136,3 +136,49 @@ def test_unrealized_pnl_calculation_does_not_write_to_position():
 
         assert abs(marked - 0.45) < 1e-9
         assert position.unrealized_pnl == 0.0
+
+
+def test_daily_reset_zeroes_today_without_deleting_history():
+    stack = build_stack()
+    portfolio = stack["portfolio"]
+    with session_scope() as session:
+        _fill(portfolio, session, "paper", "market-daily")
+        portfolio.settle(session, "paper", "market-daily", "DOWN")  # loss
+        assert portfolio.trades_today(session, "paper") == 1
+        assert portfolio.realized_today(session, "paper") < 0
+
+    with session_scope() as session:
+        portfolio.reset_daily(session, "paper")
+
+    with session_scope() as session:
+        assert portfolio.trades_today(session, "paper") == 0
+        assert portfolio.realized_today(session, "paper") == 0
+        # history and balance are untouched
+        assert session.query(Order).count() == 1
+        assert session.query(Position).count() == 1
+        assert portfolio.balance(session, "paper") < 10.0
+
+
+def test_reset_all_wipes_every_table_and_recreates_accounts():
+    from app.database.models import Account, AppState, BotSetting, Fill, LogEntry
+
+    stack = build_stack()
+    portfolio = stack["portfolio"]
+    with session_scope() as session:
+        _fill(portfolio, session, "paper", "market-wipe")
+        session.add(LogEntry(level="INFO", category="system", message="x"))
+        session.add(BotSetting(key="trigger_threshold", value=0.9))
+        portfolio.reset_daily(session, "paper")
+
+    with session_scope() as session:
+        portfolio.reset_all(session)
+
+    with session_scope() as session:
+        assert session.query(Order).count() == 0
+        assert session.query(Fill).count() == 0
+        assert session.query(Position).count() == 0
+        assert session.query(LogEntry).count() == 0
+        assert session.query(BotSetting).count() == 0
+        assert session.query(Account).count() == 2
+        assert session.get(AppState, 1).status == "STOPPED"
+        assert portfolio.balance(session, "paper") == 10.0

@@ -50,6 +50,8 @@ interface BotContextValue {
   switchMode: (mode: Mode, phrase?: string) => Promise<ActionResult>;
   killSwitch: (active: boolean) => Promise<ActionResult>;
   resetPaper: (balance: number) => Promise<ActionResult>;
+  resetDaily: () => Promise<ActionResult>;
+  resetServer: (phrase: string) => Promise<ActionResult>;
   notify: (kind: ToastKind, title: string, message?: string) => void;
   dismissToast: (id: number) => void;
   clearLogs: () => void;
@@ -374,6 +376,34 @@ export function BotProvider({ children }: { children: ReactNode }) {
     [applySnapshot, notify],
   );
 
+  const resetDaily = useCallback(async (): Promise<ActionResult> => {
+    try {
+      applySnapshot(await api.resetDaily());
+      notify("success", "Daily stats reset", "Today's trade count and profit/loss start again from zero.");
+      return { ok: true };
+    } catch (error) {
+      const message = describeError(error);
+      notify("error", "Daily reset failed", message);
+      return { ok: false, error: message };
+    }
+  }, [applySnapshot, notify]);
+
+  const resetServer = useCallback(
+    async (phrase: string): Promise<ActionResult> => {
+      try {
+        applySnapshot(await api.resetServer(phrase));
+        setLogs([]);
+        notify("success", "Server reset", "All data was wiped and settings are back to .env defaults.");
+        return { ok: true };
+      } catch (error) {
+        const message = describeError(error);
+        notify("error", "Server reset failed", message);
+        return { ok: false, error: message };
+      }
+    },
+    [applySnapshot, notify],
+  );
+
   const clearLogs = useCallback(() => setLogs([]), []);
 
   const value = useMemo<BotContextValue>(
@@ -391,6 +421,8 @@ export function BotProvider({ children }: { children: ReactNode }) {
       switchMode,
       killSwitch,
       resetPaper,
+      resetDaily,
+      resetServer,
       notify,
       dismissToast,
       clearLogs,
@@ -409,6 +441,8 @@ export function BotProvider({ children }: { children: ReactNode }) {
       switchMode,
       killSwitch,
       resetPaper,
+      resetDaily,
+      resetServer,
       notify,
       dismissToast,
       clearLogs,

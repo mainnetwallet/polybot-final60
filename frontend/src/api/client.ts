@@ -71,6 +71,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ balance, confirm: true }),
     }),
+  resetDaily: () =>
+    request<Snapshot>("/api/daily/reset", {
+      method: "POST",
+      body: JSON.stringify({ confirm: true }),
+    }),
+  resetServer: (confirmationPhrase: string) =>
+    request<Snapshot>("/api/server/reset", {
+      method: "POST",
+      body: JSON.stringify({ confirm: true, confirmation_phrase: confirmationPhrase }),
+    }),
   validateLive: () =>
     request<{ ok: boolean; balance: number; allowance: number | null }>("/api/live/validate", {
       method: "POST",

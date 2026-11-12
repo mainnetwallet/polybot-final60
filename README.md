@@ -401,6 +401,16 @@ Secrets, `paper_fill_ratio`, `paper_fee_exponent`, `paper_starting_balance`, `li
 | `logs\frontend.out.log` / `.err.log` | Vite stdout/stderr |
 | `logs\pids\*.pid` | PIDs of launcher-started services |
 
+### Reset options (Settings > Danger zone)
+
+| Option | What it does | Bot must be stopped? |
+| --- | --- | --- |
+| **Reset paper account** | Deletes paper orders, fills, positions and PnL and recreates the paper balance. Live data is untouched. | Yes |
+| **Reset daily trades & profit/loss** | Sets today's trade count and daily profit/loss back to zero for the current mode and lifts any daily loss/profit halt. No history or balance is deleted. | No |
+| **Full server reset** | Wipes the entire database (orders, fills, positions, markets, price history, triggers, logs, dashboard setting overrides), returns to paper mode with the bot stopped, and goes back to `.env` defaults. Requires typing `RESET ALL`. Refused while live positions/orders are still open. | Yes |
+
+API equivalents: `POST /api/daily/reset` (`{"confirm": true}`) and `POST /api/server/reset` (`{"confirm": true, "confirmation_phrase": "RESET ALL"}`).
+
 Paper reset is available in Settings only while the bot is stopped. Reset deletes paper orders/positions and restores the configured starting balance; live records are untouched.
 
 ---
@@ -423,7 +433,7 @@ npm run build
 
 Results on this machine (2026-11-12; captured after the review changes):
 
-- `pytest`: **84 passed** (3.77 s).
+- `pytest`: **88 passed**.
 - `npm run build`: PASS (TypeScript strict, Vite 55 modules).
 
 These checks cover automated behavior and frontend compilation. They do not validate an authenticated exchange session.
