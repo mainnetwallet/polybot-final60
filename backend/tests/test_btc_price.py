@@ -41,16 +41,33 @@ def test_current_price_comes_from_latest_stream_tick():
     assert feed.snapshot(None)["price"] == 71_050.5
 
 
-def test_price_to_beat_is_never_estimated_from_the_stream():
+def test_price_to_beat_is_the_rtds_tick_at_window_start_until_gamma_answers():
     start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
     start_ms = int(start.replace(tzinfo=timezone.utc).timestamp() * 1000)
     feed = BtcPriceFeed(Settings())
-    feed.handle_message(_frame(start_ms + 100, 71_000.0))  # tick exactly at the window start
+    market = _market(start)
+    feed.handle_message(_frame(start_ms - 5_000, 70_900.0))  # before the window: never used
+    feed.handle_message(_frame(start_ms + 100, 71_000.0))  # official TWAP60 tick at the window start
+    feed.handle_message(_frame(start_ms + 3_000, 71_040.0))
+    snap = feed.snapshot(market)
+    assert snap["price"] == 71_040.0
+    assert snap["price_to_beat"] == 71_000.0
+    assert snap["price_to_beat_source"] == "polymarket-rtds"
+    assert snap["diff"] == 40.0
+
+    # Gamma's official value replaces it once published
+    feed._opens[market.market_id] = (71_001.25, "polymarket")
+    snap = feed.snapshot(market)
+    assert snap["price_to_beat"] == 71_001.25 and snap["price_to_beat_source"] == "polymarket"
+
+
+def test_no_price_to_beat_without_a_tick_at_the_window_start():
+    start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
+    start_ms = int(start.replace(tzinfo=timezone.utc).timestamp() * 1000)
+    feed = BtcPriceFeed(Settings())
+    feed.handle_message(_frame(start_ms + 30_000, 71_000.0))  # started mid-window: nothing is guessed
     snap = feed.snapshot(_market(start))
-    assert snap["price"] == 71_000.0
-    assert snap["price_to_beat"] is None
-    assert snap["price_to_beat_source"] is None
-    assert snap["diff"] is None
+    assert snap["price_to_beat"] is None and snap["price_to_beat_source"] is None and snap["diff"] is None
 
 
 def test_ignores_other_symbols_and_bad_frames():

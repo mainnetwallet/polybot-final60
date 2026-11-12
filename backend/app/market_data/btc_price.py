@@ -8,8 +8,12 @@ Only official Polymarket data is used here, with no estimates:
                       topic ``crypto_prices_twap_sixty``)
   * price to beat  -> the event's ``eventMetadata.priceToBeat`` from the Gamma API (the value the
                       Polymarket event page displays)
-No fallback values: if the official value is not available yet it is shown as missing
-(with the reason in `last_error` / `price_to_beat_error`), never guessed or substituted.
+Gamma only publishes ``eventMetadata.priceToBeat`` some time AFTER a window starts (sometimes only
+after it closes), so on its own the dashboard shows no Price To Beat for the live window. The price to
+beat is by definition the same TWAP60 series at the window boundary, so while Gamma has not answered
+it is read from the RTDS tick stamped at the window start (same official Polymarket stream, never a
+spot/exchange price or an estimate); Gamma's value replaces it as soon as it is published.
+If neither is available it is shown as missing (reason in `last_error` / `price_to_beat_error`).
 
 It is display-only: nothing here feeds the strategy or order path, and every failure
 degrades to "no value" instead of raising.
@@ -21,6 +25,8 @@ import asyncio
 import json
 import logging
 import time
+from datetime import timezone
+from collections import deque
 
 import httpx
 import websockets
@@ -33,6 +39,8 @@ logger = logging.getLogger(__name__)
 STALE_AFTER_MS = 10_000
 FIRST_TICK_TIMEOUT_SECONDS = 8.0  # no BTC tick this long after subscribing -> try the next subscription form
 TICK_SILENCE_RECONNECT_SECONDS = 15.0  # stream was alive but went quiet -> reconnect
+RTDS_OPEN_TOLERANCE_MS = 1_000  # max distance between the window start and the RTDS tick used as its open
+TICK_HISTORY = 2_400  # ~40 minutes of one-per-second TWAP ticks kept to look up window-start values
 OPEN_LOOKUP_RETRY_SECONDS = 3.0  # keeps asking until the official value is published
 BROWSER_HEADERS = {
     "User-Agent": (
@@ -81,6 +89,9 @@ class BtcPriceFeed:
         self._market_changed = asyncio.Event()
         # market_id -> (price, source) (source is always "polymarket")
         self._opens: dict[str, tuple[float, str]] = {}
+        # recent RTDS TWAP60 ticks (ts_ms, price) and the window-start values read from them
+        self._ticks: deque[tuple[int, float]] = deque(maxlen=TICK_HISTORY)
+        self._rtds_opens: dict[str, tuple[float, str]] = {}
         self._http: httpx.AsyncClient | None = None
 
     # ------------------------------------------------------------------ public
@@ -126,7 +137,29 @@ class BtcPriceFeed:
         """Polymarket's official price to beat for this window, or None until it is published."""
         if market is None:
             return None
-        return self._opens.get(market.market_id)
+        official = self._opens.get(market.market_id)
+        if official is not None:
+            return official
+        return self._rtds_open(market)
+
+    def _rtds_open(self, market: MarketInfo) -> tuple[float, str] | None:
+        """TWAP60 tick stamped at the window start (== Polymarket's price to beat), if we saw it."""
+        cached = self._rtds_opens.get(market.market_id)
+        if cached is not None:
+            return cached
+        start_ms = int(market.window_start.replace(tzinfo=timezone.utc).timestamp() * 1000)
+        best: tuple[int, float] | None = None
+        for ts_ms, price in self._ticks:
+            distance = abs(ts_ms - start_ms)
+            if distance <= RTDS_OPEN_TOLERANCE_MS and (best is None or distance < abs(best[0] - start_ms)):
+                best = (ts_ms, price)
+        if best is None:
+            return None
+        found = (best[1], "polymarket-rtds")
+        self._rtds_opens[market.market_id] = found
+        while len(self._rtds_opens) > 24:
+            self._rtds_opens.pop(next(iter(self._rtds_opens)))
+        return found
 
     def snapshot(self, market: MarketInfo | None) -> dict:
         latest = self.latest
@@ -159,6 +192,7 @@ class BtcPriceFeed:
             self._opens.pop(next(iter(self._opens)))
 
     def _record(self, ts_ms: int, price: float) -> None:
+        self._ticks.append((ts_ms, price))  # kept even if out of order: only used for window-start lookups
         if self._latest is not None and ts_ms < self._latest[0]:
             return  # out-of-order tick
         self._latest = (ts_ms, price)
