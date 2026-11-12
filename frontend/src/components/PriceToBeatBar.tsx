@@ -53,7 +53,7 @@ export function PriceToBeatBar({ className }: { className?: string }) {
             {diff !== null ? (
               <span className={cx("mono flex items-center gap-1 text-[11px] font-semibold", above ? "text-up" : "text-down")}>
                 <span aria-hidden="true">{above ? "▲" : "▼"}</span>
-                {`$${Math.round(Math.abs(diff)).toLocaleString("en-US")}`}
+                {fmtUsdGrouped(Math.abs(diff))}
               </span>
             ) : null}
           </div>
