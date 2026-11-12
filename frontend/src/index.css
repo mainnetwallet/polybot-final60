@@ -181,6 +181,13 @@ table.data-table th {
   white-space: nowrap;
 }
 
+/* Unlayered CSS beats Tailwind v4 utilities (@layer utilities), so the
+   th { text-align: left } above would override .text-right on headers. */
+table.data-table th.text-right,
+table.data-table td.text-right {
+  text-align: right;
+}
+
 table.data-table td {
   padding: 11px 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
