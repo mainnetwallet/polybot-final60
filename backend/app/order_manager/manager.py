@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app import clock
 from app.config.runtime import SettingsService
 from app.config.settings import Settings
 from app.database.models import Order, Position, TriggerEvent, utcnow
@@ -422,7 +423,7 @@ class OrderManager:
         pending = await asyncio.to_thread(self._partial_order_candidates, market.market_id, mode)
 
         for order_id, side, filled_size, avg_fill_price, requested_notional in pending:
-            now_ms = int(time.time() * 1000)
+            now_ms = clock.now_ms()
             last = self._retry_after.get(order_id, 0.0)
             if now_ms - last < 500:
                 continue

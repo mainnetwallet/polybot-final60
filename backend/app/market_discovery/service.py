@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from app import clock
 from app.config.settings import Settings
 from app.market_discovery.types import MarketInfo, ResolutionInfo, parse_iso, to_utc_naive
 
@@ -87,7 +88,7 @@ class MarketDiscovery:
         Three lookups, most reliable first. A lookup that errors or finds nothing falls
         through to the next one; only if every lookup errors is an error raised.
         """
-        now = to_utc_naive(now or datetime.now(timezone.utc))
+        now = to_utc_naive(now) if now else clock.now_utc()
         window = self._window_seconds()
         errors: list[Exception] = []
 

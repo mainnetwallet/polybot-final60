@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from app import clock
 from app.config.runtime import SettingsService
 from app.config.settings import Settings
 from app.database.models import AppState, Market, Order, Position, TriggerEvent, utcnow
@@ -193,6 +194,7 @@ class TradingBot:
             ).scalars().all()
             paper_open_count, live_open_count = len(paper_open), len(live_open)
 
+        self._clock_task = asyncio.create_task(clock.run(self.settings.clob_base_url), name="clock-sync")
         await self.discovery.start()
         await self.data.start()
         await self.btc.start()
@@ -234,6 +236,13 @@ class TradingBot:
         await self.monitor.stop()
         await self.data.stop()
         await self.btc.stop()
+        clock_task = getattr(self, "_clock_task", None)
+        if clock_task is not None:
+            clock_task.cancel()
+            try:
+                await clock_task
+            except asyncio.CancelledError:
+                pass
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
         await self.orders.close()
@@ -386,7 +395,7 @@ class TradingBot:
                 {
                     "type": "tick",
                     "data": {
-                        "server_time_ms": int(time.time() * 1000),
+                        "server_time_ms": clock.now_ms(),
                         "remaining_seconds": round(market.remaining_seconds(), 3) if market else None,
                         "books": {
                             "up": up_book.snapshot() if up_book else None,
@@ -1237,7 +1246,7 @@ class TradingBot:
             risk_halt = "daily_profit_target"
 
         return {
-            "server_time": iso_z(utcnow()),
+            "server_time": iso_z(clock.now_utc()),
             "bot": {
                 "status": self._status,
                 "mode": self._mode,

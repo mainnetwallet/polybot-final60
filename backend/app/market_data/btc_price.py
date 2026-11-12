@@ -31,6 +31,7 @@ from collections import deque
 import httpx
 import websockets
 
+from app import clock
 from app.config.settings import Settings
 from app.market_discovery.types import MarketInfo
 
@@ -62,7 +63,7 @@ DEFAULT_TOPIC = "crypto_prices_twap_sixty"  # Chainlink BTC/USD 60s TWAP, the se
 
 
 def _now_ms() -> int:
-    return int(time.time() * 1000)
+    return clock.now_ms()
 
 
 def _to_float(value) -> float | None:

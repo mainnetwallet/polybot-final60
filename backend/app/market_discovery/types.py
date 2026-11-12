@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from app import clock
+
 
 def to_utc_naive(value: datetime) -> datetime:
     if value.tzinfo is None:
@@ -42,7 +44,7 @@ class MarketInfo:
         return (self.window_end - self.window_start).total_seconds()
 
     def remaining_seconds(self, now: datetime | None = None) -> float:
-        now = to_utc_naive(now or datetime.now(timezone.utc))
+        now = to_utc_naive(now) if now else clock.now_utc()
         return (self.window_end - now).total_seconds()
 
     def token_for(self, side: str) -> str:
