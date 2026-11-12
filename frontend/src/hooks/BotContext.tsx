@@ -216,6 +216,7 @@ export function BotProvider({ children }: { children: ReactNode }) {
     let socket: WebSocket | null = null;
     let disposed = false;
     let retry: number | undefined;
+    let attempt = 0;
 
     const connect = () => {
       if (disposed) return;
@@ -224,6 +225,7 @@ export function BotProvider({ children }: { children: ReactNode }) {
       socket = new WebSocket(`${protocol}://${window.location.host}/api/ws`);
 
       socket.onopen = () => {
+        attempt = 0;
         if (!disposed) setFeedState("open");
       };
       socket.onmessage = (event) => {
@@ -247,7 +249,10 @@ export function BotProvider({ children }: { children: ReactNode }) {
       socket.onclose = () => {
         if (disposed) return;
         setFeedState("offline");
-        retry = window.setTimeout(connect, 500);
+        // first retry is immediate; later ones back off briefly so a down server is not hammered
+        const wait = attempt === 0 ? 0 : Math.min(250 * 2 ** (attempt - 1), 2000);
+        attempt += 1;
+        retry = window.setTimeout(connect, wait);
       };
     };
 

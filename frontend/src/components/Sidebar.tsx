@@ -77,7 +77,7 @@ export function Sidebar({ page, onNavigate }: SidebarProps) {
         </div>
         <div className="mt-2.5 space-y-1.5 text-[10.5px] text-slate-500">
           <div className="flex items-center justify-between">
-            <span>First 4 min</span>
+            <span>Before window</span>
             <span className="text-slate-400">no trades</span>
           </div>
           <div className="flex items-center justify-between">

@@ -27,7 +27,7 @@ function PhaseTimeline() {
         <div>
           <div className="label">Trading phases</div>
           <div className="mt-1 text-[15px] font-semibold tracking-tight text-slate-100">
-            First 4 minutes silent · final 60 seconds live
+            First {observeSeconds % 60 === 0 ? `${observeSeconds / 60} minutes` : `${observeSeconds} seconds`} silent · final {finalWindow} seconds live
           </div>
         </div>
         <span className={cx("chip", active ? "border-amber/30 bg-amber/10 text-amber" : "border-sky/25 bg-sky/10 text-sky")}>
@@ -84,7 +84,7 @@ function PhaseTimeline() {
 
       <div className="mt-5 space-y-2 border-t hairline pt-4">
         {[
-          "Threshold $0.80 is a trigger, never a limit price.",
+          `Threshold $${snapshot.strategy.trigger_threshold.toFixed(2)} is a trigger, never a limit price.`,
           "Order price is the live best ask, bounded by max execution price.",
           "Stale quotes, expired markets and thin liquidity are blocked before submission.",
           "Duplicate and conflict policies decide when both sides qualify.",

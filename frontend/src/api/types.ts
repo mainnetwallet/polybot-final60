@@ -82,7 +82,6 @@ export interface OrderRow {
   filled_size: number;
   avg_fill_price: number | null;
   fee: number;
-  latency_ms: number | null;
   exchange_order_id: string | null;
   error?: string | null;
   reason?: string;
@@ -96,7 +95,6 @@ export interface LastOrder {
   reason: string;
   filled_size: number;
   avg_price: number | null;
-  latency_ms: number | null;
   exchange_order_id: string | null;
   error: string | null;
   ts?: string;
@@ -125,7 +123,6 @@ export interface Snapshot {
   books: { up: BookSnapshot | null; down: BookSnapshot | null };
   strategy: StrategyState;
   account: AccountState;
-  latency: { last_ms: number | null; avg_ms: number | null; samples: number };
   positions: PositionRow[];
   open_orders: OrderRow[];
   last_order: LastOrder | null;
@@ -150,8 +147,6 @@ export interface Analytics {
   realized_pnl: number;
   unrealized_pnl: number;
   avg_entry_price: number | null;
-  avg_latency_ms: number | null;
-  last_latency_ms: number | null;
   fees_paid: number;
   volume_usdc: number;
 }

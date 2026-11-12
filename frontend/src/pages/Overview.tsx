@@ -208,9 +208,10 @@ function MarketPanel() {
 
 function AccountPanel() {
   const { snapshot } = useBot();
-  const account = snapshot?.account;
-  const config = snapshot?.config ?? {};
-  const daily = account?.daily_pnl ?? 0;
+  if (!snapshot) return <LoadingPanel className="xl:col-span-4" />;
+  const account = snapshot.account;
+  const config = snapshot.config ?? {};
+  const daily = account.daily_pnl;
   const loss = Number(config.max_daily_loss ?? 0);
   const target = Number(config.daily_profit_target ?? 0);
 
@@ -223,14 +224,14 @@ function AccountPanel() {
       <PanelHead
         label="Account"
         title="Daily risk envelope"
-        right={snapshot ? <ModeBadge mode={snapshot.bot.mode} /> : null}
+        right={<ModeBadge mode={snapshot.bot.mode} />}
       />
 
       <div className="flex items-end justify-between">
         <div>
           <div className="label">Available balance</div>
           <div className="mono mt-1 text-[30px] font-semibold leading-none tracking-tight text-slate-100">
-            {fmtUsd(account?.balance)}
+            {fmtUsd(account.balance)}
           </div>
         </div>
         <div className="text-right">
@@ -256,29 +257,29 @@ function AccountPanel() {
         </div>
         <div className="mt-2 flex items-center justify-between text-[10px]">
           <span className="mono text-down/80">stop -{fmtUsd(loss)}</span>
-          <span className="mono text-slate-600">{fmtUsd(account?.starting_balance)} start</span>
+          <span className="mono text-slate-600">{fmtUsd(account.starting_balance)} start</span>
           <span className="mono text-up/80">target +{fmtUsd(target)}</span>
         </div>
       </div>
 
       <div className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4 border-t hairline pt-4">
-        <Stat label="Realized" value={fmtSignedUsd(account?.realized_pnl)} tone={(account?.realized_pnl ?? 0) >= 0 ? "up" : "down"} />
+        <Stat label="Realized" value={fmtSignedUsd(account.realized_pnl)} tone={account.realized_pnl >= 0 ? "up" : "down"} />
         <Stat
           label="Unrealized"
-          value={fmtSignedUsd(account?.unrealized_pnl)}
-          tone={(account?.unrealized_pnl ?? 0) >= 0 ? "up" : "down"}
+          value={fmtSignedUsd(account.unrealized_pnl)}
+          tone={account.unrealized_pnl >= 0 ? "up" : "down"}
           hint={
-            account?.positions_awaiting_settlement
+            account.positions_awaiting_settlement
               ? `${account.positions_awaiting_settlement} settling…`
-              : account?.pending_redeems
+              : account.pending_redeems
                 ? `${account.pending_redeems} redeeming…`
                 : undefined
           }
         />
-        <Stat label="Trades today" value={account?.trades_today ?? 0} hint={`max ${String(config.max_trades_per_day ?? "—")} / day`} />
+        <Stat label="Trades today" value={account.trades_today} hint={`max ${String(config.max_trades_per_day ?? "—")} / day`} />
         <Stat
           label="Open positions"
-          value={snapshot?.positions.length ?? 0}
+          value={snapshot.positions.length}
           hint={`max ${String(config.max_open_positions ?? "—")}`}
         />
       </div>
@@ -381,11 +382,11 @@ function StrategyPulse() {
 }
 
 function FeedPanel() {
-  const { snapshot } = useBot();
+  const { snapshot, clockOffsetMs } = useBot();
   const data = snapshot?.market_data;
   const config = snapshot?.config ?? {};
   const lastMessage = data?.last_message_ms;
-  const age = lastMessage ? Date.now() - lastMessage : null;
+  const age = lastMessage ? Date.now() + clockOffsetMs - lastMessage : null;
 
   return (
     <section className="panel p-5 xl:col-span-4">
@@ -411,7 +412,7 @@ function FeedPanel() {
           value={age === null ? "—" : age < 1000 ? "now" : `${Math.round(age / 1000)}s ago`}
           hint="last book event"
         />
-        <Stat label="Reconnects" value={data?.reconnects ?? 0} hint="websocket feed" />
+        <Stat label="Reconnects" value={data?.reconnects ?? "—"} hint="websocket feed" />
         <Stat label="Order size" value={fmtUsd(Number(config.trade_amount_usdc ?? 0))} hint="marketable notional" />
         <Stat
           label="Max exec price"

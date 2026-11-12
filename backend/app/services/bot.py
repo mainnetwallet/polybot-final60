@@ -210,9 +210,7 @@ class TradingBot:
             self.monitor.track(market)
             self.data.set_market(market)
             if self._mode == "live":
-                asyncio.create_task(
-                    self.live_engine.prewarm([market.up_token_id, market.down_token_id])
-                )
+                self._prewarm_live(market)
             self.orders.reset_trigger_cache()
             self._evaluation = None
             self._market_finalized.discard(market.market_id)
@@ -269,23 +267,36 @@ class TradingBot:
             row.status = "active"
             session.flush()
 
+    def _prewarm_live(self, market: MarketInfo) -> None:
+        """Warm tick size / neg-risk / fee info for the active market (no-op until the client exists)."""
+        asyncio.create_task(
+            self.live_engine.prewarm([market.up_token_id, market.down_token_id], market.market_id)
+        )
+
     async def _on_book(self, market_id: str, side: str, book) -> None:
         market = self._market
         if market is None or market.market_id != market_id:
             return
         config = self.runtime.get()
         now_ms = int(time.time() * 1000)
-        last_persist = self._last_price_persist_ms.get(side, 0)
-        if now_ms - last_persist >= self.settings.ws_price_persist_interval_ms:
-            self._last_price_persist_ms[side] = now_ms
-            self._persist_price(market_id, side, book)
 
         evaluation = self.strategy.evaluate(market, self.data.books, now_ms, config)
         self._evaluation = evaluation
         self._schedule_tick()
-        if self._status != "RUNNING":
-            return
+        try:
+            if self._status == "RUNNING":
+                await self._handle_trading(market, evaluation, config, now_ms)
+        finally:
+            # Price history is written after the trade path so a database write never
+            # sits between a book event and the order.
+            last_persist = self._last_price_persist_ms.get(side, 0)
+            if now_ms - last_persist >= self.settings.ws_price_persist_interval_ms:
+                self._last_price_persist_ms[side] = now_ms
+                self._persist_price(market_id, side, book)
 
+    async def _handle_trading(
+        self, market: MarketInfo, evaluation: StrategyEvaluation, config, now_ms: int
+    ) -> None:
         # The risk context hits the database; only build it when a signal needs it.
         ctx = None
         if evaluation.signals:
@@ -439,6 +450,8 @@ class TradingBot:
             self._risk_halt_reason = None
             self._risk_halt_logged = False
             self.orders.reset_trigger_cache()
+            if self._mode == "live" and self._market is not None:
+                self._prewarm_live(self._market)
             self.logs.log(
                 "INFO",
                 "system",
@@ -793,6 +806,7 @@ class TradingBot:
         balance = await self.live_engine.get_balance()
         if balance is None:
             return
+        changed = self._live_balance is None or abs(self._live_balance - balance) > 1e-9
         self._live_balance = balance
         self._live_balance_at = time.monotonic()
         try:
@@ -800,6 +814,8 @@ class TradingBot:
                 self.portfolio.set_cached_balance(session, "live", balance)
         except Exception as exc:
             logger.debug("live balance cache failed: %s", exc)
+        if changed:
+            await self._broadcast_state()
 
     async def _reconcile_live_positions(self) -> None:
         if self._mode != "live":

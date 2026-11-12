@@ -146,3 +146,69 @@ def test_discovery_slug_gives_exact_window_start():
     start = MarketDiscovery._start_from_slug("btc-updown-5m-1760000100")
     assert start == datetime(2025, 10, 9, 8, 55, 0)
     assert MarketDiscovery._start_from_slug("no-number-here") is None
+
+
+class _FeeV2Client(_FakeV2Client):
+    """Fake CLOB V2 client that also serves the market's fee parameters (``fd``)."""
+
+    def __init__(self, response, fd):
+        super().__init__(response)
+        self.fd = fd
+        self.lookups = 0
+
+    def get_clob_market_info(self, condition_id):
+        self.lookups += 1
+        return {"t": [{"t": "tok"}], "fd": self.fd}
+
+
+def test_live_fill_records_taker_fee_from_market_parameters():
+    engine = LiveExecutionEngine(Settings())
+    client = _FeeV2Client(
+        {
+            "success": True, "orderID": "0xabc", "status": "matched",
+            "makingAmount": "5", "takingAmount": "6.25",
+        },
+        {"r": 0.07, "e": 1},
+    )
+    report = engine._place_sync(client, _request())
+    # docs.polymarket.com/trading/fees: 6.25 shares * 0.07 * 0.8 * 0.2 = 0.07 USDC
+    assert report.fee == 0.07
+    assert report.fills[0].fee == 0.07
+    assert client.lookups == 1
+    # second fill on the same token reuses the cached parameters
+    engine._place_sync(client, _request())
+    assert client.lookups == 1
+
+
+def test_live_fee_is_zero_for_fee_free_market():
+    engine = LiveExecutionEngine(Settings())
+    client = _FeeV2Client(
+        {
+            "success": True, "orderID": "0xabc", "status": "matched",
+            "makingAmount": "5", "takingAmount": "6.25",
+        },
+        {"r": 0, "e": 1},
+    )
+    assert engine._place_sync(client, _request()).fee == 0.0
+
+
+def test_live_fee_falls_back_to_documented_rate_when_market_info_missing():
+    engine = LiveExecutionEngine(Settings())
+    # _FakeV2Client has no get_clob_market_info: the lookup fails quietly
+    client = _FakeV2Client(
+        {
+            "success": True, "orderID": "0xabc", "status": "matched",
+            "makingAmount": "5", "takingAmount": "6.25",
+        }
+    )
+    report = engine._place_sync(client, _request())
+    assert report.fee == engine.estimate_fee("tok", 6.25, 0.8) == 0.07
+
+
+def test_live_fee_matches_docs_table_and_rounds_to_five_decimals():
+    engine = LiveExecutionEngine(Settings())
+    engine._fee_params["tok"] = (0.07, 1.0)
+    assert engine.estimate_fee("tok", 100, 0.80) == 1.12  # docs fee table, crypto, $0.80
+    assert engine.estimate_fee("tok", 100, 0.50) == 1.75
+    assert engine.estimate_fee("tok", 100, 0.99) == 0.0693  # docs table shows 0.07 (2-dp rounding)
+    assert engine.estimate_fee("tok", 0.001, 0.99) == 0.0  # below 0.00001 rounds to zero

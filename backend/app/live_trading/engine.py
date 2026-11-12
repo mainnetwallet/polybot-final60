@@ -51,6 +51,8 @@ class LiveExecutionEngine(ExecutionEngine):
         self._creds_ready = False
         self._lock = asyncio.Lock()
         self._balance_hint = balance_hint
+        # token_id -> (fee rate, exponent) as published by the CLOB market info (``fd``).
+        self._fee_params: dict[str, tuple[float, float]] = {}
 
     # ------------------------------------------------------------------
     def _validate_gates(self) -> None:
@@ -97,12 +99,43 @@ class LiveExecutionEngine(ExecutionEngine):
             return self._client
 
     # ------------------------------------------------------------------
-    async def prewarm(self, token_ids: list[str]) -> None:
-        """Cache tick size / neg-risk for a market so the first order has no lookups."""
+    def _load_fee_params(self, client, condition_id: str, token_ids: list[str]) -> None:
+        """Cache the market's taker fee parameters (CLOB ``fd.r`` rate / ``fd.e`` exponent)."""
+        info = client.get_clob_market_info(condition_id)
+        fd = (info or {}).get("fd") or {}
+        if "r" not in fd:
+            return
+        rate = float(fd["r"])
+        exponent = float(fd.get("e", self._settings.paper_fee_exponent))
+        for token_id in token_ids:
+            self._fee_params[token_id] = (rate, exponent)
+
+    def estimate_fee(self, token_id: str, size: float, price: float) -> float:
+        """Taker fee in USDC: ``size * rate * (p * (1 - p)) ** exponent``, 5 decimals.
+
+        docs.polymarket.com/trading/fees: fees are taker-only, charged in USDC at match
+        time and rounded to 5 decimal places. The rate comes from the market's own CLOB
+        parameters; when those are unavailable the documented crypto rate from the
+        settings is used so the PnL never silently ignores fees.
+        """
+        rate, exponent = self._fee_params.get(
+            token_id, (self._settings.paper_fee_rate, self._settings.paper_fee_exponent)
+        )
+        if size <= 0 or price <= 0 or price >= 1:
+            return 0.0
+        return round(size * rate * ((price * (1.0 - price)) ** exponent), 5)
+
+    async def prewarm(self, token_ids: list[str], condition_id: str | None = None) -> None:
+        """Cache tick size / neg-risk / fee parameters so the first order has no lookups."""
         if self._client is None:
             return
 
         def _warm(client) -> None:
+            if condition_id:
+                try:
+                    self._load_fee_params(client, condition_id, token_ids)
+                except Exception as exc:  # best effort only
+                    logger.debug("live fee prewarm failed for %s: %s", condition_id[:10], exc)
             for token_id in token_ids:
                 try:
                     client.get_tick_size(token_id)
@@ -188,24 +221,36 @@ class LiveExecutionEngine(ExecutionEngine):
             taking /= 1_000_000.0
 
         if status_raw == "matched" and making > 0 and taking > 0:
+            self._ensure_fee_params(client, request)
             return self._report_from_amounts(order_id, making, taking, request, response)
 
         # delayed / live / missing amounts: confirm with the exchange.
         return self._reconcile(client, order_id, request, response)
 
+    def _ensure_fee_params(self, client, request: OrderRequest) -> None:
+        """Runs after the order was posted, so a lookup here never delays the trade."""
+        if request.token_id in self._fee_params or not request.market_id:
+            return
+        try:
+            self._load_fee_params(client, request.market_id, [request.token_id])
+        except Exception as exc:  # falls back to the configured documented rate
+            logger.debug("live fee lookup failed: %s", exc)
+
     def _report_from_amounts(
         self, order_id: str, making: float, taking: float, request: OrderRequest, raw: dict
     ) -> ExecutionReport:
         price = round(making / taking, 6)
+        size = round(taking, 8)
+        fee = self.estimate_fee(request.token_id, size, price)
         status = "FILLED" if making >= 0.98 * request.notional else "PARTIALLY_FILLED"
         return ExecutionReport(
             status=status,
-            filled_size=round(taking, 8),
+            filled_size=size,
             avg_price=price,
-            fee=0.0,
+            fee=fee,
             submitted_price=price,
             exchange_order_id=order_id,
-            fills=[FillPart(price=price, size=round(taking, 8), fee=0.0, exchange_trade_id=None)],
+            fills=[FillPart(price=price, size=size, fee=fee, exchange_trade_id=None)],
             raw=raw,
         )
 
@@ -263,14 +308,16 @@ class LiveExecutionEngine(ExecutionEngine):
                 raw=raw,
             )
         spent = size_matched * price
+        self._ensure_fee_params(client, request)
+        fee = self.estimate_fee(request.token_id, round(size_matched, 8), price)
         return ExecutionReport(
             status="FILLED" if spent >= 0.98 * request.notional else "PARTIALLY_FILLED",
             filled_size=round(size_matched, 8),
             avg_price=price,
-            fee=0.0,
+            fee=fee,
             submitted_price=price,
             exchange_order_id=order_id,
-            fills=[FillPart(price=price, size=round(size_matched, 8), fee=0.0)],
+            fills=[FillPart(price=price, size=round(size_matched, 8), fee=fee)],
             raw=raw,
         )
 

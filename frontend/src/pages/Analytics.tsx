@@ -40,7 +40,7 @@ export function Analytics() {
           {polled.error ? <span className="chip border-down/25 bg-down/10 text-down">api error</span> : null}
           <span className="chip border-white/8 bg-white/[0.03] text-slate-500">
             <IconActivity size={10} />
-            {analytics?.total_trades ?? 0} trades
+            {analytics ? analytics.total_trades : "—"} trades
           </span>
         </div>
       </section>
@@ -49,8 +49,8 @@ export function Analytics() {
         <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-5">
           <Stat label="Realized PnL" value={fmtSignedUsd(analytics?.realized_pnl)} tone={(analytics?.realized_pnl ?? 0) >= 0 ? "up" : "down"} hint="settled markets" />
           <Stat label="Unrealized PnL" value={fmtSignedUsd(analytics?.unrealized_pnl)} tone={(analytics?.unrealized_pnl ?? 0) >= 0 ? "up" : "down"} hint="marked at best bid" />
-          <Stat label="Fees paid" value={fmtUsd(analytics?.fees_paid ?? 0, 3)} hint="all fills" />
-          <Stat label="Volume" value={fmtUsd(analytics?.volume_usdc ?? 0)} hint="price × size" />
+          <Stat label="Fees paid" value={fmtUsd(analytics?.fees_paid, 3)} hint="all fills" />
+          <Stat label="Volume" value={fmtUsd(analytics?.volume_usdc)} hint="price × size" />
           <Stat label="Avg entry" value={fmtCents(analytics?.avg_entry_price)} hint="size-weighted" />
         </div>
       </section>

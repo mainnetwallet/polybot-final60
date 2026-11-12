@@ -470,6 +470,7 @@ class OrderManager:
             exchange_id = order.exchange_order_id
             current_size = order.filled_size
             status = order.status
+            token_id = order.token_id
             price = order.avg_fill_price or order.requested_price
 
         engine = self._executor_provider("live")
@@ -486,15 +487,21 @@ class OrderManager:
         if delta <= 0 and raw_status not in {"CANCELED", "CANCELLED", "EXPIRED", "MATCHED", "FILLED"}:
             return
 
+        fee = 0.0
+        estimate_fee = getattr(engine, "estimate_fee", None)
+        if delta > 0 and price and callable(estimate_fee):
+            fee = float(estimate_fee(token_id, delta, price))
         report = ExecutionReport(
             status="FILLED" if raw_status in {"MATCHED", "FILLED"} else status,
             filled_size=max(0.0, delta),
             avg_price=price if delta > 0 else None,
+            fee=fee,
             exchange_order_id=exchange_id,
             fills=[
                 FillPart(
                     price=price,
                     size=delta,
+                    fee=fee,
                     exchange_trade_id=f"live-reconcile-{exchange_id}-{size_matched}",
                 )
             ]
@@ -506,6 +513,7 @@ class OrderManager:
             if order is None:
                 return
             order.filled_size = round(current_size + max(0.0, delta), 10)
+            order.fee = round(order.fee + fee, 10)
             if raw_status in {"MATCHED", "FILLED"}:
                 order.status = "FILLED"
             elif raw_status in {"CANCELED", "CANCELLED", "EXPIRED"}:

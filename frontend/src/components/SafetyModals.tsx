@@ -199,7 +199,7 @@ export function StartLiveModal({ open, onClose }: { open: boolean; onClose: () =
       onClose={onClose}
       eyebrow="Live execution"
       title="Start the LIVE engine"
-      subtitle="The engine will submit real FOK marketable buys when an ask reaches the trigger inside the final 60 seconds."
+      subtitle={`The engine will submit real FOK marketable buys when an ask reaches the trigger inside the final window${snapshot ? ` (${snapshot.strategy.final_window_seconds} seconds)` : ""}.`}
       danger
       footer={
         <>
@@ -214,7 +214,7 @@ export function StartLiveModal({ open, onClose }: { open: boolean; onClose: () =
     >
       <div className="space-y-4">
         <Warning>
-          Real funds are at risk. Orders are marketable (FOK) at the current ask, never limited to $0.80. The
+          Real funds are at risk. Orders are marketable (FOK) at the current ask, never limited to the trigger price. The
           kill switch stops execution immediately.
         </Warning>
         <div className="flex items-center justify-between rounded-lg border hairline bg-black/20 px-3 py-2.5">

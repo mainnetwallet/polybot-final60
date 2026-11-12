@@ -97,7 +97,7 @@ class ClobMarketDataClient:
         self._connected = False
 
     async def _supervise(self) -> None:
-        backoff = 1.0
+        backoff = 0.1
         while self._running:
             desired = self._desired
             if desired is None:
@@ -127,7 +127,7 @@ class ClobMarketDataClient:
                     )
                     self._connected = True
                     self._last_error = None
-                    backoff = 1.0
+                    connected_at = time.monotonic()
                     logger.info("clob ws connected for market %s", market_id)
                     next_ping = time.monotonic() + self._settings.ws_heartbeat_seconds
                     while self._running and self._desired == desired:
@@ -146,7 +146,12 @@ class ClobMarketDataClient:
                         if raw.strip().upper() == "PONG" or not raw.strip():
                             continue
                         self._last_message_ms = now_ms()
+                        backoff = 0.1  # healthy stream: next reconnect is immediate
                         await self._handle_raw(raw)
+                if self._running and self._desired == desired and time.monotonic() - connected_at < 1.0:
+                    # server closed straight away: avoid a hot reconnect loop
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 5.0)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -154,7 +159,7 @@ class ClobMarketDataClient:
                 self._reconnects += 1
                 logger.warning("clob ws error: %s", self._last_error)
                 await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 15.0)
+                backoff = min(backoff * 2, 5.0)
             finally:
                 self._connected = False
 

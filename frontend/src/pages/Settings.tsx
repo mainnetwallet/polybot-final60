@@ -393,7 +393,8 @@ export function Settings() {
           </div>
           <div className="mt-4 rounded-lg border border-sky/15 bg-sky/[0.04] px-3 py-2.5 text-[10.5px] leading-relaxed text-sky/80">
             The trigger is an activation threshold. The submitted price is always the live ask, capped by the max
-            execution price. $0.80 is never placed as a limit.
+            execution price. {snapshot ? `$${snapshot.strategy.trigger_threshold.toFixed(2)}` : "The trigger"} is never
+            placed as a limit.
           </div>
         </section>
 

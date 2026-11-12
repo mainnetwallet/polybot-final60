@@ -10,9 +10,13 @@ export function useRemainingSeconds(): number | null {
 
   useEffect(() => {
     if (!active) return;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 50);
-    return () => window.clearInterval(timer);
+    let frame = 0;
+    const loop = () => {
+      setNow(Date.now());
+      frame = window.requestAnimationFrame(loop);
+    };
+    loop();
+    return () => window.cancelAnimationFrame(frame);
   }, [active, end]);
 
   return active ? (end - (now + clockOffsetMs)) / 1000 : null;

@@ -62,14 +62,14 @@ export function Trading() {
           </div>
           <div>
             <div className="label">Open orders</div>
-            <div className="mono mt-1 text-[16px] text-slate-100">{openOrders.length}</div>
+            <div className="mono mt-1 text-[16px] text-slate-100">{snapshot ? openOrders.length : "—"}</div>
           </div>
         </div>
       </section>
 
       <section className="panel p-5 xl:col-span-12">
         <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-5">
-          <Stat label="Total trades" value={analytics?.total_trades ?? 0} hint={`${analytics?.closed_trades ?? 0} settled`} />
+          <Stat label="Total trades" value={analytics?.total_trades ?? "—"} hint={analytics ? `${analytics.closed_trades} settled` : undefined} />
           <Stat
             label="Win rate"
             value={analytics?.win_rate != null ? `${analytics.win_rate.toFixed(1)}%` : "—"}
@@ -80,9 +80,9 @@ export function Trading() {
             label="Total PnL"
             value={fmtSignedUsd(analytics?.total_pnl)}
             tone={(analytics?.total_pnl ?? 0) >= 0 ? "up" : "down"}
-            hint={`fees ${fmtUsd(analytics?.fees_paid ?? 0, 3)}`}
+            hint={`fees ${fmtUsd(analytics?.fees_paid, 3)}`}
           />
-          <Stat label="Volume" value={fmtUsd(analytics?.volume_usdc ?? 0)} hint="USDC notional" />
+          <Stat label="Volume" value={fmtUsd(analytics?.volume_usdc)} hint="USDC notional" />
           <Stat label="Avg entry" value={fmtCents(analytics?.avg_entry_price)} hint="share price" />
         </div>
       </section>
