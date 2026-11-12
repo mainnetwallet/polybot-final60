@@ -61,11 +61,19 @@ async def test_running_market_is_not_polled():
     assert fake.calls == 0
 
 
+def _clob_no_winner(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(404, json={"error": "not found"})
+
+
 def _discovery_with(handlers):
     settings = get_settings()
     discovery = MarketDiscovery(settings)
     discovery._client = httpx.AsyncClient(
         base_url=settings.gamma_base_url, transport=httpx.MockTransport(handlers["gamma"])
+    )
+    discovery._clob_client = httpx.AsyncClient(
+        base_url=settings.clob_base_url,
+        transport=httpx.MockTransport(handlers.get("clob", _clob_no_winner)),
     )
     return discovery
 
@@ -124,6 +132,88 @@ async def test_gamma_fallback_needs_terminal_prices_not_just_closed():
     info = await done.get_resolution(market)
     assert (info.closed, info.outcome) == (True, "UP")
     await done.close()
+
+
+def _clob_market(winner_up=None, winner_down=None, extra=None):
+    tokens = [
+        {"token_id": "up-token", "outcome": "Up", "winner": winner_up},
+        {"token_id": "down-token", "outcome": "Down", "winner": winner_down},
+    ]
+    return {"closed": True, "tokens": extra if extra is not None else tokens}
+
+
+def _gamma_still_pending(request: httpx.Request) -> httpx.Response:
+    """Gamma lag: market not closed / no terminal prices yet."""
+    return httpx.Response(
+        200,
+        json=[{"markets": [{
+            "closed": False,
+            "outcomes": json.dumps(["Up", "Down"]),
+            "outcomePrices": json.dumps(["0.55", "0.45"]),
+        }]}],
+    )
+
+
+@pytest.mark.asyncio
+async def test_clob_winner_settles_even_while_gamma_lags():
+    market = _finished_market()
+    gamma_calls = []
+
+    def gamma(request):
+        gamma_calls.append(request)
+        return _gamma_still_pending(request)
+
+    def clob(request):
+        assert request.url.path == f"/markets/{market.market_id}"
+        return httpx.Response(200, json=_clob_market(winner_up=False, winner_down=True))
+
+    discovery = _discovery_with({"gamma": gamma, "clob": clob})
+    info = await discovery.get_resolution(market)
+    assert (info.closed, info.outcome) == (True, "DOWN")
+    assert gamma_calls == [], "Gamma must not be needed once CLOB reports the winner"
+    await discovery.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _clob_market(winner_up=False, winner_down=False),  # nothing flagged yet
+        _clob_market(winner_up=True, winner_down=True),  # ambiguous
+        _clob_market(extra=[{"token_id": "other-a", "winner": True}, {"token_id": "other-b", "winner": False}]),
+        {"closed": True},  # no tokens key
+    ],
+)
+async def test_clob_unusable_answer_falls_back_to_gamma(payload):
+    market = _finished_market()
+
+    def gamma(request):
+        return httpx.Response(
+            200,
+            json=[{"markets": [{
+                "closed": True,
+                "outcomes": json.dumps(["Up", "Down"]),
+                "outcomePrices": json.dumps(["1", "0"]),
+            }]}],
+        )
+
+    discovery = _discovery_with({"gamma": gamma, "clob": lambda r: httpx.Response(200, json=payload)})
+    info = await discovery.get_resolution(market)
+    assert (info.closed, info.outcome) == (True, "UP")  # came from Gamma
+    await discovery.close()
+
+
+@pytest.mark.asyncio
+async def test_clob_failure_falls_back_to_gamma_and_stays_pending():
+    market = _finished_market()
+
+    def clob(request):
+        raise httpx.ConnectError("boom")
+
+    discovery = _discovery_with({"gamma": _gamma_still_pending, "clob": clob})
+    info = await discovery.get_resolution(market)
+    assert (info.closed, info.outcome) == (False, None)
+    await discovery.close()
 
 
 # ---------------------------------------------------------------------------

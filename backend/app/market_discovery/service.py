@@ -29,6 +29,7 @@ class MarketDiscovery:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._client: httpx.AsyncClient | None = None
+        self._clob_client: httpx.AsyncClient | None = None
         self._series_id: str | None = None
         self._lock = asyncio.Lock()
 
@@ -45,6 +46,9 @@ class MarketDiscovery:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+        if self._clob_client is not None:
+            await self._clob_client.aclose()
+            self._clob_client = None
 
     async def _get(self, path: str, params: dict | None = None) -> object:
         if self._client is None:
@@ -264,8 +268,57 @@ class MarketDiscovery:
                     return ResolutionInfo(market.market_id, True, side)
         return ResolutionInfo(market.market_id, True, None)
 
+    async def _clob_resolution(self, market: MarketInfo) -> ResolutionInfo | None:
+        """Fast path: CLOB ``GET /markets/{condition_id}`` -> ``tokens[].winner``.
+
+        Gamma often publishes ``closed`` / terminal ``outcomePrices`` minutes after the
+        window ends, while the CLOB market already flags the winning token. The winner
+        is only trusted when exactly one token is flagged and it is this market's UP or
+        DOWN token. Anything else (error, no winner yet, unknown token) returns ``None``
+        so the caller falls back to Gamma exactly as before.
+        """
+        if not market.market_id:
+            return None
+        if self._clob_client is None:
+            self._clob_client = httpx.AsyncClient(
+                base_url=self._settings.clob_base_url,
+                timeout=httpx.Timeout(5.0),
+                headers={"User-Agent": self._settings.http_user_agent, "Accept": "application/json"},
+            )
+        try:
+            response = await self._clob_client.get(f"/markets/{market.market_id}")
+            response.raise_for_status()
+            data = response.json()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # single attempt; the next poll is a few seconds away
+            logger.debug("CLOB resolution lookup failed for %s: %s", market.market_id, exc)
+            return None
+        if not isinstance(data, dict):
+            return None
+        tokens = data.get("tokens")
+        if not isinstance(tokens, list):
+            return None
+        winners = [t for t in tokens if isinstance(t, dict) and t.get("winner") is True]
+        if len(winners) != 1:
+            return None
+        token_id = str(winners[0].get("token_id") or "")
+        if token_id == market.up_token_id:
+            return ResolutionInfo(market.market_id, True, "UP")
+        if token_id == market.down_token_id:
+            return ResolutionInfo(market.market_id, True, "DOWN")
+        logger.warning(
+            "CLOB winner token %s does not match market %s tokens; using Gamma",
+            token_id[:12],
+            market.market_id[:12],
+        )
+        return None
+
     async def get_resolution(self, market: MarketInfo) -> ResolutionInfo:
-        """Resolve a finished market from Gamma's documented event-by-slug response."""
+        """Resolve a finished market: CLOB winner flag first, Gamma as the fallback."""
+        clob = await self._clob_resolution(market)
+        if clob is not None and clob.outcome:
+            return clob
         return await self._gamma_resolution(market)
 
 
