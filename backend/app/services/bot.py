@@ -19,7 +19,7 @@ from app.execution.base import ExecutionEngine
 from app.live_trading.engine import LiveExecutionEngine, LiveTradingUnavailable
 from app.market_data.client import ClobMarketDataClient
 from app.market_discovery.service import MarketDiscovery, MarketMonitor
-from app.market_discovery.types import MarketInfo
+from app.market_discovery.types import MarketInfo, ResolutionInfo
 from app.monitoring.logs import LogService, Publisher
 from app.order_manager.manager import OrderManager, OrderResult
 from app.paper_trading.engine import PaperExecutionEngine
@@ -107,6 +107,7 @@ class TradingBot:
         self._market_finalized: set[str] = set()
         self._last_marks: dict[tuple[str, str], float] = {}
         self._resolution_pending_logged: set[str] = set()
+        self._stuck_logged: set[str] = set()
         self._last_resolution_poll = 0.0
         self._last_live_reconcile = 0.0
         self._risk_halt_reason: str | None = None
@@ -608,6 +609,7 @@ class TradingBot:
             self._last_price_persist_ms.clear()
             self._market_finalized.clear()
             self._resolution_pending_logged.clear()
+            self._stuck_logged.clear()
             self._redeem_queue.clear()
             self._redeem_notice_logged.clear()
             self._risk_halt_reason = None
@@ -838,49 +840,128 @@ class TradingBot:
     async def _poll_resolutions(self) -> None:
         await self._retrack_unsettled_markets()
         results = await self.monitor.poll_resolution()
+        resolved_ids: set[str] = set()
         for info in results:
-            with session_scope() as session:
-                row = session.execute(
-                    select(Market).where(Market.market_id == info.market_id)
-                ).scalar_one_or_none()
-                if row is not None:
-                    row.status = "resolved" if info.outcome else "closed"
-                if info.outcome and row is not None:
-                    row.resolved_outcome = info.outcome
-                    row.resolved_at = utcnow()
+            await self._apply_resolution(info)
             if info.outcome:
-                for mode in ("paper", "live"):
-                    with session_scope() as session:
-                        closed = self.portfolio.settle(session, mode, info.market_id, info.outcome)
-                    if closed and mode == "live" and any(p.resolution == p.side for p in closed):
-                        self._queue_live_redeem(info.market_id)
-                    if closed:
-                        pnl = round(sum(p.realized_pnl for p in closed), 6)
-                        self.logs.log(
-                            "INFO",
-                            "settlement",
-                            f"market resolved {info.outcome}; {len(closed)} position(s) settled, pnl {pnl:+.4f} USDC",
-                            payload={
-                                "market_id": info.market_id,
-                                "outcome": info.outcome,
-                                "positions": len(closed),
-                                "pnl": pnl,
-                                "mode": mode,
-                            },
-                            mode=mode,
-                        )
-                await self.orders.finalize_market(info.market_id, "paper", "market resolved")
-                await self.orders.finalize_market(info.market_id, "live", "market resolved")
-                await self._broadcast_state()
-            elif info.market_id not in self._resolution_pending_logged:
-                self._resolution_pending_logged.add(info.market_id)
+                resolved_ids.add(info.market_id)
+        if self._mode == "live":
+            await self._settle_from_wallet(resolved_ids)
+        await self._diagnose_stuck_markets(resolved_ids)
+
+    STUCK_AFTER_SECONDS = 180.0
+
+    async def _diagnose_stuck_markets(self, resolved_ids: set[str]) -> None:
+        """Log once, with the raw CLOB/Gamma answers, why an ended market is still unsettled."""
+        for market in self.monitor.open_markets.values():
+            if market.market_id in resolved_ids or market.market_id in self._stuck_logged:
+                continue
+            if market.remaining_seconds() > -self.STUCK_AFTER_SECONDS:
+                continue
+            with session_scope() as session:
+                has_open = session.execute(
+                    select(Position.id).where(
+                        Position.market_id == market.market_id, Position.status == "open"
+                    )
+                ).first()
+            if not has_open:
+                continue
+            self._stuck_logged.add(market.market_id)
+            try:
+                detail = await self.discovery.describe_resolution(market)
+            except Exception as exc:  # diagnostics only
+                detail = {"error": type(exc).__name__}
+            self.logs.log(
+                "WARNING",
+                "settlement",
+                f"market {market.slug} ended >{int(self.STUCK_AFTER_SECONDS)}s ago but is still unsettled",
+                payload={"market_id": market.market_id, **detail},
+                mode=self._mode,
+            )
+
+    async def _apply_resolution(self, info) -> None:
+        with session_scope() as session:
+            row = session.execute(
+                select(Market).where(Market.market_id == info.market_id)
+            ).scalar_one_or_none()
+            if row is not None:
+                row.status = "resolved" if info.outcome else "closed"
+            if info.outcome and row is not None:
+                row.resolved_outcome = info.outcome
+                row.resolved_at = utcnow()
+        if info.outcome:
+            for mode in ("paper", "live"):
+                with session_scope() as session:
+                    closed = self.portfolio.settle(session, mode, info.market_id, info.outcome)
+                if closed and mode == "live" and any(p.resolution == p.side for p in closed):
+                    self._queue_live_redeem(info.market_id)
+                if closed:
+                    pnl = round(sum(p.realized_pnl for p in closed), 6)
+                    self.logs.log(
+                        "INFO",
+                        "settlement",
+                        f"market resolved {info.outcome}; {len(closed)} position(s) settled, pnl {pnl:+.4f} USDC",
+                        payload={
+                            "market_id": info.market_id,
+                            "outcome": info.outcome,
+                            "positions": len(closed),
+                            "pnl": pnl,
+                            "mode": mode,
+                        },
+                        mode=mode,
+                    )
+            await self.orders.finalize_market(info.market_id, "paper", "market resolved")
+            await self.orders.finalize_market(info.market_id, "live", "market resolved")
+            await self._broadcast_state()
+        elif info.market_id not in self._resolution_pending_logged:
+            self._resolution_pending_logged.add(info.market_id)
+            self.logs.log(
+                "WARNING",
+                "settlement",
+                f"market {info.market_id[:10]}… closed but outcome not published yet",
+                payload={"market_id": info.market_id},
+                mode=self._mode,
+            )
+
+    async def _settle_from_wallet(self, already_resolved: set[str]) -> None:
+        """Live fallback: settle ended positions from the wallet's redeemable tokens.
+
+        Gamma / CLOB can lag (or never flag the winner) while Polymarket already lets the
+        wallet redeem. Without this the UI stays on "settling…" after a manual redeem.
+        """
+        now = utcnow()
+        with session_scope() as session:
+            pending = {
+                m.market_id.lower(): (m.market_id, m.slug)
+                for m in session.execute(
+                    select(Market).where(
+                        Market.market_id.in_(
+                            select(Position.market_id).where(
+                                Position.mode == "live", Position.status == "open"
+                            )
+                        ),
+                        Market.window_end <= now,
+                    )
+                ).scalars().all()
+                if m.market_id not in already_resolved
+            }
+        if not pending:
+            return
+        wallet = await self.live_engine.wallet_resolutions()
+        if not wallet:
+            return
+        for key, (market_id, slug) in pending.items():
+            outcome = wallet.get(key)
+            if outcome:
+                self.monitor.untrack(slug)
                 self.logs.log(
-                    "WARNING",
+                    "INFO",
                     "settlement",
-                    f"market {info.market_id[:10]}… closed but outcome not published yet",
-                    payload={"market_id": info.market_id},
-                    mode=self._mode,
+                    f"market {market_id[:10]}… resolved {outcome} per wallet (redeemable); settling",
+                    payload={"market_id": market_id, "outcome": outcome},
+                    mode="live",
                 )
+                await self._apply_resolution(ResolutionInfo(market_id, True, outcome))
 
     # ------------------------------------------------------------------
     def _queue_live_redeem(self, market_id: str) -> None:

@@ -250,8 +250,13 @@ class MarketDiscovery:
         if not isinstance(events, list) or not events:
             return ResolutionInfo(market.market_id, False, None)
         event = events[0]
-        market_data = (event.get("markets") or [{}])[0]
-        if not market_data.get("closed"):
+        event_markets = [m for m in (event.get("markets") or []) if isinstance(m, dict)]
+        market_data = next(
+            (m for m in event_markets if str(m.get("conditionId") or "").lower() == market.market_id.lower()),
+            event_markets[0] if event_markets else {},
+        )
+        resolved_flag = str(market_data.get("umaResolutionStatus") or "").lower() == "resolved"
+        if not (market_data.get("closed") or event.get("closed") or resolved_flag):
             return ResolutionInfo(market.market_id, False, None)
         try:
             outcomes = json.loads(market_data.get("outcomes") or "[]")
@@ -299,20 +304,77 @@ class MarketDiscovery:
         tokens = data.get("tokens")
         if not isinstance(tokens, list):
             return None
-        winners = [t for t in tokens if isinstance(t, dict) and t.get("winner") is True]
+        tokens = [t for t in tokens if isinstance(t, dict)]
+        winners = [t for t in tokens if t.get("winner") is True]
+        if len(winners) != 1 and data.get("closed") is True:
+            # Some responses only expose terminal prices (1 / 0) on a closed market.
+            terminal = []
+            for token in tokens:
+                try:
+                    if float(token.get("price")) >= 0.99:
+                        terminal.append(token)
+                except (TypeError, ValueError):
+                    continue
+            if len(terminal) == 1:
+                winners = terminal
         if len(winners) != 1:
             return None
-        token_id = str(winners[0].get("token_id") or "")
+        winner = winners[0]
+        token_id = str(winner.get("token_id") or "")
         if token_id == market.up_token_id:
             return ResolutionInfo(market.market_id, True, "UP")
         if token_id == market.down_token_id:
             return ResolutionInfo(market.market_id, True, "DOWN")
+        # Token ids can use a different id space (CTF id vs Protocol V2 position id);
+        # the outcome label ("Up" / "Down") is unambiguous, so trust it instead.
+        side = self._side_from_label(winner.get("outcome"))
+        if side is not None:
+            return ResolutionInfo(market.market_id, True, side)
         logger.warning(
             "CLOB winner token %s does not match market %s tokens; using Gamma",
             token_id[:12],
             market.market_id[:12],
         )
         return None
+
+    async def describe_resolution(self, market: MarketInfo) -> dict:
+        """Compact view of what CLOB and Gamma currently say (diagnostics only)."""
+        detail: dict = {}
+        try:
+            if self._clob_client is not None:
+                response = await self._clob_client.get(f"/markets/{market.market_id}")
+                data = response.json() if response.status_code == 200 else {}
+                detail["clob"] = {
+                    "http": response.status_code,
+                    "closed": data.get("closed") if isinstance(data, dict) else None,
+                    "tokens": [
+                        {
+                            "outcome": t.get("outcome"),
+                            "price": t.get("price"),
+                            "winner": t.get("winner"),
+                            "token_matches": str(t.get("token_id")) in (market.up_token_id, market.down_token_id),
+                        }
+                        for t in (data.get("tokens") or [])
+                        if isinstance(t, dict)
+                    ]
+                    if isinstance(data, dict)
+                    else [],
+                }
+        except Exception as exc:
+            detail["clob"] = {"error": type(exc).__name__}
+        try:
+            events = await self._get("/events", {"slug": market.event_slug})
+            event = events[0] if isinstance(events, list) and events else {}
+            m = (event.get("markets") or [{}])[0]
+            detail["gamma"] = {
+                "event_closed": event.get("closed"),
+                "market_closed": m.get("closed"),
+                "uma_status": m.get("umaResolutionStatus"),
+                "outcomePrices": m.get("outcomePrices"),
+            }
+        except Exception as exc:
+            detail["gamma"] = {"error": type(exc).__name__}
+        return detail
 
     async def get_resolution(self, market: MarketInfo) -> ResolutionInfo:
         """Resolve a finished market: CLOB winner flag first, Gamma as the fallback."""
@@ -406,6 +468,9 @@ class MarketMonitor:
 
     def is_tracked(self, slug: str) -> bool:
         return slug in self._open_events
+
+    def untrack(self, slug: str) -> None:
+        self._open_events.pop(slug, None)
 
 
 __all__ = [

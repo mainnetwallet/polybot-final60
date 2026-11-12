@@ -35,7 +35,10 @@ are re-tracked and settled automatically. Use `start.bat -NoRestart` to keep an 
 
 When a market ends, the position shows **settling…** until Gamma marks the event closed and publishes
 the winning outcome price. The bot keeps checking tracked markets until the winner is known, including
-after a restart. Then:
+after a restart. The winner is read from the CLOB (token id or outcome label), then Gamma, and in live mode
+also from the wallet's `redeemable` tokens, so a position no longer stays on settling… while Polymarket
+already lets you redeem. If a market is still unsettled 3 minutes after it ended, a WARNING in the Logs page
+(`settlement`) shows exactly what CLOB and Gamma returned. Then:
 
 - **Paper:** the position closes, realized PnL is booked and the balance is credited (`+1 USDC` per winning share).
 - **Live:** per the official docs (`trading/positions/manage`) winning tokens become pUSD only after

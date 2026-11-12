@@ -490,6 +490,41 @@ class LiveExecutionEngine(ExecutionEngine):
                 found.add(str(cid).lower())
         return found
 
+    async def wallet_resolutions(self) -> dict[str, str] | None:
+        """Winners of resolved markets, read from the funder wallet's Data API positions.
+
+        Once a market is resolved on-chain, the wallet's tokens are flagged ``redeemable``
+        and priced 1 (winner) or 0 (loser). That happens before Gamma publishes its own
+        outcome, so it is an independent source for settling live positions. Returns
+        ``{condition_id_lower: "UP" | "DOWN"}``; ``None`` when the wallet cannot be read.
+        """
+        positions = await self.fetch_onchain_positions()
+        if positions is None:
+            return None
+        found: dict[str, str] = {}
+        for item in positions:
+            if not item.get("redeemable"):
+                continue
+            cid = str(item.get("conditionId") or item.get("condition_id") or "").lower()
+            outcome = str(item.get("outcome") or "").strip().upper()
+            if not cid or outcome not in {"UP", "DOWN"}:
+                continue
+            price = None
+            for key in ("curPrice", "cur_price", "current_price", "currentPrice", "price"):
+                if item.get(key) is not None:
+                    try:
+                        price = float(item[key])
+                    except (TypeError, ValueError):
+                        price = None
+                    break
+            if price is None:
+                continue
+            if price >= 0.99:
+                found[cid] = outcome
+            elif price <= 0.01:
+                found.setdefault(cid, "DOWN" if outcome == "UP" else "UP")
+        return found
+
     async def redeem_market(self, condition_id: str) -> dict:
         """Redeem winning tokens of a resolved market into pUSD.
 

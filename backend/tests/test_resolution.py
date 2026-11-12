@@ -342,3 +342,138 @@ def test_live_win_without_auto_redeem_only_warns():
     bot._queue_live_redeem(market.market_id)
     assert bot._redeem_queue == {}
     assert market.market_id in bot._redeem_notice_logged
+
+
+# ---------------------------------------------------------------------------
+# Live "settling…" regressions: winner must be found even when Gamma lags,
+# token ids use another id space, or the wallet already shows redeemable tokens.
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_clob_winner_matched_by_outcome_label_when_token_ids_differ():
+    market = _finished_market()
+    payload = _clob_market(
+        extra=[
+            {"token_id": "ctf-id-a", "outcome": "Up", "winner": False},
+            {"token_id": "ctf-id-b", "outcome": "Down", "winner": True},
+        ]
+    )
+    discovery = _discovery_with(
+        {"gamma": _gamma_still_pending, "clob": lambda r: httpx.Response(200, json=payload)}
+    )
+    info = await discovery.get_resolution(market)
+    assert (info.closed, info.outcome) == (True, "DOWN")
+    await discovery.close()
+
+
+@pytest.mark.asyncio
+async def test_clob_closed_market_with_terminal_prices_resolves_without_winner_flag():
+    market = _finished_market()
+    payload = _clob_market(
+        extra=[
+            {"token_id": "up-token", "outcome": "Up", "price": 1, "winner": False},
+            {"token_id": "down-token", "outcome": "Down", "price": 0, "winner": False},
+        ]
+    )
+    discovery = _discovery_with(
+        {"gamma": _gamma_still_pending, "clob": lambda r: httpx.Response(200, json=payload)}
+    )
+    info = await discovery.get_resolution(market)
+    assert (info.closed, info.outcome) == (True, "UP")
+    await discovery.close()
+
+
+@pytest.mark.asyncio
+async def test_gamma_uses_event_closed_or_uma_resolved_and_matching_condition():
+    market = _finished_market()
+
+    def gamma(request):
+        return httpx.Response(
+            200,
+            json=[{
+                "closed": False,
+                "markets": [
+                    {"conditionId": "0xother", "closed": False, "outcomes": json.dumps(["Up", "Down"]),
+                     "outcomePrices": json.dumps(["0", "1"])},
+                    {"conditionId": market.market_id, "closed": False, "umaResolutionStatus": "resolved",
+                     "outcomes": json.dumps(["Up", "Down"]), "outcomePrices": json.dumps(["1", "0"])},
+                ],
+            }],
+        )
+
+    discovery = _discovery_with({"gamma": gamma})
+    info = await discovery.get_resolution(market)
+    assert (info.closed, info.outcome) == (True, "UP")
+    await discovery.close()
+
+
+def _add_live_position(market, side="UP", size=5.0, price=0.8):
+    portfolio = Portfolio(get_settings())
+    with session_scope() as session:
+        order = Order(
+            order_key="lk1", client_order_id="lc1", mode="live", market_id=market.market_id,
+            side=side, token_id=market.up_token_id, status="FILLED",
+            requested_notional=size * price, requested_price=price,
+        )
+        session.add(order)
+        session.flush()
+        portfolio.apply_report(
+            session, "live", order,
+            ExecutionReport(
+                status="FILLED", filled_size=size, avg_price=price, fee=0.0,
+                fills=[FillPart(price=price, size=size, fee=0.0)],
+            ),
+        )
+    return portfolio
+
+
+@pytest.mark.asyncio
+async def test_live_position_settles_from_wallet_when_gamma_and_clob_lag():
+    market = _finished_market(slug="btc-updown-5m-wallet", market_id="0xWallet")
+    bot, _ = _bot_with_paper_position(market)
+    portfolio = _add_live_position(market, side="UP")
+    bot._mode = "live"
+
+    async def lagging(_market):
+        return ResolutionInfo(market.market_id, False, None)
+
+    class FakeLive:
+        async def wallet_resolutions(self):
+            return {market.market_id.lower(): "UP"}
+
+        async def get_balance(self):
+            return None
+
+    bot.discovery.get_resolution = lagging
+    bot.live_engine = FakeLive()
+
+    await bot._poll_resolutions()
+    with session_scope() as session:
+        assert portfolio.open_positions(session, "live") == []
+        assert portfolio.realized_today(session, "live") == pytest.approx(1.0)  # 5 - 4 cost
+    assert not bot.monitor.is_tracked(market.slug)
+    snap = await bot.snapshot()
+    assert snap["account"]["positions_awaiting_settlement"] == 0
+
+
+@pytest.mark.asyncio
+async def test_wallet_resolutions_reads_redeemable_positions():
+    from app.live_trading.engine import LiveExecutionEngine
+
+    engine = LiveExecutionEngine.__new__(LiveExecutionEngine)
+
+    async def fake_positions():
+        return [
+            {"conditionId": "0xAAA", "outcome": "Up", "redeemable": True, "curPrice": 1, "size": 5},
+            {"condition_id": "0xBBB", "outcome": "Up", "redeemable": True, "cur_price": 0, "current_size": 5},
+            {"conditionId": "0xCCC", "outcome": "Down", "redeemable": False, "curPrice": 1, "size": 5},
+            {"conditionId": "0xDDD", "outcome": "Down", "redeemable": True, "size": 5},  # no price: ignored
+        ]
+
+    engine.fetch_onchain_positions = fake_positions
+    assert await engine.wallet_resolutions() == {"0xaaa": "UP", "0xbbb": "DOWN"}
+
+    async def unreadable():
+        return None
+
+    engine.fetch_onchain_positions = unreadable
+    assert await engine.wallet_resolutions() is None
