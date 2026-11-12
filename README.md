@@ -54,7 +54,13 @@ Copy-paste commands (PowerShell):
 
 ```powershell
 cd .\polybot-final60          # go into the project folder (after git clone)
+git pull
 .\setup.bat                   # one-time install
+```
+
+Start and stop (run these whenever you need them):
+
+```powershell
 .\start.bat                   # start backend + dashboard
 .\stop.bat                    # stop everything
 ```
