@@ -65,8 +65,8 @@ class Portfolio:
         session.flush()
 
     def reset_all(self, session: Session) -> None:
-        """Wipe all trading data (orders, fills, positions, markets, prices, triggers, logs,
-        bot state) and recreate fresh accounts. Settings are kept."""
+        """Wipe every table (orders, fills, positions, markets, prices, triggers, logs,
+        setting overrides, bot state) and recreate fresh accounts."""
         for model in (
             Fill,
             Order,
@@ -75,12 +75,11 @@ class Portfolio:
             PriceUpdate,
             Market,
             LogEntry,
+            BotSetting,
             AppState,
             Account,
         ):
             session.execute(delete(model))
-        # Settings (.env + dashboard overrides) are kept; only daily-reset markers go.
-        session.execute(delete(BotSetting).where(BotSetting.key.like("daily_reset_at:%")))
         session.flush()
         session.add(AppState(id=1, status="STOPPED", mode="paper", kill_switch=False))
         self.ensure_accounts(session)
