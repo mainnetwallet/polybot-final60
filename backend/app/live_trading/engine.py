@@ -63,14 +63,15 @@ class LiveExecutionEngine(ExecutionEngine):
         if not self._settings.polymarket_private_key.strip():
             raise LiveTradingUnavailable("POLYMARKET_PRIVATE_KEY is not configured")
         signature_type = self._settings.polymarket_signature_type
-        if signature_type not in (0, 1, 2):
+        if signature_type not in (0, 1, 2, 3):
             raise LiveTradingUnavailable(
-                "POLYMARKET_SIGNATURE_TYPE must be 0 (EOA), 1 (email/magic proxy) or 2 (browser/MetaMask proxy)"
+                "POLYMARKET_SIGNATURE_TYPE must be 0 (EOA), 1 (email/magic proxy), "
+                "2 (browser/MetaMask proxy) or 3 (smart-contract / deposit wallet)"
             )
-        if signature_type in (1, 2) and not self._settings.polymarket_funder_address.strip():
+        if signature_type != 0 and not self._settings.polymarket_funder_address.strip():
             raise LiveTradingUnavailable(
-                "POLYMARKET_FUNDER_ADDRESS is required when POLYMARKET_SIGNATURE_TYPE is 1 or 2; "
-                "use the proxy wallet address shown on your Polymarket profile"
+                "POLYMARKET_FUNDER_ADDRESS is required when POLYMARKET_SIGNATURE_TYPE is 1, 2 or 3; "
+                "use the wallet address shown on your Polymarket profile"
             )
 
     def _build_client(self):
@@ -375,6 +376,17 @@ class LiveExecutionEngine(ExecutionEngine):
         )
         return response if isinstance(response, dict) else {}
 
+    def _refresh_collateral_sync(self, client) -> None:
+        """Ask the CLOB to re-sync its cached collateral balance/allowance (best effort)."""
+        from py_clob_client_v2 import AssetType, BalanceAllowanceParams
+
+        try:
+            client.update_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            )
+        except Exception:
+            logger.debug("collateral balance refresh failed", exc_info=True)
+
     def _balance_sync(self, client) -> float | None:
         return self._to_units(self._collateral_response(client).get("balance", "0"))
 
@@ -399,6 +411,7 @@ class LiveExecutionEngine(ExecutionEngine):
             raise LiveTradingUnavailable(
                 f"could not initialize CLOB client ({type(exc).__name__})"
             ) from exc
+        await asyncio.to_thread(self._refresh_collateral_sync, client)
         try:
             balance = await asyncio.to_thread(self._balance_sync, client)
             allowance = await asyncio.to_thread(self._allowance_sync, client)
@@ -410,7 +423,12 @@ class LiveExecutionEngine(ExecutionEngine):
             raise LiveTradingUnavailable("could not read collateral (pUSD) balance")
         if balance <= 0:
             raise LiveTradingUnavailable(
-                "collateral (pUSD) balance is zero; wrap USDC.e into pUSD via the Collateral Onramp"
+                (
+                "collateral (pUSD) balance is zero for this wallet "
+                f"(POLYMARKET_SIGNATURE_TYPE={self._settings.polymarket_signature_type}); "
+                "check the signature type / private key match your Polymarket account "
+                "(run scripts\\check_wallet.py), or wrap USDC.e into pUSD via the Collateral Onramp"
+            )
             )
         if allowance is None or allowance <= 0:
             raise LiveTradingUnavailable(

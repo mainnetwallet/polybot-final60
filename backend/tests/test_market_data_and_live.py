@@ -467,7 +467,7 @@ def test_redeemable_condition_ids_reads_v2_position_fields():
     assert asyncio.run(engine.redeemable_condition_ids()) == {"0xabc"}
 
 
-@pytest.mark.parametrize("signature_type", [1, 2])
+@pytest.mark.parametrize("signature_type", [1, 2, 3])
 def test_live_proxy_wallet_requires_funder_address(signature_type):
     engine = LiveExecutionEngine(
         Settings(
@@ -493,3 +493,37 @@ def test_live_rejects_unknown_signature_type():
     )
     with pytest.raises(LiveTradingUnavailable, match="SIGNATURE_TYPE"):
         engine._validate_gates()
+
+
+def test_live_smart_contract_wallet_signature_type_is_accepted():
+    engine = LiveExecutionEngine(
+        Settings(
+            live_trading_enabled=True,
+            polymarket_geo_verified=True,
+            polymarket_private_key="0x" + "1" * 64,
+            polymarket_signature_type=3,
+            polymarket_funder_address="0x" + "2" * 40,
+        )
+    )
+    engine._validate_gates()
+
+
+def test_live_validation_refreshes_cached_balance_before_reading_it():
+    engine = LiveExecutionEngine(Settings())
+    calls = []
+
+    class FakeClient:
+        def update_balance_allowance(self, params):
+            calls.append("update")
+
+        def get_balance_allowance(self, params):
+            calls.append("get")
+            return {"balance": "1210000", "allowance": "1000000000"}
+
+    async def ready():
+        return FakeClient()
+
+    engine._get_client = ready
+    result = asyncio.run(engine.validate())
+    assert calls[0] == "update"
+    assert result["balance"] == 1.21

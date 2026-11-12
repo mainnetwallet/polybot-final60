@@ -182,6 +182,12 @@ POLYMARKET_FUNDER_ADDRESS=<the proxy wallet address shown on your Polymarket pro
 POLYMARKET_SIGNATURE_TYPE=2
 ```
 
+Not sure which `POLYMARKET_SIGNATURE_TYPE` your account needs (0 = EOA, 1 = email/Magic, 2 = MetaMask proxy, 3 = smart-contract wallet)? Fill in the key and funder, then run the read-only checker, it shows the pUSD balance the CLOB sees for each type:
+
+```text
+.venv\Scripts\python.exe scripts\check_wallet.py
+```
+
 Your pUSD must sit in that proxy (funder) wallet. With `SIGNATURE_TYPE=1` or `2` the funder address is mandatory; the live check now fails with a clear message if it is empty.
 
 Rules for `.env`:
