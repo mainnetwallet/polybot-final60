@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 ACTIVE_STATUSES = ("PENDING", "SUBMITTED", "PARTIALLY_FILLED")
 TERMINAL_EMPTY = ("REJECTED", "CANCELED", "EXPIRED")
 ExecutorProvider = Callable[[str], ExecutionEngine]
+SubmissionAllowed = Callable[[str], bool]
 
 
 @dataclass
@@ -65,6 +66,7 @@ class OrderManager:
         risk: RiskManager,
         executor_provider: ExecutorProvider,
         logs: LogService,
+        submission_allowed: SubmissionAllowed | None = None,
     ) -> None:
         self._settings = settings
         self._runtime = runtime
@@ -72,10 +74,44 @@ class OrderManager:
         self._risk = risk
         self._executor_provider = executor_provider
         self._logs = logs
+        self._submission_allowed = submission_allowed or (lambda _mode: True)
         self._lock = asyncio.Lock()
         self._trigger_seen: set[tuple[str, str, str]] = set()
         self._trigger_market: str | None = None
         self._retry_after: dict[int, float] = {}
+        self._background_writes: set[asyncio.Task] = set()
+
+    def _schedule_trigger(self, signal: Signal, decision: str, reason: str, mode: str) -> None:
+        async def persist_then_publish() -> None:
+            await asyncio.to_thread(self._persist_trigger, signal, decision, reason)
+            self._logs.log(
+                "INFO" if decision == "submitted" else "WARNING",
+                "trigger",
+                f"{signal.side} ask {signal.best_ask:.3f} >= {signal.threshold:.2f} -> {decision}",
+                payload={
+                    "market_id": signal.market_id,
+                    "side": signal.side,
+                    "best_ask": signal.best_ask,
+                    "ask_size": signal.ask_size,
+                    "remaining_seconds": signal.remaining_seconds,
+                    "decision": decision,
+                    "reason": reason,
+                },
+                mode=mode,
+            )
+
+        task = asyncio.create_task(persist_then_publish())
+        self._background_writes.add(task)
+        task.add_done_callback(self._background_writes.discard)
+
+    async def close(self) -> None:
+        if self._background_writes:
+            await asyncio.gather(*self._background_writes, return_exceptions=True)
+
+    async def wait_for_submissions(self) -> None:
+        """Drain event handlers already inside the serialized submission path."""
+        async with self._lock:
+            pass
 
     # ------------------------------------------------------------------
     def _choose(self, signals: list[Signal], policy: str) -> Signal | None:
@@ -99,9 +135,7 @@ class OrderManager:
             return f"{mode}:{signal.market_id}:{signal.side}:{signal.observed_at_ms // 1000}"
         return f"{mode}:{signal.market_id}"
 
-    def _log_trigger_once(
-        self, signal: Signal, decision: str, reason: str, mode: str, persist: bool = True
-    ) -> None:
+    def _log_trigger_once(self, signal: Signal, decision: str, reason: str, mode: str) -> None:
         if self._trigger_market != signal.market_id:
             self._trigger_market = signal.market_id
             self._trigger_seen.clear()
@@ -109,36 +143,27 @@ class OrderManager:
         if key in self._trigger_seen:
             return
         self._trigger_seen.add(key)
-        with session_scope() as session:
-            session.add(
-                TriggerEvent(
-                    market_id=signal.market_id,
-                    side=signal.side,
-                    best_ask=signal.best_ask,
-                    ask_size=signal.ask_size,
-                    remaining_seconds=signal.remaining_seconds,
-                    threshold=signal.threshold,
-                    triggered=True,
-                    decision=decision,
-                    reason=reason,
+        self._schedule_trigger(signal, decision, reason, mode)
+
+    @staticmethod
+    def _persist_trigger(signal: Signal, decision: str, reason: str) -> None:
+        try:
+            with session_scope() as session:
+                session.add(
+                    TriggerEvent(
+                        market_id=signal.market_id,
+                        side=signal.side,
+                        best_ask=signal.best_ask,
+                        ask_size=signal.ask_size,
+                        remaining_seconds=signal.remaining_seconds,
+                        threshold=signal.threshold,
+                        triggered=True,
+                        decision=decision,
+                        reason=reason,
+                    )
                 )
-            )
-        self._logs.log(
-            "INFO" if decision == "submitted" else "WARNING",
-            "trigger",
-            f"{signal.side} ask {signal.best_ask:.3f} >= {signal.threshold:.2f} -> {decision}",
-            payload={
-                "market_id": signal.market_id,
-                "side": signal.side,
-                "best_ask": signal.best_ask,
-                "ask_size": signal.ask_size,
-                "remaining_seconds": signal.remaining_seconds,
-                "decision": decision,
-                "reason": reason,
-            },
-            mode=mode,
-            persist=persist,
-        )
+        except Exception:
+            logger.exception("trigger event persistence failed")
 
     # ------------------------------------------------------------------
     async def handle_event(
@@ -150,17 +175,21 @@ class OrderManager:
         ctx: RiskContext | None,
     ) -> list[OrderResult]:
         config = self._runtime.get()
-
-        if mode == "paper":
-            await self._retry_partial_orders(market, books, mode, config)
-
-        if not evaluation.signals or ctx is None:
-            return []
-
-        chosen = self._choose(evaluation.signals, config.conflict_policy)
-        results: list[OrderResult] = []
-
         async with self._lock:
+            if not self._submission_allowed(mode):
+                return [
+                    OrderResult(None, signal.side, "BLOCKED", "bot_not_accepting_orders")
+                    for signal in evaluation.signals
+                ]
+
+            if mode == "paper":
+                await self._retry_partial_orders(market, books, mode, config)
+
+            if not evaluation.signals or ctx is None:
+                return []
+
+            chosen = self._choose(evaluation.signals, config.conflict_policy)
+            results: list[OrderResult] = []
             for signal in evaluation.signals:
                 if chosen is None:
                     self._log_trigger_once(signal, "blocked_conflict", "both sides qualified; policy block_both", mode)
@@ -188,22 +217,25 @@ class OrderManager:
             return OrderResult(None, signal.side, "BLOCKED", "market_expired")
 
         key = self._order_key(mode, signal, config.duplicate_policy)
-        with session_scope() as session:
-            blocker = self._find_duplicate(session, mode, signal, config.duplicate_policy)
-            if blocker is not None:
-                reason = f"duplicate blocked by order #{blocker.id} ({blocker.status})"
-                self._log_trigger_once(signal, "blocked_duplicate", reason, mode)
-                return OrderResult(blocker.id, signal.side, "BLOCKED", "duplicate")
-
         decision = self._risk.check(signal, ctx, config)
         if not decision.approved:
             self._log_trigger_once(signal, f"blocked_{decision.reason}", decision.detail, mode)
             return OrderResult(None, signal.side, "BLOCKED", decision.reason)
 
-        order_id, reused = self._create_order(mode, market, signal, key, config)
+        order_id, blocker_id, blocker_status = await asyncio.to_thread(
+            self._reserve_order, mode, market, signal, key, config
+        )
+        if blocker_id is not None:
+            reason = f"duplicate blocked by order #{blocker_id} ({blocker_status})"
+            self._log_trigger_once(signal, "blocked_duplicate", reason, mode)
+            return OrderResult(blocker_id, signal.side, "BLOCKED", "duplicate")
         if order_id is None:
             self._log_trigger_once(signal, "blocked_duplicate", "idempotency key already active", mode)
             return OrderResult(None, signal.side, "BLOCKED", "duplicate")
+
+        if not self._submission_allowed(mode):
+            await asyncio.to_thread(self._mark_not_submitted, order_id)
+            return OrderResult(order_id, signal.side, "BLOCKED", "bot_not_accepting_orders")
 
         request = OrderRequest(
             order_key=key,
@@ -215,6 +247,7 @@ class OrderManager:
             max_price=config.max_execution_price,
             observed_at_ms=signal.observed_at_ms,
             order_min_size=market.min_order_size,
+            asset_version=market.asset_version,
         )
 
         self._logs.log(
@@ -238,10 +271,19 @@ class OrderManager:
             executor = self._executor_provider(mode)
             report = await executor.place_buy(request)
         except Exception as exc:
-            logger.exception("executor raised")
-            report = ExecutionReport(status="REJECTED", error=f"{type(exc).__name__}: {exc}")
+            logger.error("executor raised (%s)", type(exc).__name__)
+            report = ExecutionReport(
+                status="SUBMITTED" if mode == "live" else "REJECTED",
+                error=(
+                    "order submission outcome is unknown; reconcile before retrying"
+                    if mode == "live"
+                    else f"{type(exc).__name__}: {exc}"
+                ),
+            )
 
-        return self._finalize_order(order_id, report, signal, mode)
+        result = await asyncio.to_thread(self._finalize_order, order_id, report, signal, mode)
+        self._record_order_result(result, report, signal, mode)
+        return result
 
     def _find_duplicate(self, session, mode: str, signal: Signal, policy: str) -> Order | None:
         query = select(Order).where(Order.mode == mode, Order.market_id == signal.market_id)
@@ -256,17 +298,20 @@ class OrderManager:
         orders = session.execute(query.where(Order.status.in_(ACTIVE_STATUSES))).scalars().all()
         return orders[0] if orders else None
 
-    def _create_order(
+    def _reserve_order(
         self, mode: str, market: MarketInfo, signal: Signal, key: str, config
-    ) -> tuple[int | None, bool]:
+    ) -> tuple[int | None, int | None, str | None]:
         try:
             with session_scope() as session:
+                blocker = self._find_duplicate(session, mode, signal, config.duplicate_policy)
+                if blocker is not None:
+                    return None, blocker.id, blocker.status
                 existing = session.execute(
                     select(Order).where(Order.order_key == key)
                 ).scalar_one_or_none()
                 if existing is not None:
                     if existing.status in ACTIVE_STATUSES or existing.filled_size > 0:
-                        return None, True
+                        return None, None, None
                     existing.status = "PENDING"
                     existing.requested_price = signal.best_ask
                     existing.submitted_price = None
@@ -274,7 +319,7 @@ class OrderManager:
                     existing.reason = ""
                     existing.latency_ms = None
                     session.flush()
-                    return existing.id, True
+                    return existing.id, None, None
                 order = Order(
                     order_key=key,
                     client_order_id=f"ord-{uuid.uuid4().hex[:20]}",
@@ -288,9 +333,17 @@ class OrderManager:
                 )
                 session.add(order)
                 session.flush()
-                return order.id, False
+                return order.id, None, None
         except IntegrityError:
-            return None, True
+            return None, None, None
+
+    @staticmethod
+    def _mark_not_submitted(order_id: int) -> None:
+        with session_scope() as session:
+            order = session.get(Order, order_id)
+            if order is not None and order.status == "PENDING":
+                order.status = "CANCELED"
+                order.error = "bot halted before exchange submission"
 
     def _finalize_order(
         self, order_id: int, report: ExecutionReport, signal: Signal, mode: str
@@ -330,6 +383,11 @@ class OrderManager:
             )
             session.flush()
 
+        return result
+
+    def _record_order_result(
+        self, result: OrderResult, report: ExecutionReport, signal: Signal, mode: str
+    ) -> None:
         decision = "submitted" if result.status in {"SUBMITTED", "PARTIALLY_FILLED", "FILLED"} else f"failed_{result.status.lower()}"
         self._log_trigger_once(signal, decision, f"order {result.status}", mode)
         if report.fills:
@@ -351,10 +409,9 @@ class OrderManager:
                 "ERROR",
                 "error",
                 f"order {report.status}: {report.error or 'rejected'}",
-                payload={"order_id": result.order_id, "raw": report.raw},
+                payload={"order_id": result.order_id},
                 mode=mode,
             )
-        return result
 
     # ------------------------------------------------------------------
     async def _retry_partial_orders(
@@ -362,18 +419,7 @@ class OrderManager:
     ) -> None:
         if market.remaining_seconds() <= 0:
             return
-        with session_scope() as session:
-            orders = session.execute(
-                select(Order).where(
-                    Order.mode == mode,
-                    Order.market_id == market.market_id,
-                    Order.status == "PARTIALLY_FILLED",
-                )
-            ).scalars().all()
-            pending = [
-                (o.id, o.side, o.filled_size, o.avg_fill_price or 0.0, o.requested_notional)
-                for o in orders
-            ]
+        pending = await asyncio.to_thread(self._partial_order_candidates, market.market_id, mode)
 
         for order_id, side, filled_size, avg_fill_price, requested_notional in pending:
             now_ms = int(time.time() * 1000)
@@ -400,28 +446,16 @@ class OrderManager:
                 max_price=config.max_execution_price,
                 observed_at_ms=now_ms,
                 order_min_size=market.min_order_size,
+                asset_version=market.asset_version,
             )
             try:
                 report = await self._executor_provider(mode).place_buy(request)
             except Exception as exc:
-                logger.warning("partial retry failed: %s", exc)
+                logger.warning("partial retry failed (%s)", type(exc).__name__)
                 continue
             if not report.fills:
                 continue
-            with session_scope() as session:
-                order = session.get(Order, order_id)
-                if order is None or order.status != "PARTIALLY_FILLED":
-                    continue
-                previous_size = order.filled_size
-                previous_cost = (order.avg_fill_price or 0.0) * previous_size
-                order.filled_size = round(previous_size + report.filled_size, 10)
-                if report.avg_price and order.filled_size > 0:
-                    order.avg_fill_price = round(
-                        (previous_cost + report.filled_size * report.avg_price) / order.filled_size, 8
-                    )
-                order.fee = round(order.fee + report.fee, 10)
-                order.status = report.status
-                self._portfolio.apply_report(session, mode, order, report)
+            await asyncio.to_thread(self._apply_partial_retry, order_id, report, mode)
             self._logs.log(
                 "INFO",
                 "fill",
@@ -430,13 +464,41 @@ class OrderManager:
                 mode=mode,
             )
 
+    @staticmethod
+    def _partial_order_candidates(market_id: str, mode: str) -> list[tuple[int, str, float, float, float]]:
+        with session_scope() as session:
+            orders = session.execute(
+                select(Order).where(
+                    Order.mode == mode,
+                    Order.market_id == market_id,
+                    Order.status == "PARTIALLY_FILLED",
+                )
+            ).scalars().all()
+            return [
+                (o.id, o.side, o.filled_size, o.avg_fill_price or 0.0, o.requested_notional)
+                for o in orders
+            ]
+
+    def _apply_partial_retry(self, order_id: int, report: ExecutionReport, mode: str) -> None:
+        with session_scope() as session:
+            order = session.get(Order, order_id)
+            if order is None or order.status != "PARTIALLY_FILLED":
+                return
+            previous_size = order.filled_size
+            previous_cost = (order.avg_fill_price or 0.0) * previous_size
+            order.filled_size = round(previous_size + report.filled_size, 10)
+            if report.avg_price and order.filled_size > 0:
+                order.avg_fill_price = round(
+                    (previous_cost + report.filled_size * report.avg_price) / order.filled_size, 8
+                )
+            order.fee = round(order.fee + report.fee, 10)
+            order.status = report.status
+            self._portfolio.apply_report(session, mode, order, report)
+
     # ------------------------------------------------------------------
     async def finalize_market(self, market_id: str, mode: str, reason: str = "market expired") -> int:
         if mode == "live":
-            try:
-                await self._executor_provider("live").cancel_open_orders()
-            except Exception as exc:
-                logger.warning("live cancel on finalize failed: %s", exc)
+            return await self.cancel_live_orders(market_id)
         closed = 0
         with session_scope() as session:
             orders = session.execute(
@@ -462,6 +524,34 @@ class OrderManager:
         self._retry_after.clear()
         return closed
 
+    async def cancel_live_orders(self, market_id: str | None = None) -> int:
+        with session_scope() as session:
+            query = select(Order).where(
+                Order.mode == "live",
+                Order.status.in_(ACTIVE_STATUSES),
+                Order.exchange_order_id.is_not(None),
+            )
+            if market_id is not None:
+                query = query.where(Order.market_id == market_id)
+            orders = [(o.id, o.exchange_order_id) for o in session.execute(query).scalars().all()]
+
+        engine = self._executor_provider("live")
+        cancel_order = getattr(engine, "cancel_order", None)
+        if not callable(cancel_order):
+            return 0
+        resolved = 0
+        for order_id, exchange_id in orders:
+            try:
+                await cancel_order(exchange_id)
+                await self.reconcile_live_order(order_id)
+            except Exception as exc:
+                logger.warning("live order cancellation/reconciliation failed (%s)", type(exc).__name__)
+            with session_scope() as session:
+                current = session.get(Order, order_id)
+                if current is not None and current.status not in ACTIVE_STATUSES:
+                    resolved += 1
+        return resolved
+
     async def reconcile_live_order(self, order_id: int) -> None:
         with session_scope() as session:
             order = session.get(Order, order_id)
@@ -469,9 +559,8 @@ class OrderManager:
                 return
             exchange_id = order.exchange_order_id
             current_size = order.filled_size
-            status = order.status
             token_id = order.token_id
-            price = order.avg_fill_price or order.requested_price
+            current_price = order.avg_fill_price
 
         engine = self._executor_provider("live")
         payload = await getattr(engine, "fetch_order", lambda _id: None)(exchange_id)
@@ -484,28 +573,54 @@ class OrderManager:
         raw_status = str(payload.get("status") or "").upper()
 
         delta = round(size_matched - current_size, 10)
-        if delta <= 0 and raw_status not in {"CANCELED", "CANCELLED", "EXPIRED", "MATCHED", "FILLED"}:
+        terminal = raw_status in {
+            "CANCELED", "CANCELLED", "CANCELED_MARKET_RESOLVED", "EXPIRED", "INVALID", "MATCHED", "FILLED"
+        }
+        if delta <= 0 and not terminal:
             return
+
+        delta_price = None
+        if delta > 0:
+            fetch_fill_price = getattr(engine, "fetch_fill_price", None)
+            if not callable(fetch_fill_price):
+                return
+            cumulative_price = await fetch_fill_price(
+                exchange_id, list(payload.get("associate_trades") or []), size_matched
+            )
+            if cumulative_price is None:
+                return
+            prior_cost = (current_price or 0.0) * current_size
+            delta_price = (cumulative_price * size_matched - prior_cost) / delta
+            if delta_price <= 0:
+                return
 
         fee = 0.0
         estimate_fee = getattr(engine, "estimate_fee", None)
-        if delta > 0 and price and callable(estimate_fee):
-            fee = float(estimate_fee(token_id, delta, price))
+        if delta > 0 and callable(estimate_fee):
+            fee = float(estimate_fee(token_id, delta, delta_price))
+        total_size = round(current_size + max(0.0, delta), 10)
+        if raw_status in {"MATCHED", "FILLED"}:
+            next_status = "FILLED"
+        elif raw_status in {
+            "CANCELED", "CANCELLED", "CANCELED_MARKET_RESOLVED", "EXPIRED", "INVALID"
+        }:
+            next_status = "CANCELED"
+        else:
+            next_status = "PARTIALLY_FILLED" if total_size > 0 else "SUBMITTED"
         report = ExecutionReport(
-            status="FILLED" if raw_status in {"MATCHED", "FILLED"} else status,
+            status=next_status,
             filled_size=max(0.0, delta),
-            avg_price=price if delta > 0 else None,
+            avg_price=delta_price,
             fee=fee,
             exchange_order_id=exchange_id,
             fills=[
                 FillPart(
-                    price=price,
+                    price=delta_price,
                     size=delta,
                     fee=fee,
                     exchange_trade_id=f"live-reconcile-{exchange_id}-{size_matched}",
                 )
-            ]
-            if delta > 0
+            ] if delta > 0 and delta_price is not None
             else [],
         )
         with session_scope() as session:
@@ -514,10 +629,12 @@ class OrderManager:
                 return
             order.filled_size = round(current_size + max(0.0, delta), 10)
             order.fee = round(order.fee + fee, 10)
-            if raw_status in {"MATCHED", "FILLED"}:
-                order.status = "FILLED"
-            elif raw_status in {"CANCELED", "CANCELLED", "EXPIRED"}:
-                order.status = "EXPIRED" if order.status != "FILLED" else order.status
+            if delta > 0 and delta_price is not None:
+                order.avg_fill_price = round(
+                    (((current_price or 0.0) * current_size) + delta_price * delta) / order.filled_size,
+                    8,
+                )
+            order.status = next_status
             self._portfolio.apply_report(session, "live", order, report)
         if delta > 0:
             self._logs.log(

@@ -1,21 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 
-interface PolledResult<T> {
+interface LiveRefreshResult<T> {
   data: T | null;
   error: string | null;
   loading: boolean;
 }
 
 /**
- * Loads data immediately, re-loads the moment `refreshKey` changes (driven by the
- * live websocket feed), and keeps a slow safety poll as a fallback.
+ * Loads data immediately and refreshes when the live websocket feed changes.
  */
-export function usePolled<T>(
+export function useLiveRefresh<T>(
   loader: () => Promise<T>,
-  intervalMs: number,
   deps: unknown[],
   refreshKey?: unknown,
-): PolledResult<T> {
+  enabled = true,
+): LiveRefreshResult<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -23,36 +22,44 @@ export function usePolled<T>(
   loaderRef.current = loader;
   const runRef = useRef<() => void>(() => undefined);
   const firstKey = useRef(true);
+  const requestId = useRef(0);
 
   useEffect(() => {
+    if (!enabled) {
+      setData(null);
+      setError(null);
+      setLoading(true);
+      runRef.current = () => undefined;
+      return;
+    }
+
     let alive = true;
     setData(null);
     setError(null);
     setLoading(true);
 
     const run = async () => {
+      const currentRequest = ++requestId.current;
       try {
         const result = await loaderRef.current();
-        if (!alive) return;
+        if (!alive || currentRequest !== requestId.current) return;
         setData(result);
         setError(null);
       } catch (caught) {
-        if (!alive) return;
+        if (!alive || currentRequest !== requestId.current) return;
         setError(caught instanceof Error ? caught.message : "Request failed");
       } finally {
-        if (alive) setLoading(false);
+        if (alive && currentRequest === requestId.current) setLoading(false);
       }
     };
 
     runRef.current = () => void run();
     void run();
-    const timer = window.setInterval(run, intervalMs);
     return () => {
       alive = false;
-      window.clearInterval(timer);
     };
-    // deps are supplied by the caller to control when polling restarts
-  }, deps);
+    // deps are supplied by the caller to control when the data source changes
+  }, [...deps, enabled]);
 
   useEffect(() => {
     if (firstKey.current) {

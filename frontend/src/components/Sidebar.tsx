@@ -18,12 +18,12 @@ export function Sidebar({ page, onNavigate }: SidebarProps) {
     <aside className="hidden w-[236px] shrink-0 flex-col border-r hairline bg-ink-950/55 px-3.5 pb-4 pt-5 lg:flex">
       <div className="flex items-center gap-2.5 px-2">
         <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-up to-emerald-600 text-[13px] font-black tracking-tight text-[#04140d] shadow-[0_0_24px_-6px_rgba(53,224,161,0.8)]">
-          F60
+          PB
         </div>
         <div>
-          <div className="text-[13px] font-semibold tracking-tight text-slate-100">FINAL60</div>
+          <div className="text-[13px] font-semibold tracking-tight text-slate-100">Polybot</div>
           <div className="text-[9.5px] font-semibold uppercase tracking-[0.16em] text-slate-600">
-            Polymarket BTC 5m
+            Polymarket markets
           </div>
         </div>
       </div>
@@ -54,9 +54,6 @@ export function Sidebar({ page, onNavigate }: SidebarProps) {
                 <Icon size={14} />
               </span>
               <span className="flex-1">{item.label}</span>
-              {item.id === "strategy" ? (
-                <span className="mono rounded border border-white/6 px-1 py-0.5 text-[8px] text-slate-600">60s</span>
-              ) : null}
             </button>
           );
         })}
@@ -71,9 +68,7 @@ export function Sidebar({ page, onNavigate }: SidebarProps) {
           <IconLock size={11} className="text-slate-600" />
         </div>
         <div className="mt-2 text-[11.5px] font-semibold leading-snug text-slate-200">
-          FINAL_60_SECONDS
-          <br />
-          MARKET_BUY
+          Marketable BUY
         </div>
         <div className="mt-2.5 space-y-1.5 text-[10.5px] text-slate-500">
           <div className="flex items-center justify-between">

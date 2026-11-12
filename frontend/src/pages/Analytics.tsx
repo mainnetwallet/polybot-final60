@@ -3,26 +3,29 @@ import { ModeBadge } from "../components/Badges";
 import { IconActivity, IconAnalytics, IconTarget } from "../components/Icons";
 import { Stat } from "../components/Stat";
 import { useBot } from "../hooks/BotContext";
-import { usePolled } from "../hooks/usePolled";
+import { useLiveRefresh } from "../hooks/useLiveRefresh";
 import { clamp, cx, fmtCents, fmtSignedUsd, fmtUsd, pnlClass } from "../lib/format";
 
 export function Analytics() {
   const { snapshot, dataVersion } = useBot();
-  const mode = snapshot?.bot.mode ?? "paper";
-  const polled = usePolled(async () => {
+  const mode = snapshot?.bot.mode;
+  const polled = useLiveRefresh(async () => {
+    if (!mode) return null;
     return { analytics: await api.analytics(mode) };
-  }, 5000, [mode], dataVersion);
+  }, [mode], dataVersion, mode !== undefined);
 
   const analytics = polled.data?.analytics;
-  const closed = (analytics?.wins ?? 0) + (analytics?.losses ?? 0);
-  const winPct = closed > 0 ? ((analytics?.wins ?? 0) / closed) * 100 : 0;
+  const unrealized = snapshot && snapshot.bot.mode === mode ? snapshot.account.unrealized_pnl : analytics?.unrealized_pnl;
+  const totalPnl = analytics && unrealized != null ? analytics.realized_pnl + unrealized : null;
+  const closed = analytics ? analytics.wins + analytics.losses : null;
+  const winPct = closed != null && closed > 0 ? (analytics!.wins / closed) * 100 : null;
 
   const pnlRows = [
-    { label: "Realized", value: analytics?.realized_pnl ?? 0 },
-    { label: "Unrealized", value: analytics?.unrealized_pnl ?? 0 },
-    { label: "Total", value: analytics?.total_pnl ?? 0 },
+    { label: "Realized", value: analytics?.realized_pnl ?? null },
+    { label: "Unrealized", value: unrealized ?? null },
+    { label: "Total", value: totalPnl },
   ];
-  const maxAbs = Math.max(0.01, ...pnlRows.map((row) => Math.abs(row.value)));
+  const maxAbs = Math.max(0.01, ...pnlRows.flatMap((row) => row.value == null ? [] : [Math.abs(row.value)]));
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
@@ -32,7 +35,7 @@ export function Analytics() {
           <div>
             <div className="text-[13px] font-semibold text-slate-100">Mode-separated performance</div>
             <div className="mt-0.5 text-[11px] text-slate-500">
-              Paper and live balances, fills and statistics never mix. This view reads only the {mode} ledger.
+              Paper and live balances, fills and statistics never mix. This view reads only the {mode ?? "—"} ledger.
             </div>
           </div>
         </div>
@@ -47,8 +50,8 @@ export function Analytics() {
 
       <section className="panel p-5 xl:col-span-12">
         <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-5">
-          <Stat label="Realized PnL" value={fmtSignedUsd(analytics?.realized_pnl)} tone={(analytics?.realized_pnl ?? 0) >= 0 ? "up" : "down"} hint="settled markets" />
-          <Stat label="Unrealized PnL" value={fmtSignedUsd(analytics?.unrealized_pnl)} tone={(analytics?.unrealized_pnl ?? 0) >= 0 ? "up" : "down"} hint="marked at best bid" />
+          <Stat label="Realized PnL" value={fmtSignedUsd(analytics?.realized_pnl)} tone={analytics ? (analytics.realized_pnl >= 0 ? "up" : "down") : "default"} hint="settled markets" />
+          <Stat label="Unrealized PnL" value={fmtSignedUsd(unrealized)} tone={unrealized != null ? (unrealized >= 0 ? "up" : "down") : "default"} hint="marked at best bid" />
           <Stat label="Fees paid" value={fmtUsd(analytics?.fees_paid, 3)} hint="all fills" />
           <Stat label="Volume" value={fmtUsd(analytics?.volume_usdc)} hint="price × size" />
           <Stat label="Avg entry" value={fmtCents(analytics?.avg_entry_price)} hint="size-weighted" />
@@ -64,13 +67,13 @@ export function Analytics() {
           <IconTarget size={18} className="text-slate-600" />
         </div>
         <div className="mt-5 flex items-baseline gap-2">
-          <span className={cx("mono text-[38px] font-semibold leading-none", winPct >= 50 ? "text-up" : "text-slate-200")}>
-            {closed ? `${winPct.toFixed(1)}%` : "—"}
+          <span className={cx("mono text-[38px] font-semibold leading-none", winPct != null && winPct >= 50 ? "text-up" : "text-slate-200")}>
+            {winPct != null ? `${winPct.toFixed(1)}%` : "—"}
           </span>
-          <span className="text-[11px] text-slate-500">{closed} settled</span>
+          <span className="text-[11px] text-slate-500">{closed ?? "—"} settled</span>
         </div>
         <div className="mt-4 flex h-2.5 overflow-hidden rounded-full bg-white/[0.05]">
-          {closed ? (
+          {closed && winPct !== null ? (
             <>
               <div className="bg-up/80" style={{ width: `${clamp(winPct, 0, 100)}%` }} />
               <div className="bg-down/70" style={{ width: `${clamp(100 - winPct, 0, 100)}%` }} />
@@ -80,8 +83,8 @@ export function Analytics() {
           )}
         </div>
         <div className="mt-3 flex items-center justify-between text-[11px]">
-          <span className="text-up">{analytics?.wins ?? 0} wins</span>
-          <span className="text-down">{analytics?.losses ?? 0} losses</span>
+          <span className="text-up">{analytics?.wins ?? "—"} wins</span>
+          <span className="text-down">{analytics?.losses ?? "—"} losses</span>
         </div>
         <div className="mt-4 border-t hairline pt-3 text-[10.5px] leading-relaxed text-slate-500">
           A position wins when its realized payout exceeds cost basis and fees after resolution.
@@ -98,18 +101,18 @@ export function Analytics() {
         </div>
         <div className="mt-5 space-y-4">
           {pnlRows.map((row) => {
-            const width = clamp((Math.abs(row.value) / maxAbs) * 100, 0, 100);
+            const width = row.value == null ? 0 : clamp((Math.abs(row.value) / maxAbs) * 100, 0, 100);
             return (
               <div key={row.label}>
                 <div className="flex items-center justify-between text-[11px]">
                   <span className={row.label === "Total" ? "font-semibold text-slate-200" : "text-slate-500"}>
                     {row.label}
                   </span>
-                  <span className={cx("mono", pnlClass(row.value))}>{fmtSignedUsd(row.value)}</span>
+                  <span className={cx("mono", row.value == null ? "text-slate-500" : pnlClass(row.value))}>{fmtSignedUsd(row.value)}</span>
                 </div>
                 <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/[0.05]">
                   <div
-                    className={cx("h-full rounded-full", row.value >= 0 ? "bg-up" : "bg-down", row.label === "Total" ? "" : "opacity-70")}
+                    className={cx("h-full rounded-full", row.value != null && row.value >= 0 ? "bg-up" : "bg-down", row.label === "Total" ? "" : "opacity-70")}
                     style={{ width: `${width}%` }}
                   />
                 </div>

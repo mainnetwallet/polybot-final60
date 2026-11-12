@@ -70,8 +70,6 @@ class Settings(BaseSettings):
     # --- live -----------------------------------------------------------
     live_trading_enabled: bool = False
     live_confirmation_phrase: str = "GO LIVE"
-    live_poll_retries: int = 10
-    live_poll_interval_ms: int = 250
     polymarket_private_key: str = ""
     polymarket_funder_address: str = ""
     polymarket_signature_type: int = 0

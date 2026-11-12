@@ -26,9 +26,6 @@ from app.execution.base import ExecutionEngine, ExecutionReport, FillPart, Order
 
 logger = logging.getLogger(__name__)
 
-TERMINAL_STATUSES = {"MATCHED", "FILLED", "CANCELED", "CANCELLED", "EXPIRED", "UNMATCHED"}
-
-
 class LiveTradingUnavailable(RuntimeError):
     pass
 
@@ -48,8 +45,9 @@ class LiveExecutionEngine(ExecutionEngine):
     ) -> None:
         self._settings = settings
         self._client = None
-        self._creds_ready = False
         self._lock = asyncio.Lock()
+        self._order_lock = asyncio.Lock()
+        self._orders_allowed = False
         self._balance_hint = balance_hint
         # token_id -> (fee rate, exponent) as published by the CLOB market info (``fd``).
         self._fee_params: dict[str, tuple[float, float]] = {}
@@ -95,7 +93,6 @@ class LiveExecutionEngine(ExecutionEngine):
         async with self._lock:
             if self._client is None:
                 self._client = await asyncio.to_thread(self._build_client)
-                self._creds_ready = True
             return self._client
 
     # ------------------------------------------------------------------
@@ -135,40 +132,54 @@ class LiveExecutionEngine(ExecutionEngine):
                 try:
                     self._load_fee_params(client, condition_id, token_ids)
                 except Exception as exc:  # best effort only
-                    logger.debug("live fee prewarm failed for %s: %s", condition_id[:10], exc)
+                    logger.debug("live fee prewarm failed for %s (%s)", condition_id[:10], type(exc).__name__)
             for token_id in token_ids:
                 try:
                     client.get_tick_size(token_id)
                     client.get_neg_risk(token_id)
                 except Exception as exc:  # best effort only
-                    logger.debug("live prewarm failed for %s: %s", token_id[:10], exc)
+                    logger.debug("live prewarm failed for %s (%s)", token_id[:10], type(exc).__name__)
 
         try:
             await asyncio.to_thread(_warm, self._client)
         except Exception as exc:
-            logger.debug("live prewarm error: %s", exc)
+            logger.debug("live prewarm error (%s)", type(exc).__name__)
 
     # ------------------------------------------------------------------
     async def place_buy(self, request: OrderRequest) -> ExecutionReport:
+        if not self._orders_allowed:
+            return ExecutionReport(status="REJECTED", error="new live orders are blocked")
+        async with self._order_lock:
+            if not self._orders_allowed:
+                return ExecutionReport(status="REJECTED", error="new live orders are blocked")
+            report = await self._place_buy_locked(request)
+            report.latency_ms = float(max(0, int(time.time() * 1000) - request.observed_at_ms))
+            return report
+
+    def allow_new_orders(self) -> None:
+        self._orders_allowed = True
+
+    def block_new_orders(self) -> None:
+        # Synchronous so a kill/stop request fences queued orders before it awaits.
+        self._orders_allowed = False
+
+    async def _place_buy_locked(self, request: OrderRequest) -> ExecutionReport:
         try:
             client = await self._get_client()
         except Exception as exc:
             return ExecutionReport(
                 status="REJECTED",
-                latency_ms=float(int(time.time() * 1000) - request.observed_at_ms),
-                error=f"live client unavailable: {exc}",
+                error=f"live client unavailable: {type(exc).__name__}",
             )
 
         try:
             report = await asyncio.to_thread(self._place_sync, client, request)
         except Exception as exc:
-            logger.exception("live order failed")
+            logger.error("live order failed (%s)", type(exc).__name__)
             return ExecutionReport(
-                status="REJECTED",
-                latency_ms=float(int(time.time() * 1000) - request.observed_at_ms),
-                error=f"{type(exc).__name__}: {exc}",
+                status="SUBMITTED",
+                error="order submission outcome is unknown; reconcile before retrying",
             )
-        report.latency_ms = float(int(time.time() * 1000) - request.observed_at_ms)
         return report
 
     def _place_sync(self, client, request: OrderRequest) -> ExecutionReport:
@@ -176,19 +187,28 @@ class LiveExecutionEngine(ExecutionEngine):
 
         balance = self._balance_hint() if self._balance_hint else None
         args = MarketOrderArgs(
-            token_id=request.token_id,
+            token_id=request.token_id if request.asset_version == 1 else None,
             amount=round(request.notional, 6),
             side=Side.BUY,
             # price is the worst acceptable price (cap), not a resting limit
             price=round(request.max_price, 6),
             order_type=OrderType.FOK,
             user_usdc_balance=float(balance) if balance and balance > 0 else 0,
+            position_id=request.token_id if request.asset_version == 2 else None,
         )
-        response = client.create_and_post_market_order(args, None, OrderType.FOK)
-        if not isinstance(response, dict):
+        try:
+            # defer_exec skips the SDK's post-submit transaction/trade polling.
+            response = client.create_and_post_market_order(args, None, OrderType.FOK, True)
+        except Exception as exc:
+            # A transport exception can happen after Polymarket accepted the order.
+            # Keep it active and fail closed so a retry cannot double-submit.
+            logger.error("live order submit outcome unknown (%s)", type(exc).__name__)
             return ExecutionReport(
-                status="REJECTED", error=f"unexpected response: {response!r}"[:300]
+                status="SUBMITTED",
+                error="order submission outcome is unknown; reconcile before retrying",
             )
+        if not isinstance(response, dict):
+            return ExecutionReport(status="REJECTED", error="unexpected CLOB response")
 
         order_id = response.get("orderID") or response.get("orderId")
         error_msg = str(response.get("errorMsg") or "")
@@ -196,12 +216,11 @@ class LiveExecutionEngine(ExecutionEngine):
         success = response.get("success")
 
         if error_msg or success is False or not order_id:
-            text = error_msg or f"unexpected response: {response}"
-            killed = "fok" in text.lower() or "fully filled" in text.lower()
+            killed = "fok" in error_msg.lower() or "fully filled" in error_msg.lower()
             return ExecutionReport(
                 status="CANCELED" if killed else "REJECTED",
                 exchange_order_id=order_id,
-                error=text,
+                error="FOK order was not filled" if killed else "CLOB rejected the order",
                 raw=response,
             )
 
@@ -221,20 +240,16 @@ class LiveExecutionEngine(ExecutionEngine):
             taking /= 1_000_000.0
 
         if status_raw == "matched" and making > 0 and taking > 0:
-            self._ensure_fee_params(client, request)
             return self._report_from_amounts(order_id, making, taking, request, response)
 
-        # delayed / live / missing amounts: confirm with the exchange.
-        return self._reconcile(client, order_id, request, response)
-
-    def _ensure_fee_params(self, client, request: OrderRequest) -> None:
-        """Runs after the order was posted, so a lookup here never delays the trade."""
-        if request.token_id in self._fee_params or not request.market_id:
-            return
-        try:
-            self._load_fee_params(client, request.market_id, [request.token_id])
-        except Exception as exc:  # falls back to the configured documented rate
-            logger.debug("live fee lookup failed: %s", exc)
+        # Reconciliation runs on the maintenance path. Never poll or wait after
+        # a successful post in the WebSocket-triggered trade path.
+        return ExecutionReport(
+            status="SUBMITTED",
+            exchange_order_id=order_id,
+            error="exchange accepted the order; fill details are pending reconciliation",
+            raw=response,
+        )
 
     def _report_from_amounts(
         self, order_id: str, making: float, taking: float, request: OrderRequest, raw: dict
@@ -254,77 +269,14 @@ class LiveExecutionEngine(ExecutionEngine):
             raw=raw,
         )
 
-    def _reconcile(self, client, order_id: str, request: OrderRequest, raw: dict) -> ExecutionReport:
-        size_matched = 0.0
-        last_error = None
-        status = ""
-        for attempt in range(max(1, self._settings.live_poll_retries)):
-            try:
-                order = client.get_order(order_id)
-            except Exception as exc:  # transient; keep polling within budget
-                last_error = str(exc)
-                order = None
-            if order:
-                status = str(order.get("status") or "").upper()
-                size_matched = _num(order.get("size_matched") or order.get("sizeMatched"))
-                if status in TERMINAL_STATUSES:
-                    break
-            if attempt + 1 < self._settings.live_poll_retries:
-                time.sleep(self._settings.live_poll_interval_ms / 1000.0)
-
-        if status not in TERMINAL_STATUSES:
-            # FOK must not rest; cancel defensively only when it is not terminal.
-            try:
-                from py_clob_client_v2 import OrderPayload
-
-                client.cancel_order(OrderPayload(orderID=order_id))
-            except Exception:
-                pass
-
-        if size_matched <= 0:
-            return ExecutionReport(
-                status="CANCELED" if status in TERMINAL_STATUSES else "SUBMITTED",
-                exchange_order_id=order_id,
-                error=last_error or ("order not matched (FOK)" if status in TERMINAL_STATUSES else None),
-                raw=raw,
-            )
-
-        # Exact average price from the exchange's own trades for this order.
-        price = self._price_from_trades(client, order_id, size_matched)
-        if price is None:
-            # Never invent a fill price: fall back to the amounts the exchange returned.
-            making = _num(raw.get("makingAmount"))
-            taking = _num(raw.get("takingAmount"))
-            if making > request.notional * 10 and taking > 0:
-                making /= 1_000_000.0
-                taking /= 1_000_000.0
-            price = round(making / taking, 6) if making > 0 and taking > 0 else None
-        if price is None:
-            return ExecutionReport(
-                status="SUBMITTED",
-                filled_size=0.0,
-                exchange_order_id=order_id,
-                error="fill reported but price unavailable; awaiting reconciliation",
-                raw=raw,
-            )
-        spent = size_matched * price
-        self._ensure_fee_params(client, request)
-        fee = self.estimate_fee(request.token_id, round(size_matched, 8), price)
-        return ExecutionReport(
-            status="FILLED" if spent >= 0.98 * request.notional else "PARTIALLY_FILLED",
-            filled_size=round(size_matched, 8),
-            avg_price=price,
-            fee=fee,
-            submitted_price=price,
-            exchange_order_id=order_id,
-            fills=[FillPart(price=price, size=round(size_matched, 8), fee=fee)],
-            raw=raw,
-        )
-
     @staticmethod
-    def _price_from_trades(client, order_id: str, size_hint: float) -> float | None:
+    def _price_from_trades(client, order_id: str, trade_ids: list[str], size_hint: float) -> float | None:
+        from py_clob_client_v2 import TradeParams
+
         try:
-            trades = client.get_trades()
+            trades = []
+            for trade_id in trade_ids:
+                trades.extend(client.get_trades(TradeParams(id=trade_id), only_first_page=True) or [])
         except Exception:
             return None
         cost = 0.0
@@ -334,6 +286,8 @@ class LiveExecutionEngine(ExecutionEngine):
                 continue
             trade_size = _num(trade.get("size"))
             trade_price = _num(trade.get("price"))
+            if trade_size > size_hint * 10:
+                trade_size /= 1_000_000.0
             if trade_size > 0 and trade_price > 0:
                 cost += trade_size * trade_price
                 size += trade_size
@@ -341,45 +295,57 @@ class LiveExecutionEngine(ExecutionEngine):
             return round(cost / size, 6)
         return None
 
-    async def fetch_order(self, order_id: str) -> dict | None:
-        client = self._client
-        if client is None or not order_id:
+    async def fetch_fill_price(self, order_id: str, trade_ids: list[str], size_hint: float) -> float | None:
+        if not trade_ids:
             return None
         try:
+            client = await self._get_client()
+        except Exception:
+            return None
+        return await asyncio.to_thread(
+            self._price_from_trades, client, order_id, trade_ids, size_hint
+        )
+
+    async def fetch_order(self, order_id: str) -> dict | None:
+        if not order_id:
+            return None
+        try:
+            client = await self._get_client()
             return await asyncio.to_thread(client.get_order, order_id)
         except Exception as exc:
-            logger.warning("live order fetch failed: %s", exc)
+            logger.warning("live order fetch failed (%s)", type(exc).__name__)
             return None
 
-    async def cancel_open_orders(self) -> int:
-        client = self._client
-        if client is None:
-            return 0
+    async def cancel_order(self, order_id: str) -> bool:
+        if not order_id:
+            return False
         try:
-            result = await asyncio.to_thread(client.cancel_all)
+            client = await self._get_client()
         except Exception as exc:
-            logger.warning("cancel_all failed: %s", exc)
-            return 0
-        if isinstance(result, dict):
-            canceled = result.get("canceled")
-            if isinstance(canceled, list):
-                return len(canceled)
+            logger.warning("live order cancel client unavailable (%s)", type(exc).__name__)
+            return False
+        async with self._order_lock:
             try:
-                return int(canceled or 0)
-            except (TypeError, ValueError):
-                return 0
-        return 0
+                from py_clob_client_v2 import OrderPayload
+
+                response = await asyncio.to_thread(
+                    client.cancel_order, OrderPayload(orderID=order_id)
+                )
+            except Exception as exc:
+                logger.warning("live order cancel failed (%s)", type(exc).__name__)
+                return False
+        return isinstance(response, dict) and bool(response.get("canceled"))
 
     async def get_balance(self) -> float | None:
         try:
             client = await self._get_client()
         except Exception as exc:
-            logger.warning("live balance unavailable: %s", exc)
+            logger.warning("live balance unavailable (%s)", type(exc).__name__)
             return None
         try:
             return await asyncio.to_thread(self._balance_sync, client)
         except Exception as exc:
-            logger.warning("live balance query failed: %s", exc)
+            logger.warning("live balance query failed (%s)", type(exc).__name__)
             return None
 
     @staticmethod
@@ -420,17 +386,25 @@ class LiveExecutionEngine(ExecutionEngine):
         except LiveTradingUnavailable:
             raise
         except Exception as exc:
-            raise LiveTradingUnavailable(f"could not initialize CLOB client: {exc}") from exc
+            raise LiveTradingUnavailable(
+                f"could not initialize CLOB client ({type(exc).__name__})"
+            ) from exc
         try:
             balance = await asyncio.to_thread(self._balance_sync, client)
             allowance = await asyncio.to_thread(self._allowance_sync, client)
         except Exception as exc:
-            raise LiveTradingUnavailable(f"balance query failed: {exc}") from exc
+            raise LiveTradingUnavailable(
+                f"balance query failed ({type(exc).__name__})"
+            ) from exc
         if balance is None:
             raise LiveTradingUnavailable("could not read collateral (pUSD) balance")
         if balance <= 0:
             raise LiveTradingUnavailable(
                 "collateral (pUSD) balance is zero; wrap USDC.e into pUSD via the Collateral Onramp"
+            )
+        if allowance is None or allowance <= 0:
+            raise LiveTradingUnavailable(
+                "CLOB reports no pUSD collateral allowance; approve the Polymarket trading contracts before starting"
             )
         return {"balance": balance, "allowance": allowance}
 
@@ -443,16 +417,36 @@ class LiveExecutionEngine(ExecutionEngine):
 
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.get(
-                    "https://data-api.polymarket.com/positions",
-                    params={"user": funder, "sizeThreshold": "0.01"},
-                    headers={"User-Agent": self._settings.http_user_agent},
-                )
-                response.raise_for_status()
-                data = response.json()
-                return data if isinstance(data, list) else None
+                positions: list[dict] = []
+                cursor: str | None = None
+                seen_cursors: set[str] = set()
+                while True:
+                    params = {
+                        "user": funder,
+                        "filter_type": "TOKENS",
+                        "filter_amount": "0.01",
+                        "limit": "1000",
+                    }
+                    if cursor:
+                        params["cursor"] = cursor
+                    response = await client.get(
+                        "https://data-api.polymarket.com/v2/positions",
+                        params=params,
+                        headers={"User-Agent": self._settings.http_user_agent},
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+                        return None
+                    positions.extend(item for item in payload["data"] if isinstance(item, dict))
+                    pagination = payload.get("pagination") or {}
+                    next_cursor = pagination.get("next_cursor") if isinstance(pagination, dict) else None
+                    if not next_cursor or next_cursor in seen_cursors:
+                        return positions
+                    seen_cursors.add(next_cursor)
+                    cursor = str(next_cursor)
         except Exception as exc:
-            logger.warning("on-chain position fetch failed: %s", exc)
+            logger.warning("on-chain position fetch failed (%s)", type(exc).__name__)
             return None
 
     async def redeemable_condition_ids(self) -> set[str] | None:
@@ -463,7 +457,8 @@ class LiveExecutionEngine(ExecutionEngine):
         found: set[str] = set()
         for item in positions:
             cid = item.get("conditionId") or item.get("condition_id")
-            if cid and item.get("redeemable") and _num(item.get("size")) > 0:
+            size = _num(item.get("current_size") or item.get("size"))
+            if cid and item.get("redeemable") and size > 0:
                 found.add(str(cid).lower())
         return found
 

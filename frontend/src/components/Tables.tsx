@@ -18,7 +18,7 @@ export function OrdersTable({
       <EmptyState
         icon={<IconLayers size={26} />}
         title="No orders yet"
-        hint={emptyHint ?? "Orders appear here after the final-60s trigger fires and execution begins."}
+        hint={emptyHint ?? "Orders appear here when a configured trigger qualifies and execution begins."}
       />
     );
   }

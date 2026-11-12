@@ -10,7 +10,6 @@ the executor buys at the market instead of posting a fixed 0.80 order.
 
 from __future__ import annotations
 
-import calendar
 from datetime import datetime, timezone
 
 from app.config.runtime import RuntimeSettings
@@ -85,8 +84,4 @@ class FinalWindowStrategy:
         )
 
 
-def book_timestamp_ms(book: OrderBook) -> int:
-    return book.updated_at_ms
-
-
-__all__ = ["FinalWindowStrategy", "datetime_to_epoch_ms", "calendar"]
+__all__ = ["FinalWindowStrategy", "datetime_to_epoch_ms"]

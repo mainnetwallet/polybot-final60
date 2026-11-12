@@ -28,11 +28,11 @@ export const NAV: NavItem[] = [
 export const PAGE_META: Record<Page, { title: string; subtitle: string }> = {
   overview: {
     title: "Command center",
-    subtitle: "BTC 5-minute UP/DOWN \u00b7 final 60 seconds \u00b7 marketable buys",
+    subtitle: "Live market data · event driven execution",
   },
   strategy: {
     title: "Strategy monitor",
-    subtitle: "FINAL_60_SECONDS_MARKET_BUY \u00b7 observation, window, trigger",
+    subtitle: "Observation window, configured trigger and execution rules",
   },
   trading: {
     title: "Trading desk",

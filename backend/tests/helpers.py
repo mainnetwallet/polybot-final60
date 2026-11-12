@@ -99,9 +99,6 @@ class LiveSpy(ExecutionEngine):
         self.calls += 1
         return ExecutionReport(status="REJECTED", error="live never allowed in paper tests")
 
-    async def cancel_open_orders(self) -> int:
-        return 0
-
     async def get_balance(self) -> float | None:
         return 100.0
 

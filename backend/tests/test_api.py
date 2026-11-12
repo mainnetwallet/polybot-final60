@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+import time
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.database.models import AppState, Order
 from app.database.session import session_scope
 from app.main import create_app
+from app.services.bot import BotError, TradingBot
+
+from .helpers import make_market
 
 
 def _enable_live(bot):
@@ -111,6 +117,86 @@ def test_live_start_requires_confirmation():
             _restore_live(bot, previous)
 
 
+async def test_stop_during_live_start_cannot_be_overridden_by_late_validation():
+    entered_validation = asyncio.Event()
+    release_validation = asyncio.Event()
+
+    class FakeLiveEngine:
+        allowed = False
+
+        def block_new_orders(self):
+            self.allowed = False
+
+        def allow_new_orders(self):
+            self.allowed = True
+
+        async def prewarm(self, *_args):
+            return None
+
+    class FakeOrders:
+        def reset_trigger_cache(self):
+            return None
+
+        async def wait_for_submissions(self):
+            return None
+
+        async def cancel_live_orders(self):
+            return 0
+
+    class FakeLogs:
+        def log(self, *_args, **_kwargs):
+            return None
+
+    bot = TradingBot.__new__(TradingBot)
+    bot._lock = asyncio.Lock()
+    bot._stop_generation = 0
+    bot._status = "STOPPED"
+    bot._mode = "live"
+    bot._kill_switch = False
+    bot._started_at = None
+    bot._market = None
+    bot._risk_halt_reason = None
+    bot._risk_halt_logged = False
+    bot.live_engine = FakeLiveEngine()
+    bot.orders = FakeOrders()
+    bot.logs = FakeLogs()
+
+    async def live_gate(*_args, **_kwargs):
+        entered_validation.set()
+        await release_validation.wait()
+        return {}
+
+    async def no_reconciliation():
+        return None
+
+    async def no_broadcast():
+        return None
+
+    async def snapshot():
+        return {"bot": {"status": bot._status}}
+
+    bot._live_gate = live_gate
+    bot._reconcile_open_live_orders = no_reconciliation
+    bot._broadcast_state = no_broadcast
+    bot.snapshot = snapshot
+
+    starting = asyncio.create_task(bot.start_bot(True, "GO LIVE"))
+    await entered_validation.wait()
+    stopping = asyncio.create_task(bot.stop_bot())
+    await asyncio.sleep(0)
+    release_validation.set()
+    try:
+        await starting
+    except BotError as exc:
+        assert "canceled" in str(exc)
+    else:
+        raise AssertionError("a pending stop must cancel a live start")
+    await stopping
+
+    assert bot._status == "STOPPED"
+    assert bot.live_engine.allowed is False
+
+
 def test_mode_switch_blocked_while_running():
     with TestClient(create_app()) as client:
         assert client.post("/api/bot/start", json={}).status_code == 200
@@ -147,6 +233,29 @@ def test_settings_never_expose_secrets():
             assert "private" not in body.lower()
         finally:
             _restore_live(bot, previous)
+
+
+def test_unresolved_live_order_counts_toward_position_limit():
+    with TestClient(create_app()) as client:
+        bot = client.app.state.bot
+        bot._mode = "live"
+        with session_scope() as session:
+            session.add(
+                Order(
+                    order_key="live:pending-exposure",
+                    client_order_id="pending-exposure",
+                    mode="live",
+                    market_id="old-market",
+                    side="UP",
+                    token_id="position-up",
+                    status="SUBMITTED",
+                    requested_notional=5.0,
+                    requested_price=0.8,
+                )
+            )
+
+        context = bot._risk_context(make_market(), bot.runtime.get(), int(time.time() * 1000))
+        assert context.open_positions == 1
 
 
 def test_paper_reset_requires_confirmation():

@@ -28,7 +28,6 @@ class MarketDiscovery:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._client: httpx.AsyncClient | None = None
-        self._clob: httpx.AsyncClient | None = None
         self._series_id: str | None = None
         self._lock = asyncio.Lock()
 
@@ -40,20 +39,11 @@ class MarketDiscovery:
                 timeout=httpx.Timeout(15.0),
                 headers=headers,
             )
-        if self._clob is None:
-            self._clob = httpx.AsyncClient(
-                base_url=self._settings.clob_base_url,
-                timeout=httpx.Timeout(15.0),
-                headers=headers,
-            )
 
     async def close(self) -> None:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
-        if self._clob is not None:
-            await self._clob.aclose()
-            self._clob = None
 
     async def _get(self, path: str, params: dict | None = None) -> object:
         if self._client is None:
@@ -84,14 +74,10 @@ class MarketDiscovery:
     async def get_active_market(self, now: datetime | None = None) -> MarketInfo | None:
         now = to_utc_naive(now or datetime.now(timezone.utc))
         sid = await self.series_id()
-        params = {
-            "series_id": sid,
-            "closed": "false",
-            "end_date_min": (now - timedelta(seconds=90)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "end_date_max": (now + timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "limit": "30",
-        }
-        events = await self._get("/events", params)
+        # Gamma documents events as a member of a series resource. Fetching the
+        # series detail avoids relying on the undocumented events?series_id filter.
+        series = await self._get(f"/series/{sid}")
+        events = series.get("events") if isinstance(series, dict) else None
         if not isinstance(events, list):
             return None
 
@@ -103,7 +89,11 @@ class MarketDiscovery:
             market = markets[0]
             if market.get("closed"):
                 continue
-            start = parse_iso(event.get("startTime")) or parse_iso(market.get("eventStartTime"))
+            start = (
+                parse_iso(event.get("startTime"))
+                or parse_iso(event.get("startDate"))
+                or parse_iso(market.get("eventStartTime"))
+            )
             end = parse_iso(market.get("endDate")) or parse_iso(event.get("endDate"))
             slug_start = self._start_from_slug(str(event.get("slug") or market.get("slug") or ""))
             if end is None and slug_start is not None:
@@ -142,13 +132,17 @@ class MarketDiscovery:
             return None
         try:
             outcomes = json.loads(market.get("outcomes") or "[]")
-            token_ids = json.loads(market.get("clobTokenIds") or "[]")
+            version = 2 if str(market.get("version") or "v1").lower() == "v2" else 1
+            raw_asset_ids = market.get("positionIds") if version == 2 else market.get("clobTokenIds")
+            asset_ids = json.loads(raw_asset_ids) if isinstance(raw_asset_ids, str) else raw_asset_ids
         except (TypeError, json.JSONDecodeError):
             return None
-        if len(outcomes) != 2 or len(token_ids) != 2:
+        if not isinstance(outcomes, list) or not isinstance(asset_ids, list):
+            return None
+        if len(outcomes) != 2 or len(asset_ids) != 2:
             return None
 
-        mapping = {str(name).strip().lower(): str(tid) for name, tid in zip(outcomes, token_ids)}
+        mapping = {str(name).strip().lower(): str(asset_id) for name, asset_id in zip(outcomes, asset_ids)}
         up = mapping.get("up")
         down = mapping.get("down")
         if not up or not down:
@@ -171,6 +165,7 @@ class MarketDiscovery:
             down_token_id=down,
             tick_size=_float(market.get("orderPriceMinTickSize"), 0.01),
             min_order_size=_float(market.get("orderMinSize"), 5.0),
+            asset_version=version,
         )
 
     @staticmethod
@@ -181,35 +176,6 @@ class MarketDiscovery:
         if text == "down":
             return "DOWN"
         return None
-
-    async def _clob_resolution(self, market: MarketInfo) -> ResolutionInfo | None:
-        """Official CLOB market object: ``closed`` plus ``tokens[].winner``.
-
-        GET /markets/{condition_id} (docs.polymarket.com, Markets > Get market).
-        A token with ``winner: true`` is the authoritative resolved outcome.
-        """
-        if self._clob is None:
-            await self.start()
-        assert self._clob is not None
-        try:
-            response = await self._clob.get(f"/markets/{market.market_id}")
-            response.raise_for_status()
-            data = response.json()
-        except Exception as exc:
-            logger.debug("clob resolution lookup failed for %s: %s", market.market_id[:10], exc)
-            return None
-        if not isinstance(data, dict):
-            return None
-        for token in data.get("tokens") or []:
-            if isinstance(token, dict) and token.get("winner") is True:
-                side = self._side_from_label(token.get("outcome"))
-                if side is None and str(token.get("token_id") or "") == market.up_token_id:
-                    side = "UP"
-                elif side is None and str(token.get("token_id") or "") == market.down_token_id:
-                    side = "DOWN"
-                if side is not None:
-                    return ResolutionInfo(market.market_id, True, side)
-        return ResolutionInfo(market.market_id, bool(data.get("closed")), None)
 
     async def _gamma_resolution(self, market: MarketInfo) -> ResolutionInfo:
         """Gamma fallback. ``closed`` alone only means trading stopped; need 1/0 prices."""
@@ -241,14 +207,8 @@ class MarketDiscovery:
         return ResolutionInfo(market.market_id, True, None)
 
     async def get_resolution(self, market: MarketInfo) -> ResolutionInfo:
-        """Resolve a finished market: CLOB ``winner`` flag first, Gamma 1/0 prices second."""
-        clob = await self._clob_resolution(market)
-        if clob is not None and clob.outcome:
-            return clob
-        gamma = await self._gamma_resolution(market)
-        if gamma.outcome:
-            return gamma
-        return ResolutionInfo(market.market_id, bool(gamma.closed or (clob and clob.closed)), None)
+        """Resolve a finished market from Gamma's documented event-by-slug response."""
+        return await self._gamma_resolution(market)
 
 
 class MarketMonitor:

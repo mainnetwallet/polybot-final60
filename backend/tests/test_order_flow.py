@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.database.models import Order, TriggerEvent
 from app.database.session import session_scope
+from app.execution.base import ExecutionReport, FillPart
 
 from .helpers import (
     books_for,
@@ -88,6 +89,7 @@ async def test_duplicate_orders_are_blocked():
     assert len(_orders()) == 1
     assert results[0].status == "BLOCKED"
     assert results[0].reason == "duplicate"
+    await stack["manager"].close()
     with session_scope() as session:
         events = session.execute(select(TriggerEvent)).scalars().all()
     assert any(e.decision == "blocked_duplicate" for e in events)
@@ -106,6 +108,26 @@ async def test_concurrent_triggers_create_one_order():
         stack["manager"].handle_event(market, evaluation, books, "paper", ctx),
     )
     assert len(_orders()) == 1
+
+
+async def test_stop_waiter_drains_submission_handlers_already_in_flight():
+    stack = build_stack()
+    manager = stack["manager"]
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def in_flight_handler():
+        async with manager._lock:
+            entered.set()
+            await release.wait()
+
+    active = asyncio.create_task(in_flight_handler())
+    await entered.wait()
+    drained = asyncio.create_task(manager.wait_for_submissions())
+    await asyncio.sleep(0)
+    assert not drained.done()
+    release.set()
+    await asyncio.gather(active, drained)
 
 
 async def test_conflict_policy_up_first_selects_one_side():
@@ -142,6 +164,7 @@ async def test_stale_market_data_blocks_execution():
     assert evaluation.signals, "price qualifies, so the block must come from freshness"
     assert results[0].reason == "stale_data"
     assert _orders() == []
+    await stack["manager"].close()
     with session_scope() as session:
         events = session.execute(select(TriggerEvent)).scalars().all()
     assert any(e.decision == "blocked_stale_data" for e in events)
@@ -186,6 +209,57 @@ async def test_partial_fill_then_retry_completes():
     final = _orders()[0]
     assert final.status == "FILLED"
     assert final.filled_size == pytest.approx(5.0 / 0.85, rel=0.01)
+
+
+async def test_stop_drain_waits_for_paper_partial_retry_and_blocks_next_retry():
+    stack = build_stack()
+    market = make_market(remaining=30)
+    partial_books = books_for(market, up_ask=0.85, down_ask=0.10, up_size=2.0)
+    await _submit(stack, market, partial_books)
+    assert _orders()[0].status == "PARTIALLY_FILLED"
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    allowed = True
+
+    class BlockingRetry:
+        calls = 0
+
+        async def place_buy(self, request):
+            self.calls += 1
+            entered.set()
+            await release.wait()
+            size = request.notional / 0.85
+            return ExecutionReport(
+                status="FILLED",
+                filled_size=size,
+                avg_price=0.85,
+                fills=[FillPart(price=0.85, size=size, fee=0.0)],
+            )
+
+    retry = BlockingRetry()
+    manager = stack["manager"]
+    manager._executor_provider = lambda _mode: retry
+    manager._submission_allowed = lambda _mode: allowed
+    manager._retry_after.clear()
+    retry_books = books_for(market, up_ask=0.85, down_ask=0.10)
+    no_signal = _evaluate(stack, market, books_for(market, up_ask=0.50, down_ask=0.10))
+
+    active = asyncio.create_task(
+        manager.handle_event(market, no_signal, retry_books, "paper", None)
+    )
+    await entered.wait()
+    allowed = False
+    drained = asyncio.create_task(manager.wait_for_submissions())
+    await asyncio.sleep(0)
+    assert not drained.done()
+    release.set()
+    await asyncio.gather(active, drained)
+
+    manager._retry_after.clear()
+    await manager.handle_event(market, no_signal, retry_books, "paper", None)
+    assert retry.calls == 1
+    assert _orders()[0].status == "FILLED"
 
 
 async def test_unfilled_remainder_expires_with_market():

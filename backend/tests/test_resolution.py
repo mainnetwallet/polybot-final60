@@ -64,9 +64,6 @@ async def test_running_market_is_not_polled():
 def _discovery_with(handlers):
     settings = get_settings()
     discovery = MarketDiscovery(settings)
-    discovery._clob = httpx.AsyncClient(
-        base_url=settings.clob_base_url, transport=httpx.MockTransport(handlers["clob"])
-    )
     discovery._client = httpx.AsyncClient(
         base_url=settings.gamma_base_url, transport=httpx.MockTransport(handlers["gamma"])
     )
@@ -74,23 +71,22 @@ def _discovery_with(handlers):
 
 
 @pytest.mark.asyncio
-async def test_clob_winner_flag_resolves_market():
+async def test_gamma_closed_market_terminal_price_resolves_winner():
     market = _finished_market()
 
-    def clob(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == f"/markets/{market.market_id}"
+    def gamma(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/events"
+        assert request.url.params["slug"] == market.event_slug
         return httpx.Response(
             200,
-            json={
+            json=[{"markets": [{
                 "closed": True,
-                "tokens": [
-                    {"token_id": market.up_token_id, "outcome": "Up", "price": 0, "winner": False},
-                    {"token_id": market.down_token_id, "outcome": "Down", "price": 1, "winner": True},
-                ],
-            },
+                "outcomes": json.dumps(["Up", "Down"]),
+                "outcomePrices": json.dumps(["0", "1"]),
+            }]}],
         )
 
-    discovery = _discovery_with({"clob": clob, "gamma": lambda r: httpx.Response(500)})
+    discovery = _discovery_with({"gamma": gamma})
     info = await discovery.get_resolution(market)
     assert (info.closed, info.outcome) == (True, "DOWN")
     await discovery.close()
@@ -99,9 +95,6 @@ async def test_clob_winner_flag_resolves_market():
 @pytest.mark.asyncio
 async def test_gamma_fallback_needs_terminal_prices_not_just_closed():
     market = _finished_market()
-
-    def clob(request):
-        return httpx.Response(200, json={"closed": True, "tokens": []})
 
     def gamma_factory(prices):
         def gamma(request):
@@ -122,12 +115,12 @@ async def test_gamma_fallback_needs_terminal_prices_not_just_closed():
 
         return gamma
 
-    pending = _discovery_with({"clob": clob, "gamma": gamma_factory(["0.55", "0.45"])})
+    pending = _discovery_with({"gamma": gamma_factory(["0.55", "0.45"])})
     info = await pending.get_resolution(market)
     assert (info.closed, info.outcome) == (True, None)
     await pending.close()
 
-    done = _discovery_with({"clob": clob, "gamma": gamma_factory(["1", "0"])})
+    done = _discovery_with({"gamma": gamma_factory(["1", "0"])})
     info = await done.get_resolution(market)
     assert (info.closed, info.outcome) == (True, "UP")
     await done.close()

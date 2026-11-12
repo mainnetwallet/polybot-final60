@@ -3,7 +3,10 @@ import type { Mode, Side } from "../api/types";
 import { cx } from "../lib/format";
 import { IconArrowDown, IconArrowUp, IconLock, IconZap } from "./Icons";
 
-export function StatusPill({ running, killSwitch }: { running: boolean; killSwitch: boolean }) {
+export function StatusPill({ running, killSwitch }: { running: boolean | null; killSwitch: boolean | null }) {
+  if (running === null || killSwitch === null) {
+    return <span className="chip border-white/10 bg-white/5 text-muted">Loading state</span>;
+  }
   if (killSwitch) {
     return (
       <span className="chip border-down/35 bg-down/10 text-down">

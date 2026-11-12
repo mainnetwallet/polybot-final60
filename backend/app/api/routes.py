@@ -80,8 +80,7 @@ def build_router(
 
     @router.get("/settings")
     async def get_settings_route() -> dict:
-        data = runtime.get().model_dump()
-        return data
+        return runtime.get().to_public_dict()
 
     @router.patch("/settings")
     async def patch_settings(request: SettingsPatch) -> dict:

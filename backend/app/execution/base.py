@@ -23,6 +23,7 @@ class OrderRequest:
     max_price: float
     observed_at_ms: int
     order_min_size: float = 0.0
+    asset_version: int = 1
 
 
 @dataclass
@@ -45,10 +46,6 @@ class ExecutionEngine(ABC):
     @abstractmethod
     async def place_buy(self, request: OrderRequest) -> ExecutionReport:
         """Submit a marketable BUY for `notional` USDC, never above max_price."""
-
-    @abstractmethod
-    async def cancel_open_orders(self) -> int:
-        """Cancel resting orders. Returns number cancelled."""
 
     @abstractmethod
     async def get_balance(self) -> float | None:

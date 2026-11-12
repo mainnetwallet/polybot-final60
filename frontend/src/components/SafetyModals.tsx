@@ -5,8 +5,6 @@ import { cx } from "../lib/format";
 import { IconAlert, IconCheck, IconClose, IconLock, IconShield, IconZap } from "./Icons";
 import { Modal } from "./Modal";
 
-const LIVE_PHRASE = "GO LIVE";
-
 function ReadinessRow({ ok, label }: { ok: boolean; label: string }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border hairline bg-black/20 px-2.5 py-2">
@@ -55,11 +53,11 @@ export function ModeSwitchModal({
   }, [open, target]);
 
   const running = snapshot?.bot.status === "RUNNING";
-  const outstanding = snapshot?.open_orders.length ?? 0;
+  const outstanding = snapshot ? snapshot.open_orders.length : null;
   const readiness = snapshot?.live;
   const live = target === "live";
-  const phraseOk = !live || phrase.trim() === LIVE_PHRASE;
-  const canSwitch = !busy && !running && outstanding === 0 && (!live || (readiness?.ready === true && phraseOk));
+  const phraseOk = !live || phrase.trim().length > 0;
+  const canSwitch = snapshot !== null && !busy && !running && outstanding === 0 && (!live || (readiness?.ready === true && phraseOk));
 
   const confirm = async () => {
     setBusy(true);
@@ -127,14 +125,14 @@ export function ModeSwitchModal({
             ) : null}
             <div>
               <label className="label mb-1.5 block" htmlFor="mode-live-phrase">
-                Type <span className="text-down">{LIVE_PHRASE}</span> to confirm
+                Type the configured confirmation phrase to confirm
               </label>
               <input
                 id="mode-live-phrase"
                 className="input mono uppercase tracking-[0.2em]"
                 value={phrase}
                 onChange={(event) => setPhrase(event.target.value)}
-                placeholder={LIVE_PHRASE}
+                placeholder="Confirmation phrase"
                 autoComplete="off"
                 spellCheck={false}
               />
@@ -153,7 +151,7 @@ export function ModeSwitchModal({
         {running ? (
           <Warning>Stop the bot before switching execution mode. The backend rejects mode changes while running.</Warning>
         ) : null}
-        {outstanding > 0 ? (
+        {outstanding !== null && outstanding > 0 ? (
           <Warning>
             {outstanding} outstanding order{outstanding === 1 ? "" : "s"} must be resolved before the mode can change.
           </Warning>
@@ -182,7 +180,7 @@ export function StartLiveModal({ open, onClose }: { open: boolean; onClose: () =
     }
   }, [open]);
 
-  const canStart = !busy && readiness?.ready === true && phrase.trim() === LIVE_PHRASE;
+  const canStart = !busy && readiness?.ready === true && phrase.trim().length > 0;
 
   const confirm = async () => {
     setBusy(true);
@@ -228,14 +226,14 @@ export function StartLiveModal({ open, onClose }: { open: boolean; onClose: () =
         </div>
         <div>
           <label className="label mb-1.5 block" htmlFor="start-live-phrase">
-            Type <span className="text-down">{LIVE_PHRASE}</span> to confirm
+            Type the configured confirmation phrase to confirm
           </label>
           <input
             id="start-live-phrase"
             className="input mono uppercase tracking-[0.2em]"
             value={phrase}
             onChange={(event) => setPhrase(event.target.value)}
-            placeholder={LIVE_PHRASE}
+            placeholder="Confirmation phrase"
             autoComplete="off"
             spellCheck={false}
           />

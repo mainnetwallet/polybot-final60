@@ -71,10 +71,6 @@ class LogService:
             "mode": mode,
             "persist": persist,
         }
-        if level.upper() in {"ERROR", "CRITICAL"}:
-            logger.error("[%s] %s", category, message)
-        else:
-            logger.info("[%s] %s", category, message)
         try:
             self._queue.put_nowait(record)
         except asyncio.QueueFull:
@@ -84,6 +80,10 @@ class LogService:
         while True:
             record = await self._queue.get()
             try:
+                numeric_level = getattr(logging, record["level"], logging.INFO)
+                await asyncio.to_thread(
+                    logger.log, numeric_level, "[%s] %s", record["category"], record["message"]
+                )
                 if record["persist"]:
                     await asyncio.to_thread(self._persist, record)
                 await self._publisher.broadcast(

@@ -77,7 +77,13 @@ class TradingBot:
         self.paper_engine = PaperExecutionEngine(settings, self.data.book_for)
         self.live_engine = LiveExecutionEngine(settings, balance_hint=lambda: self._live_balance)
         self.orders = OrderManager(
-            settings, runtime, portfolio, self.risk, self._executor_for, self.logs
+            settings,
+            runtime,
+            portfolio,
+            self.risk,
+            self._executor_for,
+            self.logs,
+            submission_allowed=self._can_submit,
         )
 
         self._status = "STOPPED"
@@ -85,6 +91,7 @@ class TradingBot:
         self._kill_switch = False
         self._started_at: datetime | None = None
         self._lock = asyncio.Lock()
+        self._stop_generation = 0
         self._market: MarketInfo | None = None
         self._evaluation: StrategyEvaluation | None = None
         self._last_order: dict | None = None
@@ -93,6 +100,7 @@ class TradingBot:
         self._live_balance_at = 0.0
         self._last_price_persist_ms: dict[str, int] = {}
         self._tasks: list[asyncio.Task] = []
+        self._background_tasks: set[asyncio.Task] = set()
         self._shutdown = False
         self._market_finalized: set[str] = set()
         self._resolution_pending_logged: set[str] = set()
@@ -123,6 +131,19 @@ class TradingBot:
             return self.live_engine
         return self.paper_engine
 
+    def _can_submit(self, mode: str) -> bool:
+        return (
+            mode == self._mode
+            and self._status == "RUNNING"
+            and not self._kill_switch
+            and self._risk_halt_reason is None
+        )
+
+    def _schedule_background(self, fn, *args) -> None:
+        task = asyncio.create_task(asyncio.to_thread(fn, *args))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
     async def initialize(self) -> None:
         self._shutdown = False
         with session_scope() as session:
@@ -143,12 +164,21 @@ class TradingBot:
             state.started_at = None
             session.flush()
             recovered = session.execute(
-                select(Order).where(Order.status.in_(["PENDING", "SUBMITTED", "PARTIALLY_FILLED"]))
+                select(Order).where(
+                    Order.mode == "paper",
+                    Order.status.in_(["PENDING", "SUBMITTED", "PARTIALLY_FILLED"]),
+                )
             ).scalars().all()
             for order in recovered:
                 order.status = "EXPIRED"
                 order.reason = "recovered after restart; open remainder cancelled"
             recovered_count = len(recovered)
+            unresolved_live_count = session.execute(
+                select(Order.id).where(
+                    Order.mode == "live",
+                    Order.status.in_(["PENDING", "SUBMITTED", "PARTIALLY_FILLED"]),
+                )
+            ).scalars().all()
             paper_open = session.execute(
                 select(Position).where(Position.mode == "paper", Position.status == "open")
             ).scalars().all()
@@ -171,6 +201,7 @@ class TradingBot:
             f"backend started; mode={self._mode} status=STOPPED",
             payload={
                 "recovered_orders": recovered_count,
+                "unresolved_live_orders": len(unresolved_live_count),
                 "paper_open_positions": paper_open_count,
                 "live_open_positions": live_open_count,
             },
@@ -195,6 +226,9 @@ class TradingBot:
                 pass
         await self.monitor.stop()
         await self.data.stop()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        await self.orders.close()
         await self.discovery.close()
         await self.live_engine.close()
         await self.logs.stop()
@@ -210,7 +244,9 @@ class TradingBot:
             self.monitor.track(market)
             self.data.set_market(market)
             if self._mode == "live":
-                self._prewarm_live(market)
+                await self.live_engine.prewarm(
+                    [market.up_token_id, market.down_token_id], market.market_id
+                )
             self.orders.reset_trigger_cache()
             self._evaluation = None
             self._market_finalized.discard(market.market_id)
@@ -267,12 +303,6 @@ class TradingBot:
             row.status = "active"
             session.flush()
 
-    def _prewarm_live(self, market: MarketInfo) -> None:
-        """Warm tick size / neg-risk / fee info for the active market (no-op until the client exists)."""
-        asyncio.create_task(
-            self.live_engine.prewarm([market.up_token_id, market.down_token_id], market.market_id)
-        )
-
     async def _on_book(self, market_id: str, side: str, book) -> None:
         market = self._market
         if market is None or market.market_id != market_id:
@@ -292,7 +322,7 @@ class TradingBot:
             last_persist = self._last_price_persist_ms.get(side, 0)
             if now_ms - last_persist >= self.settings.ws_price_persist_interval_ms:
                 self._last_price_persist_ms[side] = now_ms
-                self._persist_price(market_id, side, book)
+                self._schedule_background(self._persist_price, market_id, side, book.snapshot())
 
     async def _handle_trading(
         self, market: MarketInfo, evaluation: StrategyEvaluation, config, now_ms: int
@@ -301,7 +331,7 @@ class TradingBot:
         ctx = None
         if evaluation.signals:
             try:
-                ctx = self._risk_context(market, config, now_ms)
+                ctx = await asyncio.to_thread(self._risk_context, market, config, now_ms)
             except Exception as exc:
                 logger.exception("risk context failed")
                 self.logs.log("ERROR", "error", f"risk context failed: {exc}", mode=self._mode)
@@ -356,7 +386,7 @@ class TradingBot:
         except Exception as exc:
             logger.debug("tick broadcast failed: %s", exc)
 
-    def _persist_price(self, market_id: str, side: str, book) -> None:
+    def _persist_price(self, market_id: str, side: str, book: dict) -> None:
         from app.database.models import PriceUpdate
 
         try:
@@ -365,12 +395,12 @@ class TradingBot:
                     PriceUpdate(
                         market_id=market_id,
                         side=side,
-                        best_bid=book.best_bid,
-                        best_ask=book.best_ask,
-                        bid_size=book.bid_size,
-                        ask_size=book.ask_size,
-                        source=book.source,
-                        ts=book.updated_at_ms,
+                        best_bid=book["best_bid"],
+                        best_ask=book["best_ask"],
+                        bid_size=book["bid_size"],
+                        ask_size=book["ask_size"],
+                        source=book["source"],
+                        ts=book["updated_at_ms"],
                     )
                 )
         except Exception as exc:  # price history must never break trading
@@ -379,10 +409,21 @@ class TradingBot:
     def _risk_context(self, market: MarketInfo, config, now_ms: int) -> RiskContext:
         marks = self._marks()
         with session_scope() as session:
-            unrealized = self.portfolio.mark_to_market(session, self._mode, marks, market.market_id)
+            unrealized = self.portfolio.unrealized_pnl(session, self._mode, marks, market.market_id)
             pnl = self.portfolio.pnl_summary(session, self._mode, unrealized)["daily_pnl"]
             trades_today = self.portfolio.trades_today(session, self._mode)
-            open_positions = len(self.portfolio.open_positions(session, self._mode))
+            exposure_keys = {
+                (position.market_id, position.side)
+                for position in self.portfolio.open_positions(session, self._mode)
+            }
+            active_orders = session.execute(
+                select(Order).where(
+                    Order.mode == self._mode,
+                    Order.status.in_(["PENDING", "SUBMITTED", "PARTIALLY_FILLED"]),
+                )
+            ).scalars().all()
+            exposure_keys.update((order.market_id, order.side) for order in active_orders)
+            open_positions = len(exposure_keys)
             balance = self._balance(session)
         remaining = market.remaining_seconds()
         return RiskContext(
@@ -435,11 +476,31 @@ class TradingBot:
     # ------------------------------------------------------------------
     async def start_bot(self, confirm_live: bool = False, confirmation_phrase: str = "") -> dict:
         async with self._lock:
+            start_generation = self._stop_generation
             if self._status == "RUNNING":
                 return await self.snapshot()
             if self._kill_switch:
                 raise BotError("kill switch is active; clear it before starting")
             gate = await self._live_gate(self._mode, confirm_live, confirmation_phrase, validate=True)
+            if self._mode == "live":
+                await self._reconcile_open_live_orders()
+                with session_scope() as session:
+                    unresolved = session.execute(
+                        select(Order.id).where(
+                            Order.mode == "live",
+                            Order.status.in_(["PENDING", "SUBMITTED", "PARTIALLY_FILLED"]),
+                        )
+                    ).scalars().all()
+                if unresolved:
+                    raise LiveGateError(
+                        f"{len(unresolved)} unresolved live order(s) remain; reconcile them before starting"
+                    )
+                if self._market is not None:
+                    await self.live_engine.prewarm(
+                        [self._market.up_token_id, self._market.down_token_id], self._market.market_id
+                    )
+            if self._stop_generation != start_generation or self._kill_switch:
+                raise BotError("start request was canceled by a stop or kill switch")
             self._status = "RUNNING"
             self._started_at = utcnow()
             with session_scope() as session:
@@ -450,8 +511,8 @@ class TradingBot:
             self._risk_halt_reason = None
             self._risk_halt_logged = False
             self.orders.reset_trigger_cache()
-            if self._mode == "live" and self._market is not None:
-                self._prewarm_live(self._market)
+            if self._mode == "live":
+                self.live_engine.allow_new_orders()
             self.logs.log(
                 "INFO",
                 "system",
@@ -463,28 +524,34 @@ class TradingBot:
         return await self.snapshot()
 
     async def stop_bot(self, reason: str = "operator") -> dict:
+        self._stop_generation += 1
+        self.live_engine.block_new_orders()
         async with self._lock:
-            if self._status != "RUNNING":
-                return await self.snapshot()
-            self._status = "STOPPED"
-            self._started_at = None
-            with session_scope() as session:
-                state = session.get(AppState, 1)
-                if state:
-                    state.status = "STOPPED"
-                    state.started_at = None
+            was_running = self._status == "RUNNING"
+            if was_running:
+                self._status = "STOPPED"
+                self._started_at = None
+                with session_scope() as session:
+                    state = session.get(AppState, 1)
+                    if state:
+                        state.status = "STOPPED"
+                        state.started_at = None
             market = self._market
-            if market is not None:
-                await self.orders.finalize_market(market.market_id, self._mode, f"bot stopped ({reason})")
             if self._mode == "live":
-                await self.live_engine.cancel_open_orders()
-            self.logs.log(
-                "WARNING",
-                "system",
-                f"bot stopped ({reason})",
-                payload={"mode": self._mode},
-                mode=self._mode,
-            )
+                await self.orders.wait_for_submissions()
+                await self.orders.cancel_live_orders()
+            else:
+                await self.orders.wait_for_submissions()
+                if was_running and market is not None:
+                    await self.orders.finalize_market(market.market_id, self._mode, f"bot stopped ({reason})")
+            if was_running:
+                self.logs.log(
+                    "WARNING",
+                    "system",
+                    f"bot stopped ({reason})",
+                    payload={"mode": self._mode},
+                    mode=self._mode,
+                )
         await self._broadcast_state()
         return await self.snapshot()
 
@@ -498,7 +565,10 @@ class TradingBot:
                 raise ModeSwitchError("stop the bot before switching modes")
             with session_scope() as session:
                 active = session.execute(
-                    select(Order).where(Order.status.in_(["PENDING", "SUBMITTED", "PARTIALLY_FILLED"]))
+                    select(Order).where(
+                        Order.mode == mode,
+                        Order.status.in_(["PENDING", "SUBMITTED", "PARTIALLY_FILLED"]),
+                    )
                 ).scalars().all()
                 if active:
                     raise ModeSwitchError(
@@ -559,12 +629,14 @@ class TradingBot:
     async def set_kill_switch(self, active: bool) -> dict:
         if active:
             self._kill_switch = True
+            self.live_engine.block_new_orders()
             with session_scope() as session:
                 state = session.get(AppState, 1)
                 if state:
                     state.kill_switch = True
             await self.stop_bot("kill switch")
-            await self.live_engine.cancel_open_orders()
+            await self.orders.wait_for_submissions()
+            await self.orders.cancel_live_orders()
         else:
             async with self._lock:
                 if self._status == "RUNNING":
@@ -735,7 +807,7 @@ class TradingBot:
             try:
                 result = await self.live_engine.redeem_market(market_id)
             except Exception as exc:
-                result = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+                result = {"status": "error", "error": f"redemption failed ({type(exc).__name__})"}
             status = result.get("status")
             if status == "redeemed":
                 self._redeem_queue.pop(market_id, None)
@@ -791,7 +863,7 @@ class TradingBot:
             orders = session.execute(
                 select(Order).where(
                     Order.mode == "live",
-                    Order.status.in_(["SUBMITTED", "PARTIALLY_FILLED"]),
+                    Order.status.in_(["PENDING", "SUBMITTED", "PARTIALLY_FILLED"]),
                     Order.exchange_order_id.is_not(None),
                 )
             ).scalars().all()
@@ -832,19 +904,19 @@ class TradingBot:
             return
         onchain = {}
         for item in positions:
-            market_id = item.get("conditionId") or item.get("condition_id")
+            market_id = item.get("condition_id") or item.get("conditionId")
             outcome = str(item.get("outcome") or "").upper()
             try:
-                size = float(item.get("size") or 0)
+                size = float(item.get("current_size") or item.get("size") or 0)
             except (TypeError, ValueError):
                 size = 0.0
             if market_id and outcome in {"UP", "DOWN"}:
-                onchain[(str(market_id), outcome)] = size
+                onchain[(str(market_id).lower(), outcome)] = size
         with session_scope() as session:
             local = session.execute(
                 select(Position).where(Position.mode == "live", Position.status == "open")
             ).scalars().all()
-            local_map = {(p.market_id, p.side): p.size for p in local}
+            local_map = {(p.market_id.lower(), p.side): p.size for p in local}
         mismatches = []
         for key, size in onchain.items():
             local_size = local_map.get(key, 0.0)
@@ -893,13 +965,7 @@ class TradingBot:
             account = self.portfolio.account(session, self._mode)
             positions = self.portfolio.open_positions(session, self._mode)
             marks = self._marks()
-            unrealized = 0.0
-            for position in positions:
-                mark = marks.get((position.market_id, position.side))
-                if mark is not None:
-                    unrealized += position.size * mark - position.cost_basis - position.fees
-                else:
-                    unrealized += position.unrealized_pnl
+            unrealized = self.portfolio.unrealized_pnl(session, self._mode, marks)
             pnl = self.portfolio.pnl_summary(session, self._mode, unrealized)
             trades_today = self.portfolio.trades_today(session, self._mode)
             open_orders = session.execute(
@@ -1046,14 +1112,7 @@ class TradingBot:
     async def analytics_summary(self, mode: str) -> dict:
         marks = self._marks()
         with session_scope() as session:
-            positions = self.portfolio.open_positions(session, mode)
-            unrealized = 0.0
-            for position in positions:
-                mark = marks.get((position.market_id, position.side))
-                if mark is not None:
-                    unrealized += position.size * mark - position.cost_basis - position.fees
-                else:
-                    unrealized += position.unrealized_pnl
+            unrealized = self.portfolio.unrealized_pnl(session, mode, marks)
             return self.analytics.summary(session, mode, unrealized)
 
     async def recent_orders(self, mode: str, limit: int = 100) -> list[dict]:

@@ -1,12 +1,13 @@
-# FINAL60 - Polymarket BTC 5-minute bot
+# Polybot - Polymarket BTC market bot
 
-A local Windows application for Polymarket BTC 5-minute UP/DOWN markets.
+A local Windows application for Polymarket BTC up/down markets.
 
-The strategy is fixed and intentionally simple:
+The entry rules are intentionally simple. The window and trigger values below are defaults and can be changed in Settings:
 
-- **First 4 minutes: no trade.** No confirmation signals.
-- **Final 60 seconds: monitor UP and DOWN.** If `UP best ask >= 0.80`, submit a **BUY at the current market price**. Same for DOWN.
+- Before the configured final window, no order is created.
+- During the configured final window, monitor UP and DOWN. If a best ask reaches `TRIGGER_THRESHOLD` (default `0.80`), submit a **BUY at the current market price**.
 - `0.80` is a **trigger threshold, never a limit price**.
+- Live orders use FOK and the configured maximum execution price as the worst acceptable price.
 - Execution is WebSocket/event-driven. There are no polling sleeps or artificial delays in the trigger path.
 
 Paper trading is the default. Live trading is implemented but disabled by default and guarded by explicit safety gates.
@@ -30,12 +31,11 @@ instance (bot stopped gracefully through the API, then only processes that belon
 then starts the API and dashboard again with the current code. After a restart the bot is `STOPPED`; open positions
 are re-tracked and settled automatically. Use `start.bat -NoRestart` to keep an already-running instance instead.
 
-## Settlement & balance after a 5m market ends
+## Settlement & balance after a market ends
 
-When the 5-minute window ends the position shows **settling…** until Polymarket publishes the winner
-(Up/Down markets resolve from a Chainlink TWAP, no UMA delay). The bot checks the CLOB market's
-`tokens[].winner` flag first and Gamma's `1/0` outcome prices second, polls every 5 s, and keeps polling
-until the winner is known (also after a restart). Then:
+When a market ends, the position shows **settling…** until Gamma marks the event closed and publishes
+the winning outcome price. The bot keeps checking tracked markets until the winner is known, including
+after a restart. Then:
 
 - **Paper:** the position closes, realized PnL is booked and the balance is credited (`+1 USDC` per winning share).
 - **Live:** per the official docs (`trading/positions/manage`) winning tokens become pUSD only after
@@ -196,7 +196,7 @@ git pull
 1. Open `http://127.0.0.1:5173`.
 2. **Overview**: check that the market is found, the feed is healthy, and the UP/DOWN asks are updating.
 3. **Settings**: review the mode (it should say PAPER), trigger, trade amount, and risk limits.
-4. Start the bot. During the first 4 minutes of each 5-minute market nothing happens by design. In the final 60 seconds it buys a side when its best ask reaches the trigger.
+4. Start the bot. It waits until the configured final window, then buys a side when its best ask reaches the configured trigger.
 5. **Trading** shows orders, fills, and positions; **Strategy** shows why each trigger was taken or blocked; **Analytics** shows PnL and win rate; **Logs** shows live server logs.
 6. Stop the bot from the dashboard before changing mode or resetting paper data.
 
@@ -219,7 +219,7 @@ This keeps `.env` and `data\polymarket_bot.db`. To clear paper history only, use
 Gamma API (market discovery, 3 s refresh)
         |
         v
-active 5-minute BTC market + UP/DOWN token ids
+active BTC up/down market + its UP/DOWN asset ids
         |
         v
 CLOB WebSocket (book, price_change, best_bid_ask)
@@ -256,11 +256,11 @@ Key properties:
 | --- | --- |
 | `market_discovery` | Gamma series/event lookup, active market, resolution |
 | `market_data` | CLOB WebSocket client, book state, freshness |
-| `strategy` | Final-60s window and ask-threshold evaluation |
+| `strategy` | Configured final window and ask-threshold evaluation |
 | `risk_manager` | Daily loss/target, trade count, open positions, kill switch |
 | `order_manager` | Order decisions, idempotency, duplicate/conflict policy |
 | `paper_trading` | Simulated immediate-market BUY, walking the ask ladder |
-| `live_trading` | Real CLOB V2 (`py-clob-client-v2`) marketable FOK BUY; fill price taken from the exchange response |
+| `live_trading` | Real CLOB V1/V2 marketable FOK BUY; delayed fills are reconciled from order/trade data |
 | `portfolio` | Balances, positions, settlement, analytics |
 | `monitoring` | In-memory log stream and persisted file logs |
 | `services.bot` | Orchestration, state snapshot, WebSocket broadcast |
@@ -288,13 +288,13 @@ Key properties:
 
 ### Live
 
-Live trading uses **Polymarket CLOB V2** (live since 2026-04-28) through `py-clob-client-v2`; the legacy `py-clob-client` no longer works on production. Collateral is **pUSD**: API-only wallets must wrap USDC.e into pUSD via the Collateral Onramp before the balance check passes. Fees are charged by the protocol at match time, so the live `fee` column is not populated from the exchange yet.
+Live trading uses Polymarket CLOB V1 or Protocol V2 markets through `py-clob-client-v2`. Protocol V2 markets use position IDs; V1 markets use CLOB token IDs. Collateral is **pUSD**: API-only wallets must wrap USDC.e into pUSD via the Collateral Onramp before the balance check passes. Live fees are estimated from each market's CLOB fee parameters and follow the documented fee formula and precision.
 
 Live mode is off by default and is never switched on automatically. Enabling it requires all of the following:
 
 1. `LIVE_TRADING_ENABLED=true` in `.env`
 2. `POLYMARKET_GEO_VERIFIED=true` in `.env` (set this only after confirming your jurisdiction/polymarket eligibility)
-3. Private key and funder address present in `.env`
+3. Private key present in `.env`, with funded pUSD and a positive CLOB collateral allowance
 4. The bot stopped with no outstanding orders
 5. Switching mode in the dashboard and typing the confirmation phrase (`GO LIVE`)
 6. Passing the live validation/start flow
@@ -374,24 +374,23 @@ cd frontend
 npm run build
 ```
 
-Results on this machine (2026-11-12):
+Results on this machine (2026-11-12; captured after the review changes):
 
-- `pytest`: **50 passed** (3.2 s)
-- `npm run build`: PASS (TypeScript strict, Vite 53 modules)
-- End-to-end paper evidence: UP ask reached `0.80` with `59.394 s` left in the final window; order filled `6.25` shares at `0.80`, fee `0.07`, measured latency `4 ms`; a second trigger was blocked by `blocked_duplicate`; the market resolved UP for `+1.18 USDC` realized; a stop/start cycle reloaded identical order, position, and analytics records.
+- `pytest`: **84 passed** (3.77 s).
+- `npm run build`: PASS (TypeScript strict, Vite 55 modules).
 
-These are paper-execution results. See limitations below.
+These checks cover automated behavior and frontend compilation. They do not validate an authenticated exchange session.
 
 ---
 
 ## Limitations (honest list)
 
-- **Live execution was not exercised with real funds** and the CLOB V2 order path was only unit-tested against mocked SDK responses (no network access to Polymarket from the build environment). The live path, gates, and order construction are implemented and unit-tested, but no real order has been submitted from this machine.
+- **Live execution was not exercised with real funds.** SDK construction and response handling were checked against the installed SDK and official documentation; no authenticated live order or redemption was submitted.
 - **Polymarket geo eligibility is unverified.** `POLYMARKET_GEO_VERIFIED` stays `false` by default; do not set it without checking your jurisdiction.
-- **Paper fees are approximate.** The fee formula is an approximation of the verified schedule and should be reviewed before relying on absolute paper PnL.
+- **Paper fees are approximate.** The paper engine uses the configured fee rate and exponent; the live engine reads market fee parameters when available.
 - **Gamma resolution delay.** Gamma may keep `closed:false` (with near-1/0 prices) for a while after expiry. Resolution requires `closed:true` and published 1/0 prices, so a paper position can remain open across a restart until Gamma publishes the result.
 - **On-chain reconciliation is best-effort.** Live fills depend on the CLOB API responses; there is no separate on-chain balance reconciler.
-- **Single market family.** Discovery targets the `btc-up-or-down-5m` series only.
+- **Single market family.** Discovery targets the configured series slug, which defaults to `btc-up-or-down-5m`.
 - **Clock skew matters.** Windows clock drift can make books look stale and block trades. Fix time sync rather than relaxing `STALE_DATA_MAX_AGE_MS`.
 - **Python version.** Python 3.11+ is supported (tests pass on 3.11 and 3.12).
 
@@ -411,7 +410,7 @@ These are paper-execution results. See limitations below.
 
 **Startup failed** - read `logs\backend.err.log`, `logs\frontend.err.log`, then `logs\backend.log`. `start.bat` stops only the services it started this run.
 
-**Bot does not trade** - confirm the bot is RUNNING, the market is in its final 60 seconds, the ask actually reaches the trigger, book data is fresh, the daily risk limits are intact, and no duplicate/conflict rule blocked the trigger (see the Strategy page audit trail).
+**Bot does not trade** - confirm the bot is RUNNING, the market is in its configured final window, the ask reaches the trigger, book data is fresh, daily risk limits are intact, and no duplicate/conflict rule blocked the trigger (see the Strategy page audit trail).
 
 **Paper reset does nothing** - stop the bot first; in-memory state would otherwise overwrite the reset.
 

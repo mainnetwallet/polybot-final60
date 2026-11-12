@@ -17,9 +17,9 @@ export function Topbar({ page, onNavigate, onOpenMode, onStartLive, onOpenKill }
   const { snapshot, feedState, start, stop, killSwitch: setKillSwitch } = useBot();
   const meta = PAGE_META[page];
   const bot = snapshot?.bot;
-  const running = bot?.status === "RUNNING";
-  const killActive = bot?.kill_switch ?? false;
-  const mode = bot?.mode ?? "paper";
+  const running = bot ? bot.status === "RUNNING" : null;
+  const killActive = bot ? bot.kill_switch : null;
+  const mode = bot?.mode;
 
   const handleStart = () => {
     if (!snapshot) return;
@@ -37,7 +37,7 @@ export function Topbar({ page, onNavigate, onOpenMode, onStartLive, onOpenKill }
           <div className="flex items-center gap-2 text-[9.5px] font-semibold uppercase tracking-[0.18em] text-slate-600">
             <span>Polybot</span>
             <span className="h-px w-4 bg-white/10" />
-            <span className="text-slate-500">Final 60</span>
+            <span className="text-slate-500">Event driven</span>
           </div>
           <div className="mt-0.5 flex items-center gap-2.5">
             <h1 className="truncate text-[16px] font-semibold tracking-tight text-slate-100">{meta.title}</h1>
@@ -70,8 +70,9 @@ export function Topbar({ page, onNavigate, onOpenMode, onStartLive, onOpenKill }
             <button
               type="button"
               onClick={() => {
-                if (mode !== "paper") onOpenMode();
+                if (mode && mode !== "paper") onOpenMode();
               }}
+              disabled={!mode}
               className={cx(
                 "rounded-md px-2.5 py-1.5 text-[10.5px] font-bold uppercase tracking-[0.12em]",
                 mode === "paper" ? "bg-sky/15 text-sky" : "text-slate-600 hover:text-slate-400",
@@ -82,8 +83,9 @@ export function Topbar({ page, onNavigate, onOpenMode, onStartLive, onOpenKill }
             <button
               type="button"
               onClick={() => {
-                if (mode !== "live") onOpenMode();
+                if (mode && mode !== "live") onOpenMode();
               }}
+              disabled={!mode}
               className={cx(
                 "flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[10.5px] font-bold uppercase tracking-[0.12em]",
                 mode === "live" ? "bg-down/15 text-down" : "text-slate-600 hover:text-slate-400",
@@ -103,7 +105,7 @@ export function Topbar({ page, onNavigate, onOpenMode, onStartLive, onOpenKill }
             <button
               type="button"
               onClick={handleStart}
-              disabled={!snapshot || killActive}
+              disabled={!snapshot || killActive === true}
               title={
                 killActive
                   ? "Clear the kill switch first"
@@ -121,6 +123,7 @@ export function Topbar({ page, onNavigate, onOpenMode, onStartLive, onOpenKill }
           <button
             type="button"
             onClick={() => (killActive ? void setKillSwitch(false) : onOpenKill())}
+            disabled={!bot}
             className={cx("btn h-9", killActive ? "border-amber/35 bg-amber/10 text-amber" : "btn-danger")}
             title={killActive ? "Clear the emergency kill switch" : "Emergency kill switch"}
           >

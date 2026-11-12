@@ -100,8 +100,5 @@ class PaperExecutionEngine(ExecutionEngine):
             latency_ms=latency_ms,
         )
 
-    async def cancel_open_orders(self) -> int:
-        return 0
-
     async def get_balance(self) -> float | None:
         return None

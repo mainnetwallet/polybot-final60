@@ -19,7 +19,7 @@ import { OrdersTable, PositionsTable } from "../components/Tables";
 import { useBot } from "../hooks/BotContext";
 import { LoadingPanel } from "../components/LoadingPanel";
 import { useRemainingSeconds } from "../hooks/useCountdown";
-import { usePolled } from "../hooks/usePolled";
+import { useLiveRefresh } from "../hooks/useLiveRefresh";
 import {
   clamp,
   cx,
@@ -52,14 +52,14 @@ function PanelHead({
   );
 }
 
-function humanizeReason(reason: string): string {
+function humanizeReason(reason: string, finalWindowSeconds: number): string {
   switch (reason) {
     case "no_market":
-      return "Waiting for the next BTC 5-minute market";
+      return "Waiting for the next market";
     case "market_not_started":
       return "Market discovered — observation phase";
     case "outside_final_window":
-      return "First 4 minutes: trading is disabled";
+      return `Outside the configured final ${finalWindowSeconds} seconds; trading is disabled`;
     case "market_expired":
       return "Market expired — no new orders allowed";
     case "in_window":
@@ -78,16 +78,22 @@ function MarketPanel() {
   const duration = market?.duration_seconds ?? null;
   const finalWindow = strategy.final_window_seconds;
   const inWindow = remaining !== null && remaining > 0 && remaining <= finalWindow;
-  const elapsed = duration !== null && remaining !== null ? clamp(duration - remaining, 0, duration) : 0;
-  const progress = duration ? (elapsed / duration) * 100 : 0;
-  const finalStart = duration ? ((duration - finalWindow) / duration) * 100 : 0;
+  const phaseLabel = inWindow ? "Final window" : remaining !== null ? "Observation" : "—";
+  const elapsed = duration !== null && remaining !== null ? clamp(duration - remaining, 0, duration) : null;
+  const progress = duration && elapsed !== null ? (elapsed / duration) * 100 : null;
+  const finalStart = duration ? ((duration - finalWindow) / duration) * 100 : null;
+  const durationLabel = duration == null
+    ? "—"
+    : duration % 60 === 0
+      ? `${duration / 60}-minute window`
+      : `${duration}-second window`;
 
   return (
     <section className="panel relative overflow-hidden p-5 xl:col-span-8">
       <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-up/[0.05] blur-3xl" />
       <PanelHead
         label="Active market"
-        title="Bitcoin · Up or Down · 5-minute window"
+        title={market ? `Bitcoin · Up or Down · ${durationLabel}` : "Bitcoin · Up or Down"}
         right={
           market ? (
             <span className="chip border-white/8 bg-white/[0.03] font-mono text-slate-400">
@@ -108,7 +114,7 @@ function MarketPanel() {
                 )}
               >
                 <IconClock size={10} />
-                {inWindow ? "Final window" : "Observation"}
+                {phaseLabel}
               </span>
               <span className="chip border-white/8 bg-white/[0.03] text-slate-400">
                 <IconTarget size={10} />
@@ -130,13 +136,13 @@ function MarketPanel() {
                 <div className="mono mt-1 text-slate-300">{fmtTime(market.window_end)}</div>
               </div>
               <div>
-                <div className="label">UP token</div>
+                <div className="label">UP asset</div>
                 <div className="mono mt-1 text-up/80" title={market.up_token_id}>
                   {shortId(market.up_token_id, 10, 4)}
                 </div>
               </div>
               <div>
-                <div className="label">DOWN token</div>
+                <div className="label">DOWN asset</div>
                 <div className="mono mt-1 text-down/80" title={market.down_token_id}>
                   {shortId(market.down_token_id, 10, 4)}
                 </div>
@@ -145,12 +151,14 @@ function MarketPanel() {
 
             <div className="mt-5">
               <div className="relative h-2 overflow-hidden rounded-full bg-white/[0.05]">
-                <div className="absolute inset-y-0 right-0 bg-amber/[0.10]" style={{ width: `${100 - finalStart}%` }} />
-                <div
-                  className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-sky/60 to-sky"
-                  style={{ width: `${progress}%` }}
-                />
-                <div className="absolute inset-y-0 w-px bg-amber/70" style={{ left: `${finalStart}%` }} />
+                {finalStart !== null ? <div className="absolute inset-y-0 right-0 bg-amber/[0.10]" style={{ width: `${100 - finalStart}%` }} /> : null}
+                {progress !== null ? (
+                  <div
+                    className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-sky/60 to-sky"
+                    style={{ width: `${progress}%` }}
+                  />
+                ) : null}
+                {finalStart !== null ? <div className="absolute inset-y-0 w-px bg-amber/70" style={{ left: `${finalStart}%` }} /> : null}
               </div>
               <div className="mt-2 flex items-center justify-between text-[10px] text-slate-600">
                 <span className="mono">0:00 · open</span>
@@ -173,8 +181,8 @@ function MarketPanel() {
       ) : (
         <EmptyState
           icon={<IconClock size={26} />}
-          title="No active BTC 5-minute market"
-          hint="Market discovery polls the Gamma API for the current window. The next market is picked up automatically."
+          title="No active market"
+          hint="The next market is picked up automatically when it becomes available."
         />
       )}
 
@@ -210,14 +218,14 @@ function AccountPanel() {
   const { snapshot } = useBot();
   if (!snapshot) return <LoadingPanel className="xl:col-span-4" />;
   const account = snapshot.account;
-  const config = snapshot.config ?? {};
+  const config = snapshot.config;
   const daily = account.daily_pnl;
-  const loss = Number(config.max_daily_loss ?? 0);
-  const target = Number(config.daily_profit_target ?? 0);
+  const loss = typeof config.max_daily_loss === "number" ? config.max_daily_loss : null;
+  const target = typeof config.daily_profit_target === "number" ? config.daily_profit_target : null;
 
-  const span = loss + target;
-  const fill = span > 0 ? clamp(((daily + loss) / span) * 100, 0, 100) : 50;
-  const zero = span > 0 ? (loss / span) * 100 : 50;
+  const span = loss !== null && target !== null ? loss + target : null;
+  const fill = span !== null && span > 0 ? clamp(((daily + loss!) / span) * 100, 0, 100) : null;
+  const zero = span !== null && span > 0 ? (loss! / span) * 100 : null;
 
   return (
     <section className="panel p-5 xl:col-span-4">
@@ -244,21 +252,23 @@ function AccountPanel() {
 
       <div className="mt-5">
         <div className="relative h-2 overflow-hidden rounded-full bg-white/[0.05]">
-          <div className="absolute inset-y-0 left-0 bg-down/20" style={{ width: `${zero}%` }} />
-          <div className="absolute inset-y-0 right-0 bg-up/15" style={{ width: `${100 - zero}%` }} />
-          <div className="absolute inset-y-0 w-px bg-white/40" style={{ left: `${zero}%` }} />
-          <div
-            className={cx(
-              "absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-ink-900",
-              daily < 0 ? "bg-down" : "bg-up",
-            )}
-            style={{ left: `${fill}%` }}
-          />
+          {zero !== null ? <div className="absolute inset-y-0 left-0 bg-down/20" style={{ width: `${zero}%` }} /> : null}
+          {zero !== null ? <div className="absolute inset-y-0 right-0 bg-up/15" style={{ width: `${100 - zero}%` }} /> : null}
+          {zero !== null ? <div className="absolute inset-y-0 w-px bg-white/40" style={{ left: `${zero}%` }} /> : null}
+          {fill !== null ? (
+            <div
+              className={cx(
+                "absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-ink-900",
+                daily < 0 ? "bg-down" : "bg-up",
+              )}
+              style={{ left: `${fill}%` }}
+            />
+          ) : null}
         </div>
         <div className="mt-2 flex items-center justify-between text-[10px]">
-          <span className="mono text-down/80">stop -{fmtUsd(loss)}</span>
+          <span className="mono text-down/80">stop -{loss !== null ? fmtUsd(loss) : "—"}</span>
           <span className="mono text-slate-600">{fmtUsd(account.starting_balance)} start</span>
-          <span className="mono text-up/80">target +{fmtUsd(target)}</span>
+          <span className="mono text-up/80">target +{target !== null ? fmtUsd(target) : "—"}</span>
         </div>
       </div>
 
@@ -303,7 +313,7 @@ function StrategyPulse() {
     <section className="panel p-5 xl:col-span-4">
       <PanelHead
         label="Strategy state"
-        title="FINAL_60_SECONDS_MARKET_BUY"
+        title="Configured ask-trigger strategy"
         right={
           <span
             className={cx(
@@ -360,7 +370,7 @@ function StrategyPulse() {
       <div className="mt-4 rounded-lg border hairline bg-black/20 px-3 py-2.5">
         <div className="label">Engine reason</div>
         <div className="mt-1 text-[12px] leading-relaxed text-slate-300">
-          {strategy ? humanizeReason(strategy.reason) : "Connecting to strategy engine"}
+          {strategy ? humanizeReason(strategy.reason, strategy.final_window_seconds) : "Connecting to strategy engine"}
         </div>
         {strategy?.remaining_seconds !== null && strategy?.remaining_seconds !== undefined ? (
           <div className="mono mt-1.5 text-[10.5px] text-slate-600">
@@ -397,11 +407,15 @@ function FeedPanel() {
           <span
             className={cx(
               "chip",
-              data?.connected ? "border-up/30 bg-up/10 text-up" : "border-down/30 bg-down/10 text-down",
+              data === undefined
+                ? "border-white/8 bg-white/[0.03] text-slate-500"
+                : data.connected
+                  ? "border-up/30 bg-up/10 text-up"
+                  : "border-down/30 bg-down/10 text-down",
             )}
           >
-            {data?.connected ? <IconWifi size={10} /> : <IconWifiOff size={10} />}
-            {data?.connected ? "Connected" : "Disconnected"}
+            {data === undefined ? null : data.connected ? <IconWifi size={10} /> : <IconWifiOff size={10} />}
+            {data === undefined ? "Loading" : data.connected ? "Connected" : "Disconnected"}
           </span>
         }
       />
@@ -413,7 +427,7 @@ function FeedPanel() {
           hint="last book event"
         />
         <Stat label="Reconnects" value={data?.reconnects ?? "—"} hint="websocket feed" />
-        <Stat label="Order size" value={fmtUsd(Number(config.trade_amount_usdc ?? 0))} hint="marketable notional" />
+        <Stat label="Order size" value={fmtUsd(typeof config.trade_amount_usdc === "number" ? config.trade_amount_usdc : null)} hint="marketable notional" />
         <Stat
           label="Max exec price"
           value={fmtCents(typeof config.max_execution_price === "number" ? config.max_execution_price : null)}
@@ -438,8 +452,13 @@ function FeedPanel() {
 
 export function Overview() {
   const { snapshot, history, dataVersion } = useBot();
-  const mode = snapshot?.bot.mode ?? "paper";
-  const orders = usePolled(() => api.orders(mode, 8), 5000, [mode], dataVersion);
+  const mode = snapshot?.bot.mode;
+  const orders = useLiveRefresh(
+    () => (mode ? api.orders(mode, 8) : Promise.resolve([])),
+    [mode],
+    dataVersion,
+    mode !== undefined,
+  );
   const config = snapshot?.config ?? {};
   const stale = typeof config.stale_data_max_age_ms === "number" ? config.stale_data_max_age_ms : null;
 
@@ -478,10 +497,14 @@ export function Overview() {
             <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Recent orders</div>
           </div>
           <span className="chip border-white/8 bg-white/[0.03] text-slate-500">
-            {snapshot?.open_orders.length ?? 0} open · {mode}
+            {snapshot ? `${snapshot.open_orders.length} open · ${mode ?? "—"}` : "—"}
           </span>
         </div>
-        <OrdersTable orders={orders.data ?? []} emptyHint="No orders in this mode yet. Triggers in the final 60 seconds will create them." />
+        {orders.data ? (
+          <OrdersTable orders={orders.data} emptyHint="Triggers that qualify create order records." />
+        ) : (
+          <LoadingPanel className="m-4" />
+        )}
       </section>
 
       <section className="panel overflow-hidden xl:col-span-12">
@@ -492,10 +515,10 @@ export function Overview() {
           </div>
           <span className="chip border-white/8 bg-white/[0.03] text-slate-500">
             <IconLayers size={10} />
-            {snapshot?.positions.length ?? 0}
+            {snapshot?.positions.length ?? "—"}
           </span>
         </div>
-        <PositionsTable positions={snapshot?.positions ?? []} />
+        {snapshot ? <PositionsTable positions={snapshot.positions} /> : <LoadingPanel className="m-4" />}
       </section>
     </div>
   );

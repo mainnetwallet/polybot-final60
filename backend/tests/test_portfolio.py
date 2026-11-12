@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from app.database.models import Order, Position
 from app.database.session import session_scope
 from app.execution.base import ExecutionReport, FillPart
-from app.portfolio.service import Portfolio
+from app.portfolio.service import Portfolio, start_of_day_utc
 
 from .helpers import build_stack
 
@@ -103,3 +105,34 @@ def test_reset_paper_clears_history_only_for_paper():
         assert portfolio.open_positions(session, "paper") == []
         assert portfolio.balance(session, "paper") == 10.0
         assert len(portfolio.open_positions(session, "live")) == 1
+
+
+def test_start_of_day_utc_normalizes_aware_input():
+    local = datetime(2026, 11, 12, 1, 30, tzinfo=timezone.utc)
+    assert start_of_day_utc(local) == datetime(2026, 11, 12, 0, 0)
+
+
+def test_unrealized_pnl_calculation_does_not_write_to_position():
+    stack = build_stack()
+    portfolio = stack["portfolio"]
+    with session_scope() as session:
+        position = Position(
+            mode="paper",
+            market_id="marked-market",
+            side="UP",
+            size=5.0,
+            avg_price=0.8,
+            cost_basis=4.0,
+            fees=0.05,
+            unrealized_pnl=0.0,
+            status="open",
+        )
+        session.add(position)
+        session.flush()
+
+        marked = portfolio.unrealized_pnl(
+            session, "paper", {("marked-market", "UP"): 0.9}
+        )
+
+        assert abs(marked - 0.45) < 1e-9
+        assert position.unrealized_pnl == 0.0

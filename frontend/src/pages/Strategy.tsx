@@ -4,7 +4,7 @@ import { EmptyState } from "../components/EmptyState";
 import { IconActivity, IconClock, IconShield, IconTarget, IconZap } from "../components/Icons";
 import { useBot } from "../hooks/BotContext";
 import { LoadingPanel } from "../components/LoadingPanel";
-import { usePolled } from "../hooks/usePolled";
+import { useLiveRefresh } from "../hooks/useLiveRefresh";
 import { clamp, cx, fmtCents, fmtNum, fmtTime, fmtUsd, shortId } from "../lib/format";
 
 function mmss(seconds: number): string {
@@ -16,9 +16,9 @@ function PhaseTimeline() {
   const { snapshot } = useBot();
   if (!snapshot) return <LoadingPanel className="xl:col-span-12" />;
   const finalWindow = snapshot.strategy.final_window_seconds;
-  const duration = snapshot.market?.duration_seconds ?? 300; // a BTC 5-minute window
-  const observeSeconds = Math.max(0, duration - finalWindow);
-  const observePct = (observeSeconds / duration) * 100;
+  const duration = snapshot.market?.duration_seconds ?? null;
+  const observeSeconds = duration === null ? null : Math.max(0, duration - finalWindow);
+  const observePct = duration && observeSeconds !== null ? (observeSeconds / duration) * 100 : null;
   const active = snapshot.strategy.in_window;
 
   return (
@@ -27,7 +27,9 @@ function PhaseTimeline() {
         <div>
           <div className="label">Trading phases</div>
           <div className="mt-1 text-[15px] font-semibold tracking-tight text-slate-100">
-            First {observeSeconds % 60 === 0 ? `${observeSeconds / 60} minutes` : `${observeSeconds} seconds`} silent · final {finalWindow} seconds live
+            {duration === null || observeSeconds === null
+              ? "Market timing unavailable"
+              : `${observeSeconds % 60 === 0 ? `${observeSeconds / 60} minutes` : `${observeSeconds} seconds`} observation · ${finalWindow} seconds active`}
           </div>
         </div>
         <span className={cx("chip", active ? "border-amber/30 bg-amber/10 text-amber" : "border-sky/25 bg-sky/10 text-sky")}>
@@ -36,7 +38,7 @@ function PhaseTimeline() {
         </span>
       </div>
 
-      <div className="mt-6">
+      {observePct !== null && observeSeconds !== null && duration !== null ? <div className="mt-6">
         <div className="flex h-9 overflow-hidden rounded-lg border hairline">
           <div
             className="relative flex items-center justify-center bg-sky/[0.07]"
@@ -54,10 +56,10 @@ function PhaseTimeline() {
         </div>
         <div className="mt-2 flex justify-between text-[10px] text-slate-600">
           <span className="mono">00:00 open</span>
-          <span className="mono text-amber/70">{mmss(observeSeconds)} final window</span>
+          <span className="mono text-amber/70">{mmss(observeSeconds)} active window</span>
           <span className="mono">{mmss(duration)} expiry</span>
         </div>
-      </div>
+      </div> : <div className="mt-6 flex h-9 items-center justify-center rounded-lg border hairline text-[11px] text-slate-500">Waiting for active market timing</div>}
 
       <div className="mt-6 grid gap-3 sm:grid-cols-2">
         <div className="rounded-lg border hairline bg-black/20 p-3.5">
@@ -110,7 +112,7 @@ function ArmMeter({
   threshold: number | null;
   armed: boolean | undefined;
 }) {
-  const pct = clamp(ask ?? 0, 0, 1) * 100;
+  const pct = ask == null ? null : clamp(ask, 0, 1) * 100;
   const tone = side === "UP" ? "bg-up" : "bg-down";
   const text = side === "UP" ? "text-up" : "text-down";
 
@@ -121,7 +123,7 @@ function ArmMeter({
         <span className={cx("mono text-[20px] font-semibold leading-none", text)}>{fmtCents(ask)}</span>
       </div>
       <div className="relative mt-3 h-1.5 overflow-hidden rounded-full bg-white/[0.05]">
-        <div className={cx("h-full rounded-full", tone)} style={{ width: `${pct}%`, opacity: armed ? 1 : 0.6 }} />
+        {pct !== null ? <div className={cx("h-full rounded-full", tone)} style={{ width: `${pct}%`, opacity: armed ? 1 : 0.6 }} /> : null}
         {threshold !== null ? <div className="absolute inset-y-0 w-px bg-white/60" style={{ left: `${threshold * 100}%` }} /> : null}
       </div>
       <div className="mt-2 flex items-center justify-between text-[10px]">
@@ -175,7 +177,7 @@ function LiveEvaluation() {
               {armedSide ? "marketable BUY at current ask" : "engine holds — threshold not met"}
             </span>
           </div>
-          <span className="mono text-[12px] text-slate-300">{fmtUsd(Number(config.trade_amount_usdc ?? 0))}</span>
+          <span className="mono text-[12px] text-slate-300">{fmtUsd(typeof config.trade_amount_usdc === "number" ? config.trade_amount_usdc : null)}</span>
         </div>
         <div className="mono mt-1.5 text-[10px] text-slate-600">
           max execution {fmtCents(typeof config.max_execution_price === "number" ? config.max_execution_price : null)}
@@ -194,7 +196,7 @@ function LiveEvaluation() {
 
 function TriggerHistory() {
   const { dataVersion } = useBot();
-  const triggers = usePolled(() => api.triggers(100), 5000, [], dataVersion);
+  const triggers = useLiveRefresh(() => api.triggers(100), [], dataVersion);
   const rows = triggers.data ?? [];
 
   return (
@@ -269,13 +271,13 @@ function PolicyPanel() {
     ["Trigger threshold", fmtCents(strategy?.trigger_threshold ?? null)],
     ["Final window", strategy ? `${strategy.final_window_seconds}s` : "—"],
     ["Max execution price", fmtCents(typeof config.max_execution_price === "number" ? config.max_execution_price : null)],
-    ["Trade size", fmtUsd(Number(config.trade_amount_usdc ?? 0))],
+    ["Trade size", fmtUsd(typeof config.trade_amount_usdc === "number" ? config.trade_amount_usdc : null)],
     ["Duplicate policy", String(strategy?.duplicate_policy ?? "—").replace(/_/g, " ")],
     ["Conflict policy", String(strategy?.conflict_policy ?? "—").replace(/_/g, " ")],
     ["Max trades / day", String(config.max_trades_per_day ?? "—")],
     ["Max open positions", String(config.max_open_positions ?? "—")],
-    ["Daily loss stop", fmtUsd(Number(config.max_daily_loss ?? 0))],
-    ["Daily profit target", fmtUsd(Number(config.daily_profit_target ?? 0))],
+    ["Daily loss stop", fmtUsd(typeof config.max_daily_loss === "number" ? config.max_daily_loss : null)],
+    ["Daily profit target", fmtUsd(typeof config.daily_profit_target === "number" ? config.daily_profit_target : null)],
   ];
 
   return (

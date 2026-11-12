@@ -19,8 +19,8 @@ export function CountdownRing({
 }: CountdownRingProps) {
   const radius = 54;
   const circumference = 2 * Math.PI * radius;
-  const shown = inWindow
-    ? Math.max(0, remaining ?? 0)
+  const shown = inWindow && remaining !== null
+    ? Math.max(0, remaining)
     : remaining === null
       ? null
       : Math.max(0, remaining - finalWindow);

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, time, timezone
 
 from sqlalchemy import delete, func, select
@@ -12,11 +11,10 @@ from app.config.settings import Settings
 from app.database.models import Account, Fill, Order, Position, utcnow
 from app.execution.base import ExecutionReport
 
-logger = logging.getLogger(__name__)
-
-
 def start_of_day_utc(now: datetime | None = None) -> datetime:
     now = now or utcnow()
+    if now.tzinfo is not None:
+        now = now.astimezone(timezone.utc).replace(tzinfo=None)
     return datetime.combine(now.date(), time.min)
 
 
@@ -113,14 +111,14 @@ class Portfolio:
             account.balance = round(account.balance - total_cost - total_fee, 10)
 
     # ------------------------------------------------------------------
-    def mark_to_market(
+    def unrealized_pnl(
         self,
         session: Session,
         mode: str,
         marks: dict[tuple[str, str], float],
         market_id: str | None = None,
     ) -> float:
-        """Update stored unrealized PnL. marks keyed by (market_id, side) best bid."""
+        """Compute unrealized PnL from best-bid marks without writing to SQLite."""
         positions = session.execute(
             select(Position).where(Position.mode == mode, Position.status == "open")
         ).scalars().all()
@@ -133,9 +131,7 @@ class Portfolio:
             if mark is None:
                 total += position.unrealized_pnl
                 continue
-            value = position.size * mark
-            position.unrealized_pnl = round(value - position.cost_basis - position.fees, 10)
-            total += position.unrealized_pnl
+            total += position.size * mark - position.cost_basis - position.fees
         return round(total, 10)
 
     def open_positions(self, session: Session, mode: str) -> list[Position]:

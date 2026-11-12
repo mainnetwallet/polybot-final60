@@ -79,10 +79,12 @@ export function PriceCard({
 
       <div className="mt-4">
         <div className="relative h-1.5 overflow-hidden rounded-full bg-white/6">
-          <div
-            className={cx("h-full rounded-full", up ? "bg-up" : "bg-down")}
-            style={{ width: `${Math.min(100, Math.max(0, (ask ?? 0) * 100))}%` }}
-          />
+          {isNum(ask) ? (
+            <div
+              className={cx("h-full rounded-full", up ? "bg-up" : "bg-down")}
+              style={{ width: `${Math.min(100, Math.max(0, ask * 100))}%` }}
+            />
+          ) : null}
           {isNum(threshold) ? (
             <div
               className="absolute top-0 h-full w-px bg-white/55"

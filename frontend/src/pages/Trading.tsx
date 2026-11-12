@@ -5,7 +5,7 @@ import { IconActivity, IconLayers, IconZap } from "../components/Icons";
 import { Stat } from "../components/Stat";
 import { OrdersTable, PositionsTable } from "../components/Tables";
 import { useBot } from "../hooks/BotContext";
-import { usePolled } from "../hooks/usePolled";
+import { useLiveRefresh } from "../hooks/useLiveRefresh";
 import {
   cx,
   fmtCents,
@@ -19,17 +19,19 @@ import {
 
 export function Trading() {
   const { snapshot, dataVersion } = useBot();
-  const mode = snapshot?.bot.mode ?? "paper";
-  const polled = usePolled(async () => {
-    const [orders, positions, analytics] = await Promise.all([
+  const mode = snapshot?.bot.mode;
+  const polled = useLiveRefresh(async () => {
+    if (!mode) return null;
+    const [orders, analytics] = await Promise.all([
       api.orders(mode, 100),
-      api.positions(mode, 100),
       api.analytics(mode),
     ]);
-    return { orders, positions, analytics };
-  }, 5000, [mode], dataVersion);
+    return { orders, analytics };
+  }, [mode], dataVersion, mode !== undefined);
 
   const analytics = polled.data?.analytics;
+  const unrealized = snapshot && snapshot.bot.mode === mode ? snapshot.account.unrealized_pnl : analytics?.unrealized_pnl;
+  const totalPnl = analytics && unrealized != null ? analytics.realized_pnl + unrealized : null;
   const last = snapshot?.last_order;
   const openOrders = snapshot?.open_orders ?? [];
 
@@ -40,12 +42,14 @@ export function Trading() {
           {snapshot ? <ModeBadge mode={snapshot.bot.mode} /> : null}
           <div>
             <div className="text-[13px] font-semibold text-slate-100">
-              {mode === "live" ? "Live CLOB execution" : "Paper execution on live market data"}
+              {mode === "live" ? "Live CLOB execution" : mode === "paper" ? "Paper execution on live market data" : "Loading execution mode"}
             </div>
             <div className="mt-0.5 text-[11px] text-slate-500">
               {mode === "live"
                 ? "Real FOK marketable orders; balances and positions reconciled with the exchange."
-                : "Simulated fills walk the live ask ladder with slippage, fees and partial fills."}
+                : mode === "paper"
+                  ? "Simulated fills walk the live ask ladder with slippage, fees and partial fills."
+                  : "Mode data is loading."}
             </div>
           </div>
         </div>
@@ -73,13 +77,13 @@ export function Trading() {
           <Stat
             label="Win rate"
             value={analytics?.win_rate != null ? `${analytics.win_rate.toFixed(1)}%` : "—"}
-            hint={`${analytics?.wins ?? 0}W / ${analytics?.losses ?? 0}L`}
-            tone={(analytics?.win_rate ?? 0) >= 50 ? "up" : "default"}
+            hint={analytics ? `${analytics.wins}W / ${analytics.losses}L` : "—"}
+            tone={analytics ? (analytics.win_rate != null && analytics.win_rate >= 50 ? "up" : "default") : "default"}
           />
           <Stat
             label="Total PnL"
-            value={fmtSignedUsd(analytics?.total_pnl)}
-            tone={(analytics?.total_pnl ?? 0) >= 0 ? "up" : "down"}
+            value={fmtSignedUsd(totalPnl)}
+            tone={totalPnl != null ? (totalPnl >= 0 ? "up" : "down") : "default"}
             hint={`fees ${fmtUsd(analytics?.fees_paid, 3)}`}
           />
           <Stat label="Volume" value={fmtUsd(analytics?.volume_usdc)} hint="USDC notional" />
@@ -156,11 +160,11 @@ export function Trading() {
             {polled.error ? <span className="chip border-down/25 bg-down/10 text-down">api error</span> : null}
             <span className="chip border-white/8 bg-white/[0.03] text-slate-500">
               <IconLayers size={10} />
-              {polled.data?.orders.length ?? 0} orders
+              {polled.data?.orders.length ?? "—"} orders
             </span>
           </div>
         </div>
-        <OrdersTable orders={polled.data?.orders ?? []} detailed />
+        {polled.data ? <OrdersTable orders={polled.data.orders} detailed /> : <EmptyState icon={<IconLayers size={24} />} title={polled.loading ? "Loading orders" : "Order history unavailable"} />}
       </section>
 
       <section className="panel overflow-hidden xl:col-span-12">
@@ -172,11 +176,11 @@ export function Trading() {
           <div className="flex items-center gap-2">
             <span className="chip border-white/8 bg-white/[0.03] text-slate-500">
               <IconActivity size={10} />
-              {polled.data?.positions.length ?? 0} positions
+              {snapshot?.positions.length ?? "—"} positions
             </span>
           </div>
         </div>
-        <PositionsTable positions={polled.data?.positions ?? []} detailed />
+        {snapshot ? <PositionsTable positions={snapshot.positions} detailed /> : <EmptyState icon={<IconActivity size={24} />} title="Loading positions" />}
       </section>
     </div>
   );

@@ -44,7 +44,7 @@ function Shell() {
   }, []);
 
   useEffect(() => {
-    document.title = `${PAGE_META[page].title} · Final60`;
+    document.title = `${PAGE_META[page].title} · Polybot`;
   }, [page]);
 
   const navigate = (next: Page) => {

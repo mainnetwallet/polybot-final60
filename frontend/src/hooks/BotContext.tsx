@@ -122,14 +122,29 @@ export function BotProvider({ children }: { children: ReactNode }) {
       const serverMs = Date.parse(next.server_time);
       if (Number.isFinite(serverMs)) setClockOffsetMs(serverMs - Date.now());
       recordBooks(next);
-      const signature = [
+      const signature = JSON.stringify([
         next.bot.status,
         next.bot.mode,
         next.account.trades_today,
-        next.positions.length,
-        next.open_orders.length,
-        next.last_order?.ts ?? "",
-      ].join("|");
+        next.positions.map((position) => [
+          position.id,
+          position.size,
+          position.avg_price,
+          position.cost_basis,
+          position.fees,
+          position.realized_pnl,
+          position.status,
+          position.resolution,
+        ]),
+        next.open_orders.map((order) => [
+          order.id,
+          order.status,
+          order.filled_size,
+          order.avg_fill_price,
+          order.fee,
+        ]),
+        next.last_order,
+      ]);
       if (signature !== dataSignature.current) {
         dataSignature.current = signature;
         setDataVersion((v) => v + 1);
@@ -257,36 +272,12 @@ export function BotProvider({ children }: { children: ReactNode }) {
     };
 
     connect();
-    const ping = window.setInterval(() => {
-      if (socket?.readyState === WebSocket.OPEN) socket.send("ping");
-    }, 20_000);
-
     return () => {
       disposed = true;
-      window.clearInterval(ping);
       if (retry !== undefined) window.clearTimeout(retry);
       socket?.close();
     };
   }, [appendLog, applySnapshot, applyTick]);
-
-  useEffect(() => {
-    if (feedState === "open") return;
-    let alive = true;
-    const tick = () => {
-      api
-        .state()
-        .then((next) => {
-          if (alive) applySnapshot(next);
-        })
-        .catch(() => undefined);
-    };
-    tick();
-    const timer = window.setInterval(tick, 1000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [applySnapshot, feedState]);
 
   const refresh = useCallback(async () => {
     try {

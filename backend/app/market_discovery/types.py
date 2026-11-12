@@ -35,6 +35,7 @@ class MarketInfo:
     tick_size: float = 0.01
     min_order_size: float = 5.0
     status: str = "active"
+    asset_version: int = 1  # 1 = CTF token_id, 2 = Protocol V2 position_id
 
     @property
     def duration_seconds(self) -> float:
