@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+
+import pytest
 from datetime import datetime, timezone, timedelta
 
 from app.config.settings import Settings
 from app.execution.base import OrderRequest
-from app.live_trading.engine import LiveExecutionEngine
+from app.live_trading.engine import LiveExecutionEngine, LiveTradingUnavailable
 from app.market_data.book import OrderBook
 from app.market_data.client import ClobMarketDataClient
 from app.market_discovery.service import DiscoveryError, MarketDiscovery
@@ -463,3 +465,31 @@ def test_redeemable_condition_ids_reads_v2_position_fields():
 
     engine.fetch_onchain_positions = positions
     assert asyncio.run(engine.redeemable_condition_ids()) == {"0xabc"}
+
+
+@pytest.mark.parametrize("signature_type", [1, 2])
+def test_live_proxy_wallet_requires_funder_address(signature_type):
+    engine = LiveExecutionEngine(
+        Settings(
+            live_trading_enabled=True,
+            polymarket_geo_verified=True,
+            polymarket_private_key="0x" + "1" * 64,
+            polymarket_signature_type=signature_type,
+            polymarket_funder_address="",
+        )
+    )
+    with pytest.raises(LiveTradingUnavailable, match="POLYMARKET_FUNDER_ADDRESS"):
+        engine._validate_gates()
+
+
+def test_live_rejects_unknown_signature_type():
+    engine = LiveExecutionEngine(
+        Settings(
+            live_trading_enabled=True,
+            polymarket_geo_verified=True,
+            polymarket_private_key="0x" + "1" * 64,
+            polymarket_signature_type=7,
+        )
+    )
+    with pytest.raises(LiveTradingUnavailable, match="SIGNATURE_TYPE"):
+        engine._validate_gates()

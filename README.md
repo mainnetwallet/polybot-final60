@@ -174,6 +174,16 @@ POLYMARKET_API_SECRET=<optional>
 POLYMARKET_API_PASSPHRASE=<optional>
 ```
 
+**Logged in to Polymarket with MetaMask (browser wallet)?** Use:
+
+```text
+POLYMARKET_PRIVATE_KEY=<private key of the MetaMask account you log in with>
+POLYMARKET_FUNDER_ADDRESS=<the proxy wallet address shown on your Polymarket profile / deposit page, NOT your MetaMask address>
+POLYMARKET_SIGNATURE_TYPE=2
+```
+
+Your pUSD must sit in that proxy (funder) wallet. With `SIGNATURE_TYPE=1` or `2` the funder address is mandatory; the live check now fails with a clear message if it is empty.
+
 Rules for `.env`:
 
 - Save the file, then **restart** the bot (`.\stop.bat`, then `.\start.bat`). Changes are only read at startup.

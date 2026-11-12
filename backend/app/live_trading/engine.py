@@ -62,6 +62,16 @@ class LiveExecutionEngine(ExecutionEngine):
             )
         if not self._settings.polymarket_private_key.strip():
             raise LiveTradingUnavailable("POLYMARKET_PRIVATE_KEY is not configured")
+        signature_type = self._settings.polymarket_signature_type
+        if signature_type not in (0, 1, 2):
+            raise LiveTradingUnavailable(
+                "POLYMARKET_SIGNATURE_TYPE must be 0 (EOA), 1 (email/magic proxy) or 2 (browser/MetaMask proxy)"
+            )
+        if signature_type in (1, 2) and not self._settings.polymarket_funder_address.strip():
+            raise LiveTradingUnavailable(
+                "POLYMARKET_FUNDER_ADDRESS is required when POLYMARKET_SIGNATURE_TYPE is 1 or 2; "
+                "use the proxy wallet address shown on your Polymarket profile"
+            )
 
     def _build_client(self):
         self._validate_gates()
