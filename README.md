@@ -421,7 +421,7 @@ Secrets, `paper_fill_ratio`, `paper_fee_exponent`, `paper_starting_balance`, `li
 | --- | --- | --- |
 | **Reset paper account** | Deletes paper orders, fills, positions and PnL and recreates the paper balance. Live data is untouched. | Yes |
 | **Reset daily trades & profit/loss** | Sets today's trade count and daily profit/loss back to zero for the current mode and lifts any daily loss/profit halt. No history or balance is deleted. | No |
-| **Full server reset** | Wipes the entire database (orders, fills, positions, markets, price history, triggers, logs, dashboard setting overrides), returns to paper mode with the bot stopped, and goes back to `.env` defaults. Requires typing `RESET ALL`. Refused while live positions/orders are still open. | Yes |
+| **Full server reset** | Wipes all trading data (orders, fills, positions, markets, price history, triggers, logs), returns to paper mode with the bot stopped. Settings and `.env` are kept. Requires typing `RESET ALL`. Refused while live positions/orders are still open. | Yes |
 
 API equivalents: `POST /api/daily/reset` (`{"confirm": true}`) and `POST /api/server/reset` (`{"confirm": true, "confirmation_phrase": "RESET ALL"}`).
 

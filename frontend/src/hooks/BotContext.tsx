@@ -393,7 +393,7 @@ export function BotProvider({ children }: { children: ReactNode }) {
       try {
         applySnapshot(await api.resetServer(phrase));
         setLogs([]);
-        notify("success", "Server reset", "All data was wiped and settings are back to .env defaults.");
+        notify("success", "Server reset", "All trading data was wiped. Settings were kept.");
         return { ok: true };
       } catch (error) {
         const message = describeError(error);

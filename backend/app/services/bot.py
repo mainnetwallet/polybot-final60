@@ -547,8 +547,8 @@ class TradingBot:
         return await self.snapshot()
 
     async def reset_server(self) -> dict:
-        """Wipe the whole database (paper + live records, logs, setting overrides) and
-        return the app to a fresh STOPPED paper state. Requires the bot to be stopped."""
+        """Wipe all trading data (paper + live records, logs, price history) and return the
+        app to a fresh STOPPED paper state. Settings/.env are kept. Bot must be stopped."""
         if self._status == "RUNNING":
             raise BotError("stop the bot before resetting the server")
         async with self._lock:
@@ -588,7 +588,7 @@ class TradingBot:
             self.logs.log(
                 "WARNING",
                 "system",
-                "full server reset: database wiped, settings back to .env defaults",
+                "full server reset: all data wiped, settings kept",
                 mode="paper",
             )
         await self._broadcast_state()

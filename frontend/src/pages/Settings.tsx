@@ -595,9 +595,9 @@ export function Settings() {
               <div>
                 <div className="text-[13px] font-semibold text-slate-100">Full server reset</div>
                 <div className="mt-0.5 text-[11px] text-slate-500">
-                  Wipes the whole database: orders, fills, positions, markets, price history, triggers, logs and
-                  dashboard setting overrides. Mode returns to paper, the bot stays stopped and settings go back to
-                  the <span className="mono">.env</span> defaults.
+                  Wipes all trading data: orders, fills, positions, markets, price history, triggers and logs. Mode
+                  returns to paper and the bot stays stopped. Your settings and the{" "}
+                  <span className="mono">.env</span> file are not changed.
                 </div>
               </div>
             </div>
@@ -660,7 +660,7 @@ export function Settings() {
         }}
         eyebrow="Danger zone"
         title="Reset the entire server?"
-        subtitle="This permanently deletes all data in the local database."
+        subtitle="This permanently deletes all trading data in the local database."
         danger
         footer={
           <>
@@ -687,9 +687,9 @@ export function Settings() {
       >
         <div className="space-y-3 text-[12px] leading-relaxed text-slate-400">
           <p>
-            Paper and live records, logs, price history and setting overrides are deleted. The bot returns to
-            paper mode, stopped, with settings from <span className="mono">.env</span>. Real exchange balances are
-            never touched, and the reset is refused while live positions or orders are still open.
+            Paper and live records, logs and price history are deleted. The bot returns to paper mode, stopped.
+            Settings and the <span className="mono">.env</span> file are kept. Real exchange balances are never
+            touched, and the reset is refused while live positions or orders are still open.
           </p>
           <div>
             <label className="mb-1 block text-[11px] text-slate-500">

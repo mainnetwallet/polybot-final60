@@ -358,5 +358,5 @@ def test_server_reset_requires_phrase_and_wipes_data():
         assert ok.status_code == 200
         assert ok.json()["bot"]["status"] == "STOPPED"
         assert ok.json()["bot"]["mode"] == "paper"
-        # setting overrides are gone -> back to .env default
-        assert client.get("/api/settings").json()["trigger_threshold"] == 0.80
+        # settings are kept after a full reset
+        assert client.get("/api/settings").json()["trigger_threshold"] == 0.83

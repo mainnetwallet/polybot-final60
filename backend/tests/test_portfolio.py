@@ -178,7 +178,9 @@ def test_reset_all_wipes_every_table_and_recreates_accounts():
         assert session.query(Fill).count() == 0
         assert session.query(Position).count() == 0
         assert session.query(LogEntry).count() == 0
-        assert session.query(BotSetting).count() == 0
+        # settings override is kept, daily-reset marker is gone
+        keys = {row.key for row in session.query(BotSetting).all()}
+        assert keys == {"trigger_threshold"}
         assert session.query(Account).count() == 2
         assert session.get(AppState, 1).status == "STOPPED"
         assert portfolio.balance(session, "paper") == 10.0
