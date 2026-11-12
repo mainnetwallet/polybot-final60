@@ -50,6 +50,22 @@ Three scripts control the app: `setup.bat` (one-time install), `start.bat` (star
 
 `start.bat` runs setup automatically if `.venv`, `frontend\node_modules`, or `.env` is missing.
 
+Copy-paste commands (PowerShell):
+
+```powershell
+cd .\polybot-final60          # go into the project folder (after git clone)
+.\setup.bat                   # one-time install
+.\start.bat                   # start backend + dashboard
+.\stop.bat                    # stop everything
+```
+
+Create `.env` manually from the example (only needed if setup did not create it, or you deleted it):
+
+```powershell
+Copy-Item .env.example .env            # PowerShell
+copy .env.example .env                 # cmd.exe
+```
+
 New to the project? Follow the [Step-by-step guide (PowerShell)](#step-by-step-guide-powershell) below: clone, first setup, `.env`, start, and how to run it the second time.
 
 URLs:
@@ -107,7 +123,13 @@ Wait for `Setup complete.` before going to the next step.
 
 ### 3. Set up `.env`
 
-`.env` is created automatically by setup. Open it in Notepad:
+`.env` is created automatically by setup. If it is missing, create it from the example (does nothing if it already exists):
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+Open it in Notepad:
 
 ```powershell
 notepad .env
@@ -333,6 +355,31 @@ Strategy and risk defaults:
 | `PAPER_FEE_EXPONENT` | `1.0` | Fee curve exponent |
 | `LIVE_TRADING_ENABLED` | `false` | Master live switch |
 | `POLYMARKET_GEO_VERIFIED` | `false` | Set true only after verifying eligibility |
+
+Other `.env` keys (all present in `.env.example`):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `HOST` | `127.0.0.1` | API bind address |
+| `PORT` | `8000` | API port |
+| `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Allowed dashboard origins |
+| `LOG_LEVEL` | `INFO` | Log verbosity |
+| `DATABASE_URL` | `sqlite:///data/polymarket_bot.db` | Database location (relative paths resolve against the repo root) |
+| `LIVE_CONFIRMATION_PHRASE` | `GO LIVE` | Phrase required in the dashboard to enable live mode |
+| `LIVE_AUTO_REDEEM` | `false` | Bot redeems resolved winning positions itself (needs `backend/requirements-redeem.txt`) |
+| `POLYMARKET_RELAYER_API_KEY` | empty | Optional Relayer key for gasless redeem |
+| `POLYMARKET_RELAYER_API_KEY_ADDRESS` | empty | Address that belongs to the Relayer key |
+| `POLYMARKET_PRIVATE_KEY` | empty | Wallet private key (live only, never exposed by the API) |
+| `POLYMARKET_FUNDER_ADDRESS` | empty | Funder address (live only) |
+| `POLYMARKET_SIGNATURE_TYPE` | `0` | `0` = EOA, `1` = email/magic proxy, `2` = browser proxy |
+| `POLYMARKET_CHAIN_ID` | `137` | Polygon mainnet |
+| `POLYMARKET_API_KEY` / `POLYMARKET_API_SECRET` / `POLYMARKET_API_PASSPHRASE` | empty | Optional CLOB API credentials |
+| `GAMMA_BASE_URL` | `https://gamma-api.polymarket.com` | Gamma API endpoint |
+| `CLOB_BASE_URL` | `https://clob.polymarket.com` | CLOB REST endpoint |
+| `CLOB_WS_URL` | `wss://ws-subscriptions-clob.polymarket.com/ws/market` | CLOB WebSocket endpoint |
+| `SERIES_SLUG` | `btc-up-or-down-5m` | Market series to trade |
+| `DISCOVERY_REFRESH_SECONDS` | `3` | Market discovery refresh interval |
+| `RESOLUTION_POLL_SECONDS` | `5` | Settlement/resolution check interval |
 
 The dashboard Settings page can change a validated subset without editing `.env`; overrides persist in SQLite:
 
