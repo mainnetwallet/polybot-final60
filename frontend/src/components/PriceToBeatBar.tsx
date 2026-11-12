@@ -18,6 +18,14 @@ function TimeUnit({ value, label, urgent }: { value: string; label: string; urge
   );
 }
 
+/** Gap: whole dollars from $1 up ($1, $12), and the real value below $1 ($0.7, $0.65), never a fake 0. */
+function fmtGap(diff: number): string {
+  const abs = Math.abs(diff);
+  if (abs >= 1) return `$${Math.round(abs).toLocaleString("en-US")}`;
+  const text = abs.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return `$${text === "" ? "0" : text}`;
+}
+
 /** Price to beat · live BTC price (with gap) · MINS/SECS countdown. */
 export function PriceToBeatBar({ className }: { className?: string }) {
   const { snapshot } = useBot();
@@ -53,7 +61,7 @@ export function PriceToBeatBar({ className }: { className?: string }) {
             {diff !== null ? (
               <span className={cx("mono flex items-center gap-1 text-[11px] font-semibold", above ? "text-up" : "text-down")}>
                 <span aria-hidden="true">{above ? "▲" : "▼"}</span>
-                {fmtUsdGrouped(Math.abs(diff))}
+                {fmtGap(diff)}
               </span>
             ) : null}
           </div>
