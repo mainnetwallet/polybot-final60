@@ -1,9 +1,12 @@
 """BTC/USD reference price feed and the per-window "price to beat".
 
 Polymarket's 5-minute BTC markets resolve UP when the Chainlink BTC/USD price at the
-window end is >= the price at the window start (the "price to beat"). This feed
-streams that same Chainlink price from Polymarket's real-time data socket (RTDS) so
-the dashboard can show the live price, the price to beat and the gap between them.
+window end is >= the price at the window start (the "price to beat"). Only official
+Polymarket data is used here, with no estimates:
+  * current price  -> Chainlink BTC/USD stream from Polymarket's real-time data socket (RTDS)
+  * price to beat  -> Polymarket's own value (Gamma event metadata, or the crypto-price
+                      endpoint the website uses)
+If a value is not available yet it is shown as missing rather than guessed.
 
 It is display-only: nothing here feeds the strategy or order path, and every failure
 degrades to "no value" instead of raising.
@@ -15,8 +18,6 @@ import asyncio
 import json
 import logging
 import time
-from collections import deque
-from datetime import timezone
 
 import httpx
 import websockets
@@ -26,12 +27,9 @@ from app.market_discovery.types import MarketInfo
 
 logger = logging.getLogger(__name__)
 
-# A tick this close to the window start is accepted as the window's opening price.
-OPEN_TICK_TOLERANCE_MS = 3000
-HISTORY_TICKS = 1800  # ~30 min at 1 tick/sec, enough to cover several windows
 STALE_AFTER_MS = 10_000
 OPEN_LOOKUP_RETRY_SECONDS = 4.0
-OPEN_LOOKUP_MAX_ATTEMPTS = 8
+OPEN_LOOKUP_MAX_ATTEMPTS = 30  # ~2 min of retries: the official value can appear a bit after the window opens
 
 
 def _now_ms() -> int:
@@ -46,14 +44,10 @@ def _to_float(value) -> float | None:
     return number if number > 0 else None
 
 
-def _window_start_ms(market: MarketInfo) -> int:
-    return int(market.window_start.replace(tzinfo=timezone.utc).timestamp() * 1000)
-
-
 class BtcPriceFeed:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._history: deque[tuple[int, float]] = deque(maxlen=HISTORY_TICKS)
+        self._latest: tuple[int, float] | None = None  # (timestamp_ms, price) from the RTDS stream
         self._connected = False
         self._last_error: str | None = None
         self._reconnects = 0
@@ -61,14 +55,14 @@ class BtcPriceFeed:
         self._tasks: list[asyncio.Task] = []
         self._market: MarketInfo | None = None
         self._market_changed = asyncio.Event()
-        # market_id -> (price, source)
+        # market_id -> (price, source) with source "gamma" or "polymarket"
         self._opens: dict[str, tuple[float, str]] = {}
         self._http: httpx.AsyncClient | None = None
 
     # ------------------------------------------------------------------ public
     @property
     def latest(self) -> tuple[int, float] | None:
-        return self._history[-1] if self._history else None
+        return self._latest
 
     def set_market(self, market: MarketInfo | None) -> None:
         self._market = market
@@ -104,17 +98,10 @@ class BtcPriceFeed:
             self._http = None
 
     def price_to_beat(self, market: MarketInfo | None) -> tuple[float, str] | None:
+        """Polymarket's official price to beat for this window, or None until it is published."""
         if market is None:
             return None
-        cached = self._opens.get(market.market_id)
-        if cached is not None:
-            return cached
-        tick = self._open_from_history(_window_start_ms(market))
-        if tick is not None:
-            self._opens[market.market_id] = (tick, "feed")
-            self._trim_opens()
-            return self._opens[market.market_id]
-        return None
+        return self._opens.get(market.market_id)
 
     def snapshot(self, market: MarketInfo | None) -> dict:
         latest = self.latest
@@ -137,23 +124,14 @@ class BtcPriceFeed:
         }
 
     # ----------------------------------------------------------------- internals
-    def _open_from_history(self, start_ms: int) -> float | None:
-        best: tuple[int, float] | None = None
-        for ts, price in self._history:
-            if best is None or abs(ts - start_ms) < abs(best[0] - start_ms):
-                best = (ts, price)
-        if best is not None and abs(best[0] - start_ms) <= OPEN_TICK_TOLERANCE_MS:
-            return best[1]
-        return None
-
     def _trim_opens(self) -> None:
         while len(self._opens) > 24:
             self._opens.pop(next(iter(self._opens)))
 
     def _record(self, ts_ms: int, price: float) -> None:
-        if self._history and ts_ms < self._history[-1][0]:
+        if self._latest is not None and ts_ms < self._latest[0]:
             return  # out-of-order tick
-        self._history.append((ts_ms, price))
+        self._latest = (ts_ms, price)
 
     def handle_message(self, raw: str) -> None:
         """Parse an RTDS frame. Accepts single updates and the initial batch."""
@@ -243,11 +221,15 @@ class BtcPriceFeed:
                 backoff = min(backoff * 2, 10.0)
 
     async def _open_price_loop(self) -> None:
-        """If the bot joined mid-window there is no opening tick; ask Polymarket for it."""
+        """Fetch Polymarket's official price to beat for the current window.
+
+        Keeps asking until Polymarket publishes it (it can appear a little after the window opens).
+        """
         attempts: dict[str, int] = {}
         while self._running:
+            self._market_changed.clear()  # before reading the market, so a change during the fetch is not lost
             market = self._market
-            if market is not None and self.price_to_beat(market) is None:
+            if market is not None and market.market_id not in self._opens:
                 tries = attempts.get(market.market_id, 0)
                 if tries < OPEN_LOOKUP_MAX_ATTEMPTS:
                     attempts[market.market_id] = tries + 1
@@ -257,7 +239,6 @@ class BtcPriceFeed:
                         self._trim_opens()
                     if len(attempts) > 48:
                         attempts.pop(next(iter(attempts)))
-            self._market_changed.clear()
             try:
                 await asyncio.wait_for(self._market_changed.wait(), timeout=OPEN_LOOKUP_RETRY_SECONDS)
             except TimeoutError:

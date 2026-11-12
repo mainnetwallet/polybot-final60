@@ -32,29 +32,24 @@ def _frame(ts_ms: int, value: float, symbol: str = "btc/usd") -> str:
     )
 
 
-def test_price_to_beat_uses_tick_nearest_window_start():
+def test_current_price_comes_from_latest_stream_tick():
+    feed = BtcPriceFeed(Settings())
+    feed.handle_message(_frame(1_000, 71_000.0))
+    feed.handle_message(_frame(2_000, 71_050.5))
+    feed.handle_message(_frame(1_500, 1.0))  # out-of-order tick is ignored
+    assert feed.latest == (2_000, 71_050.5)
+    assert feed.snapshot(None)["price"] == 71_050.5
+
+
+def test_price_to_beat_is_never_estimated_from_the_stream():
     start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
     start_ms = int(start.replace(tzinfo=timezone.utc).timestamp() * 1000)
     feed = BtcPriceFeed(Settings())
-    feed.handle_message(_frame(start_ms - 1000, 71_000.0))
-    feed.handle_message(_frame(start_ms + 400, 71_639.36))
-    feed.handle_message(_frame(start_ms + 5000, 71_478.86))
-    market = _market(start)
-
-    snap = feed.snapshot(market)
-    assert snap["price_to_beat"] == 71_639.36
-    assert snap["price"] == 71_478.86
-    assert round(snap["diff"], 2) == -160.5
-    assert snap["price_to_beat_source"] == "feed"
-
-
-def test_no_price_to_beat_without_opening_tick():
-    start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None) - timedelta(seconds=120)
-    feed = BtcPriceFeed(Settings())
-    feed.handle_message(_frame(int(time.time() * 1000), 70_000.0))
+    feed.handle_message(_frame(start_ms + 100, 71_000.0))  # tick exactly at the window start
     snap = feed.snapshot(_market(start))
-    assert snap["price"] == 70_000.0
+    assert snap["price"] == 71_000.0
     assert snap["price_to_beat"] is None
+    assert snap["price_to_beat_source"] is None
     assert snap["diff"] is None
 
 
@@ -77,3 +72,57 @@ def test_initial_batch_is_ingested():
         )
     )
     assert feed.latest == (2, 2.5)
+
+
+class _Resp:
+    def __init__(self, data):
+        self._data = data
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._data
+
+
+class _FakeHttp:
+    def __init__(self, routes):
+        self.routes = routes
+        self.calls = []
+
+    async def get(self, url, params=None):
+        self.calls.append(url)
+        for key, data in self.routes.items():
+            if key in url:
+                if isinstance(data, Exception):
+                    raise data
+                return _Resp(data)
+        raise RuntimeError("no route")
+
+
+def test_official_price_to_beat_and_gap():
+    start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
+    feed = BtcPriceFeed(Settings())
+    feed.handle_message(_frame(int(time.time() * 1000), 71_050.0))
+    market = _market(start)
+    feed._opens[market.market_id] = (71_010.5, "gamma")  # what the loop stores once Polymarket answers
+
+    snap = feed.snapshot(market)
+    assert snap["price_to_beat"] == 71_010.5
+    assert snap["price_to_beat_source"] == "gamma"
+    assert round(snap["diff"], 2) == 39.5
+
+
+async def test_fetch_prefers_gamma_then_crypto_price():
+    start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
+    market = _market(start)
+    feed = BtcPriceFeed(Settings())
+
+    feed._http = _FakeHttp({"/events": [{"eventMetadata": {"priceToBeat": 70_123.45}}]})
+    assert await feed._fetch_open_price(market) == (70_123.45, "gamma")
+
+    feed._http = _FakeHttp({"/events": [{"eventMetadata": {}}], "crypto-price": {"openPrice": 70_222.0}})
+    assert await feed._fetch_open_price(market) == (70_222.0, "polymarket")
+
+    feed._http = _FakeHttp({"/events": RuntimeError("down"), "crypto-price": RuntimeError("down")})
+    assert await feed._fetch_open_price(market) is None
