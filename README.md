@@ -110,8 +110,9 @@ If one of them is missing, install it, then **close and reopen PowerShell** so P
 
 ### 1. Clone the repository
 
+Open PowerShell in any folder where you want the project (the folder does not matter), then run:
+
 ```powershell
-cd $HOME\Documents
 git clone https://github.com/mainnetwallet/polybot-final60.git
 cd polybot-final60
 ```
@@ -201,7 +202,7 @@ To start without opening the browser:
 Setup is **not** needed again. Next time you just do:
 
 ```powershell
-cd $HOME\Documents\polybot-final60
+cd .\polybot-final60          # the folder where you cloned it
 .\start.bat
 ```
 
@@ -220,7 +221,7 @@ What to know about repeat runs:
 ### 6. Updating to the latest version
 
 ```powershell
-cd $HOME\Documents\polybot-final60
+cd .\polybot-final60          # the folder where you cloned it
 .\stop.bat
 git pull
 .\setup.bat      # re-installs dependencies if they changed; keeps your .env and database
