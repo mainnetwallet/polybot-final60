@@ -39,7 +39,7 @@ export function Sidebar({ page, onNavigate }: SidebarProps) {
               type="button"
               onClick={() => onNavigate(item.id)}
               className={cx(
-                "group flex items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[12.5px] font-medium transition-colors",
+                "group flex items-center gap-3 rounded-lg px-2.5 py-2 text-left text-[12.5px] font-medium",
                 active
                   ? "bg-white/[0.07] text-slate-100"
                   : "text-slate-400 hover:bg-white/[0.03] hover:text-slate-200",
@@ -82,12 +82,12 @@ export function Sidebar({ page, onNavigate }: SidebarProps) {
           </div>
           <div className="flex items-center justify-between">
             <span>Final window</span>
-            <span className="mono text-slate-400">{snapshot?.strategy.final_window_seconds ?? 60}s</span>
+            <span className="mono text-slate-400">{snapshot ? `${snapshot.strategy.final_window_seconds}s` : "—"}</span>
           </div>
           <div className="flex items-center justify-between">
             <span>Trigger ask</span>
             <span className="mono text-slate-400">
-              {(snapshot?.strategy.trigger_threshold ?? 0.8).toFixed(2)}
+              {snapshot ? snapshot.strategy.trigger_threshold.toFixed(2) : "—"}
             </span>
           </div>
         </div>

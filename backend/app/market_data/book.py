@@ -17,11 +17,13 @@ class OrderBook:
 
     @property
     def best_bid(self) -> float | None:
-        return max(self.bids) if self.bids else None
+        prices = [price for price, size in self.bids.items() if size > 0]
+        return max(prices) if prices else None
 
     @property
     def best_ask(self) -> float | None:
-        return min(self.asks) if self.asks else None
+        prices = [price for price, size in self.asks.items() if size > 0]
+        return min(prices) if prices else None
 
     @property
     def bid_size(self) -> float | None:

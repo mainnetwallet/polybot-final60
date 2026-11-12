@@ -31,14 +31,17 @@ export function Sparkline({
   const rawId = useId();
   const gradientId = `spark${rawId.replace(/[^a-zA-Z0-9]/g, "")}`;
 
-  const values = data.length ? data : [0.5];
+  if (data.length < 2) {
+    return <svg viewBox={`0 0 ${width} ${height}`} className={cx("block w-full", className)} preserveAspectRatio="none" aria-hidden="true" />;
+  }
+  const values = data;
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = max - min || 0.01;
   const pad = 3;
 
   const points = values.map((value, index) => {
-    const x = values.length === 1 ? width / 2 : (index / (values.length - 1)) * width;
+    const x = (index / (values.length - 1)) * width;
     const y = height - pad - ((value - min) / span) * (height - pad * 2);
     return [x, y] as const;
   });

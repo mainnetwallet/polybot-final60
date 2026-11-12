@@ -80,7 +80,6 @@ body {
   font-weight: 600;
   color: #dbe6f2;
   background: rgba(255, 255, 255, 0.03);
-  transition: all 0.15s ease;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -126,7 +125,6 @@ body {
   color: #e6edf5;
   font-size: 13px;
   outline: none;
-  transition: border-color 0.15s ease;
 }
 
 .input:focus {
@@ -218,17 +216,3 @@ table.grid tbody tr:hover {
   animation: pulse-dot 1.8s ease-in-out infinite;
 }
 
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.rise {
-  animation: rise 0.28s ease-out both;
-}

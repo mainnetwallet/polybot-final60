@@ -214,6 +214,12 @@ class ClobMarketDataClient:
         await self._on_book(book.market_id, book.side, book)
 
     async def _apply_price_change(self, message: dict) -> None:
+        """Official format: {"price_changes": [{asset_id, price, size, side, best_bid, best_ask}]}.
+
+        ``size`` is the new total size at ``price`` (0 removes the level). The
+        per-change ``best_bid``/``best_ask`` are authoritative top-of-book values,
+        so any local level that would sit better than them is stale and pruned.
+        """
         changes = message.get("price_changes") or message.get("changes") or []
         if not isinstance(changes, list):
             return
@@ -236,47 +242,35 @@ class ClobMarketDataClient:
                 target.pop(price, None)
             else:
                 target[price] = size
+
+            best_ask = self._to_float(change.get("best_ask"))
+            best_bid = self._to_float(change.get("best_bid"))
+            if best_ask is not None:
+                for stale in [p for p in book.asks if p < best_ask - 1e-9]:
+                    book.asks.pop(stale, None)
+            if best_bid is not None:
+                for stale in [p for p in book.bids if p > best_bid + 1e-9]:
+                    book.bids.pop(stale, None)
             book.updated_at_ms = now_ms()
             book.sequence += 1
             touched[asset_id] = book
-
-        # Some frames only carry best bid/ask; use them when present.
-        asset_id = str(message.get("asset_id") or "")
-        if asset_id and asset_id in self._side_by_token:
-            book = self._book(asset_id)
-            if book and (message.get("best_ask") is not None or message.get("best_bid") is not None):
-                best_ask = self._to_float(message.get("best_ask"))
-                best_bid = self._to_float(message.get("best_bid"))
-                if best_ask and best_ask > 0:
-                    book.asks.setdefault(best_ask, 0.0)  # size unknown until a sized event arrives
-                    for stale in [p for p in book.asks if p < best_ask - 1e-9]:
-                        book.asks.pop(stale, None)
-                if best_bid and best_bid > 0:
-                    book.bids.setdefault(best_bid, 0.0)
-                    for stale in [p for p in book.bids if p > best_bid + 1e-9]:
-                        book.bids.pop(stale, None)
-                book.updated_at_ms = now_ms()
-                book.sequence += 1
-                touched[asset_id] = book
 
         for book in touched.values():
             await self._on_book(book.market_id, book.side, book)
 
     async def _apply_best(self, message: dict) -> None:
+        """best_bid_ask (only sent when custom_feature_enabled). Sizes are unknown here,
+        so this prunes crossed levels but never invents a level with a fake size."""
         asset_id = str(message.get("asset_id") or "")
         book = self._book(asset_id)
         if book is None:
             return
         best_ask = self._to_float(message.get("best_ask"))
         best_bid = self._to_float(message.get("best_bid"))
-        ask_size = self._to_float(message.get("best_ask_size") or message.get("ask_size"))
-        bid_size = self._to_float(message.get("best_bid_size") or message.get("bid_size"))
-        if best_ask and best_ask > 0:
+        if best_ask is not None:
             book.asks = {p: s for p, s in book.asks.items() if p >= best_ask - 1e-9}
-            book.asks[best_ask] = ask_size if ask_size is not None else book.asks.get(best_ask, 0.0)
-        if best_bid and best_bid > 0:
+        if best_bid is not None:
             book.bids = {p: s for p, s in book.bids.items() if p <= best_bid + 1e-9}
-            book.bids[best_bid] = bid_size if bid_size is not None else book.bids.get(best_bid, 0.0)
         book.updated_at_ms = now_ms()
         book.sequence += 1
         await self._on_book(book.market_id, book.side, book)

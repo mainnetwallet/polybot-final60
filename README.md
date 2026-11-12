@@ -216,7 +216,7 @@ paper engine (simulated fills)  or  live engine (real CLOB FOK order)
 SQLite (orders, fills, positions, triggers, settings) + portfolio analytics
         |
         v
-WebSocket/HTTP state -> React dashboard
+WebSocket push on every book event (tick) + state snapshots -> React dashboard
 ```
 
 Key properties:
@@ -239,7 +239,7 @@ Key properties:
 | `risk_manager` | Daily loss/target, trade count, open positions, kill switch |
 | `order_manager` | Order decisions, idempotency, duplicate/conflict policy |
 | `paper_trading` | Simulated immediate-market BUY, walking the ask ladder |
-| `live_trading` | Real CLOB marketable FOK BUY with ack verification |
+| `live_trading` | Real CLOB V2 (`py-clob-client-v2`) marketable FOK BUY; fill price taken from the exchange response |
 | `portfolio` | Balances, positions, settlement, analytics |
 | `monitoring` | In-memory log stream and persisted file logs |
 | `services.bot` | Orchestration, state snapshot, WebSocket broadcast |
@@ -250,7 +250,7 @@ Key properties:
 - **Overview** - market phase, countdown, UP/DOWN asks, account envelope, feed health, recent orders
 - **Strategy** - final-window rules, live evaluation meters, trigger audit trail
 - **Trading** - mode banner, performance stats, open orders, order history, positions
-- **Analytics** - mode-separated PnL, win rate, latency, volume, fees
+- **Analytics** - mode-separated PnL, win rate, volume, fees
 - **Settings** - runtime-tunable values, live readiness, paper reset
 - **Logs** - live server log stream with level/category/search filters
 
@@ -266,6 +266,8 @@ Key properties:
 - Paper balances and statistics are stored separately from live.
 
 ### Live
+
+Live trading uses **Polymarket CLOB V2** (live since 2026-04-28) through `py-clob-client-v2`; the legacy `py-clob-client` no longer works on production. Collateral is **pUSD**: API-only wallets must wrap USDC.e into pUSD via the Collateral Onramp before the balance check passes. Fees are charged by the protocol at match time, so the live `fee` column is not populated from the exchange yet.
 
 Live mode is off by default and is never switched on automatically. Enabling it requires all of the following:
 
@@ -363,9 +365,8 @@ These are paper-execution results. See limitations below.
 
 ## Limitations (honest list)
 
-- **Live execution was not exercised with real funds.** The live path, gates, and order construction are implemented and unit-tested, but no real order has been submitted from this machine.
+- **Live execution was not exercised with real funds** and the CLOB V2 order path was only unit-tested against mocked SDK responses (no network access to Polymarket from the build environment). The live path, gates, and order construction are implemented and unit-tested, but no real order has been submitted from this machine.
 - **Polymarket geo eligibility is unverified.** `POLYMARKET_GEO_VERIFIED` stays `false` by default; do not set it without checking your jurisdiction.
-- **Paper latency is simulated.** The measured `4 ms` is internal processing time, not a CLOB round-trip. Live latency will be network-dependent.
 - **Paper fees are approximate.** The fee formula is an approximation of the verified schedule and should be reviewed before relying on absolute paper PnL.
 - **Gamma resolution delay.** Gamma may keep `closed:false` (with near-1/0 prices) for a while after expiry. Resolution requires `closed:true` and published 1/0 prices, so a paper position can remain open across a restart until Gamma publishes the result.
 - **On-chain reconciliation is best-effort.** Live fills depend on the CLOB API responses; there is no separate on-chain balance reconciler.

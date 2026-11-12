@@ -32,12 +32,6 @@ export function fmtNum(value: number | null | undefined, digits = 2): string {
   return value.toFixed(digits);
 }
 
-export function fmtMs(value: number | null | undefined): string {
-  if (!isNum(value)) return "—";
-  if (value < 1) return "<1 ms";
-  return `${value.toFixed(0)} ms`;
-}
-
 export function fmtTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   const date = new Date(iso);

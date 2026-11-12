@@ -147,14 +147,14 @@ class OrderManager:
         evaluation: StrategyEvaluation,
         books: dict[str, OrderBook],
         mode: str,
-        ctx: RiskContext,
+        ctx: RiskContext | None,
     ) -> list[OrderResult]:
         config = self._runtime.get()
 
         if mode == "paper":
             await self._retry_partial_orders(market, books, mode, config)
 
-        if not evaluation.signals:
+        if not evaluation.signals or ctx is None:
             return []
 
         chosen = self._choose(evaluation.signals, config.conflict_policy)

@@ -48,7 +48,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         className={cx(
-          "panel rise relative w-full overflow-hidden",
+          "panel relative w-full overflow-hidden",
           maxWidth,
           danger && "border-down/30",
         )}

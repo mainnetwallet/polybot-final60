@@ -40,7 +40,7 @@ export const PAGE_META: Record<Page, { title: string; subtitle: string }> = {
   },
   analytics: {
     title: "Performance analytics",
-    subtitle: "Mode-separated PnL, win rate and latency",
+    subtitle: "Mode-separated PnL, win rate and volume",
   },
   settings: {
     title: "Configuration",

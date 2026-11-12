@@ -1,5 +1,5 @@
 import type { OrderRow, PositionRow } from "../api/types";
-import { cx, fmtCents, fmtDateTime, fmtMs, fmtNum, fmtSignedUsd, fmtTime, fmtUsd, pnlClass, shortId } from "../lib/format";
+import { cx, fmtCents, fmtDateTime, fmtNum, fmtSignedUsd, fmtTime, fmtUsd, pnlClass, shortId } from "../lib/format";
 import { SideBadge, StatusChip } from "./Badges";
 import { EmptyState } from "./EmptyState";
 import { IconLayers } from "./Icons";
@@ -36,7 +36,6 @@ export function OrdersTable({
             <th className="text-right">Price</th>
             <th className="text-right">Filled</th>
             <th className="text-right">Fee</th>
-            <th className="text-right">Latency</th>
             {detailed ? <th>Exchange ID</th> : null}
           </tr>
         </thead>
@@ -59,7 +58,6 @@ export function OrdersTable({
                 <td className="mono text-right text-slate-300">{fmtCents(price)}</td>
                 <td className="mono text-right text-slate-300">{fmtNum(order.filled_size, 2)}</td>
                 <td className="mono text-right text-slate-500">{fmtUsd(order.fee, 3)}</td>
-                <td className="mono text-right text-slate-400">{fmtMs(order.latency_ms)}</td>
                 {detailed ? (
                   <td className="mono text-slate-600" title={order.exchange_order_id ?? order.error ?? ""}>
                     {order.exchange_order_id ? shortId(order.exchange_order_id) : order.error ? "error" : "—"}

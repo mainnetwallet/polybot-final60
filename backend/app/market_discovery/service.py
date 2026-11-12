@@ -92,8 +92,13 @@ class MarketDiscovery:
             market = markets[0]
             if market.get("closed"):
                 continue
-            start = parse_iso(event.get("startTime"))
-            end = parse_iso(market.get("endDate"))
+            start = parse_iso(event.get("startTime")) or parse_iso(market.get("eventStartTime"))
+            end = parse_iso(market.get("endDate")) or parse_iso(event.get("endDate"))
+            slug_start = self._start_from_slug(str(event.get("slug") or market.get("slug") or ""))
+            if end is None and slug_start is not None:
+                end = slug_start + timedelta(seconds=300)
+            if slug_start is not None and end is not None and 60 <= (end - slug_start).total_seconds() <= 900:
+                start = slug_start  # the slug carries the exact window start
             if start is None or end is None:
                 continue
             if not (start <= now < end):
@@ -106,6 +111,17 @@ class MarketDiscovery:
             return None
         candidates.sort(key=lambda m: m.window_start)
         return candidates[0]
+
+    @staticmethod
+    def _start_from_slug(slug: str) -> datetime | None:
+        """Slugs look like btc-updown-5m-<window_start_unix>."""
+        tail = slug.rsplit("-", 1)[-1]
+        if not tail.isdigit():
+            return None
+        try:
+            return to_utc_naive(datetime.fromtimestamp(int(tail), tz=timezone.utc))
+        except (OverflowError, OSError, ValueError):
+            return None
 
     def _build_market(
         self, event: dict, market: dict, series_id: str, start: datetime, end: datetime

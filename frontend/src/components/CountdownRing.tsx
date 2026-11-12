@@ -59,7 +59,6 @@ export function CountdownRing({
           strokeDasharray={circumference}
           strokeDashoffset={circumference * (1 - progress)}
           style={{
-            transition: "stroke-dashoffset 220ms linear",
             filter: inWindow ? "drop-shadow(0 0 7px currentColor)" : undefined,
           }}
         />

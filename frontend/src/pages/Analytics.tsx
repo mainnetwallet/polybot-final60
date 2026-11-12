@@ -1,30 +1,21 @@
 import { api } from "../api/client";
 import { ModeBadge } from "../components/Badges";
 import { IconActivity, IconAnalytics, IconTarget } from "../components/Icons";
-import { Sparkline } from "../components/Sparkline";
 import { Stat } from "../components/Stat";
 import { useBot } from "../hooks/BotContext";
 import { usePolled } from "../hooks/usePolled";
-import { clamp, cx, fmtCents, fmtMs, fmtSignedUsd, fmtUsd, pnlClass } from "../lib/format";
+import { clamp, cx, fmtCents, fmtSignedUsd, fmtUsd, pnlClass } from "../lib/format";
 
 export function Analytics() {
-  const { snapshot } = useBot();
+  const { snapshot, dataVersion } = useBot();
   const mode = snapshot?.bot.mode ?? "paper";
   const polled = usePolled(async () => {
-    const [analytics, orders] = await Promise.all([api.analytics(mode), api.orders(mode, 60)]);
-    return { analytics, orders };
-  }, 5000, [mode]);
+    return { analytics: await api.analytics(mode) };
+  }, 5000, [mode], dataVersion);
 
   const analytics = polled.data?.analytics;
-  const orders = polled.data?.orders ?? [];
   const closed = (analytics?.wins ?? 0) + (analytics?.losses ?? 0);
   const winPct = closed > 0 ? ((analytics?.wins ?? 0) / closed) * 100 : 0;
-  const latencies = [...orders]
-    .filter((order) => order.latency_ms != null)
-    .slice(0, 40)
-    .reverse()
-    .map((order) => order.latency_ms as number);
-  const maxLatency = latencies.length ? Math.max(...latencies) : null;
 
   const pnlRows = [
     { label: "Realized", value: analytics?.realized_pnl ?? 0 },
@@ -131,42 +122,6 @@ export function Analytics() {
         </div>
       </section>
 
-      <section className="panel p-5 xl:col-span-4">
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="label">Execution quality</div>
-            <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Latency</div>
-          </div>
-          <span className="chip border-white/8 bg-white/[0.03] text-slate-500">{latencies.length} samples</span>
-        </div>
-        <div className="mt-4">
-          {latencies.length >= 2 ? (
-            <Sparkline data={latencies} tone="sky" height={54} />
-          ) : (
-            <div className="flex h-[54px] items-center justify-center rounded-lg border border-dashed hairline text-[10.5px] text-slate-600">
-              {latencies.length ? "1 sample — waiting for more" : "No latency samples in this mode"}
-            </div>
-          )}
-        </div>
-        <div className="mt-4 grid grid-cols-3 gap-3">
-          <div>
-            <div className="label">Avg</div>
-            <div className="mono mt-1 text-[13px] text-slate-200">{fmtMs(analytics?.avg_latency_ms)}</div>
-          </div>
-          <div>
-            <div className="label">Last</div>
-            <div className="mono mt-1 text-[13px] text-slate-200">{fmtMs(analytics?.last_latency_ms)}</div>
-          </div>
-          <div>
-            <div className="label">Max</div>
-            <div className="mono mt-1 text-[13px] text-slate-200">{fmtMs(maxLatency)}</div>
-          </div>
-        </div>
-        <div className="mt-4 border-t hairline pt-3 text-[10.5px] leading-relaxed text-slate-500">
-          Paper latency is measured from the observed book timestamp to the simulated report. Live adds CLOB
-          round-trip time and is reported by the exchange acknowledgement.
-        </div>
-      </section>
     </div>
   );
 }

@@ -8,7 +8,7 @@ interface PriceCardProps {
   side: Side;
   book: BookSnapshot | null;
   armed: boolean;
-  threshold: number;
+  threshold: number | null;
   history: number[];
   inWindow: boolean;
   staleAfterMs: number | null;
@@ -29,7 +29,7 @@ export function PriceCard({
   const ask = book?.best_ask ?? null;
   const bid = book?.best_bid ?? null;
   const spread = isNum(ask) && isNum(bid) ? ask - bid : null;
-  const distance = isNum(ask) ? threshold - ask : null;
+  const distance = isNum(ask) && isNum(threshold) ? threshold - ask : null;
   const stale = isNum(book?.age_ms) && isNum(staleAfterMs) ? book.age_ms > staleAfterMs : false;
 
   return (
@@ -80,14 +80,16 @@ export function PriceCard({
       <div className="mt-4">
         <div className="relative h-1.5 overflow-hidden rounded-full bg-white/6">
           <div
-            className={cx("h-full rounded-full transition-all duration-300", up ? "bg-up" : "bg-down")}
+            className={cx("h-full rounded-full", up ? "bg-up" : "bg-down")}
             style={{ width: `${Math.min(100, Math.max(0, (ask ?? 0) * 100))}%` }}
           />
-          <div
-            className="absolute top-0 h-full w-px bg-white/55"
-            style={{ left: `${threshold * 100}%` }}
-            title={`Trigger ${fmtCents(threshold)}`}
-          />
+          {isNum(threshold) ? (
+            <div
+              className="absolute top-0 h-full w-px bg-white/55"
+              style={{ left: `${threshold * 100}%` }}
+              title={`Trigger ${fmtCents(threshold)}`}
+            />
+          ) : null}
         </div>
         <div className="mt-2 flex items-center justify-between text-[10px] text-slate-600">
           <span className="mono">0¢</span>
@@ -128,7 +130,7 @@ export function PriceCard({
       </div>
       <div className="mt-2.5 flex items-center justify-between text-[10px]">
         <span className={stale ? "text-amber" : "text-slate-600"}>
-          {book ? `updated ${Math.max(0, Math.round(book.age_ms ?? 0))} ms ago` : "no book"}
+          {book ? (stale ? "stale quote" : "fresh quote") : "no book"}
         </span>
         <span className="text-slate-600">{book ? book.source : "waiting"}</span>
       </div>

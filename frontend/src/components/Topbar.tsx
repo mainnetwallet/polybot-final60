@@ -73,7 +73,7 @@ export function Topbar({ page, onNavigate, onOpenMode, onStartLive, onOpenKill }
                 if (mode !== "paper") onOpenMode();
               }}
               className={cx(
-                "rounded-md px-2.5 py-1.5 text-[10.5px] font-bold uppercase tracking-[0.12em] transition-colors",
+                "rounded-md px-2.5 py-1.5 text-[10.5px] font-bold uppercase tracking-[0.12em]",
                 mode === "paper" ? "bg-sky/15 text-sky" : "text-slate-600 hover:text-slate-400",
               )}
             >
@@ -85,7 +85,7 @@ export function Topbar({ page, onNavigate, onOpenMode, onStartLive, onOpenKill }
                 if (mode !== "live") onOpenMode();
               }}
               className={cx(
-                "flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[10.5px] font-bold uppercase tracking-[0.12em] transition-colors",
+                "flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[10.5px] font-bold uppercase tracking-[0.12em]",
                 mode === "live" ? "bg-down/15 text-down" : "text-slate-600 hover:text-slate-400",
               )}
             >

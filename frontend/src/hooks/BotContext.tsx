@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { api } from "../api/client";
-import type { LogRow, Mode, Snapshot } from "../api/types";
+import type { BookSnapshot, LogRow, Mode, Snapshot } from "../api/types";
 
 export type ActionResult = { ok: boolean; error?: string };
 export type ToastKind = "success" | "error" | "info" | "warning";
@@ -27,8 +27,19 @@ interface PriceHistory {
   down: number[];
 }
 
+interface TickData {
+  server_time_ms: number;
+  remaining_seconds: number | null;
+  books: { up: BookSnapshot | null; down: BookSnapshot | null };
+  strategy: Partial<Snapshot["strategy"]> | null;
+}
+
 interface BotContextValue {
   snapshot: Snapshot | null;
+  /** server clock minus browser clock, so countdowns use the real expiry time */
+  clockOffsetMs: number;
+  /** bumps whenever orders/positions/logs change so pages can refetch immediately */
+  dataVersion: number;
   feedState: FeedState;
   logs: LogRow[];
   history: PriceHistory;
@@ -66,25 +77,95 @@ export function BotProvider({ children }: { children: ReactNode }) {
   const [logs, setLogs] = useState<LogRow[]>([]);
   const [history, setHistory] = useState<PriceHistory>({ up: [], down: [] });
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [clockOffsetMs, setClockOffsetMs] = useState(0);
+  const [dataVersion, setDataVersion] = useState(0);
 
+  const historyMarket = useRef<string | null>(null);
+  const lastBookStamp = useRef<{ up: number; down: number }>({ up: 0, down: 0 });
+  const dataSignature = useRef("");
   const snapshotRef = useRef<Snapshot | null>(null);
   const toastSeq = useRef(0);
   const toastTimers = useRef<Set<number>>(new Set());
 
-  const applySnapshot = useCallback((next: Snapshot) => {
-    snapshotRef.current = next;
-    setSnapshot(next);
-    setHistory((prev) => ({
-      up: pushPoint(prev.up, next.books.up?.best_ask),
-      down: pushPoint(prev.down, next.books.down?.best_ask),
-    }));
+  // Only real book updates are charted; the chart restarts for every new market.
+  const recordBooks = useCallback((next: Snapshot) => {
+    const marketId = next.market?.market_id ?? null;
+    let reset = false;
+    if (marketId !== historyMarket.current) {
+      historyMarket.current = marketId;
+      lastBookStamp.current = { up: 0, down: 0 };
+      reset = true;
+    }
+    let upPoint: number | null = null;
+    let downPoint: number | null = null;
+    const up = next.books.up;
+    const down = next.books.down;
+    if (up && up.updated_at_ms !== lastBookStamp.current.up && typeof up.best_ask === "number") {
+      lastBookStamp.current.up = up.updated_at_ms;
+      upPoint = up.best_ask;
+    }
+    if (down && down.updated_at_ms !== lastBookStamp.current.down && typeof down.best_ask === "number") {
+      lastBookStamp.current.down = down.updated_at_ms;
+      downPoint = down.best_ask;
+    }
+    if (!reset && upPoint === null && downPoint === null) return;
+    setHistory((prev) => {
+      const base = reset ? { up: [], down: [] } : prev;
+      return { up: pushPoint(base.up, upPoint), down: pushPoint(base.down, downPoint) };
+    });
   }, []);
+
+  const applySnapshot = useCallback(
+    (next: Snapshot) => {
+      snapshotRef.current = next;
+      setSnapshot(next);
+      const serverMs = Date.parse(next.server_time);
+      if (Number.isFinite(serverMs)) setClockOffsetMs(serverMs - Date.now());
+      recordBooks(next);
+      const signature = [
+        next.bot.status,
+        next.bot.mode,
+        next.account.trades_today,
+        next.positions.length,
+        next.open_orders.length,
+        next.last_order?.ts ?? "",
+      ].join("|");
+      if (signature !== dataSignature.current) {
+        dataSignature.current = signature;
+        setDataVersion((v) => v + 1);
+      }
+    },
+    [recordBooks],
+  );
+
+  // Lightweight push sent on every order-book event: prices, arm state, countdown.
+  const applyTick = useCallback(
+    (tick: TickData) => {
+      setClockOffsetMs(tick.server_time_ms - Date.now());
+      const prev = snapshotRef.current;
+      if (!prev) return;
+      const next: Snapshot = {
+        ...prev,
+        books: tick.books,
+        strategy: tick.strategy ? { ...prev.strategy, ...tick.strategy } : prev.strategy,
+        market:
+          prev.market && tick.remaining_seconds !== null
+            ? { ...prev.market, remaining_seconds: tick.remaining_seconds }
+            : prev.market,
+      };
+      snapshotRef.current = next;
+      setSnapshot(next);
+      recordBooks(next);
+    },
+    [recordBooks],
+  );
 
   const appendLog = useCallback((entry: LogRow) => {
     setLogs((prev) => {
       const next = [entry, ...prev];
       return next.length > LOG_LIMIT ? next.slice(0, LOG_LIMIT) : next;
     });
+    setDataVersion((v) => v + 1);
   }, []);
 
   const dismissToast = useCallback((id: number) => {
@@ -150,6 +231,8 @@ export function BotProvider({ children }: { children: ReactNode }) {
           const message = JSON.parse(event.data) as { type?: string; data?: unknown };
           if (message.type === "state" && message.data) {
             applySnapshot(message.data as Snapshot);
+          } else if (message.type === "tick" && message.data) {
+            applyTick(message.data as TickData);
           } else if (message.type === "log" && message.data) {
             const row = message.data as Omit<LogRow, "created_at">;
             appendLog({ ...row, created_at: new Date().toISOString() });
@@ -164,7 +247,7 @@ export function BotProvider({ children }: { children: ReactNode }) {
       socket.onclose = () => {
         if (disposed) return;
         setFeedState("offline");
-        retry = window.setTimeout(connect, 1500);
+        retry = window.setTimeout(connect, 500);
       };
     };
 
@@ -179,7 +262,7 @@ export function BotProvider({ children }: { children: ReactNode }) {
       if (retry !== undefined) window.clearTimeout(retry);
       socket?.close();
     };
-  }, [appendLog, applySnapshot]);
+  }, [appendLog, applySnapshot, applyTick]);
 
   useEffect(() => {
     if (feedState === "open") return;
@@ -193,7 +276,7 @@ export function BotProvider({ children }: { children: ReactNode }) {
         .catch(() => undefined);
     };
     tick();
-    const timer = window.setInterval(tick, 2500);
+    const timer = window.setInterval(tick, 1000);
     return () => {
       alive = false;
       window.clearInterval(timer);
@@ -284,7 +367,6 @@ export function BotProvider({ children }: { children: ReactNode }) {
     async (balance: number): Promise<ActionResult> => {
       try {
         applySnapshot(await api.resetPaper(balance));
-        setHistory({ up: [], down: [] });
         notify("success", "Paper account reset", `Starting balance set to $${balance.toFixed(2)}.`);
         return { ok: true };
       } catch (error) {
@@ -301,6 +383,8 @@ export function BotProvider({ children }: { children: ReactNode }) {
   const value = useMemo<BotContextValue>(
     () => ({
       snapshot,
+      clockOffsetMs,
+      dataVersion,
       feedState,
       logs,
       history,
@@ -317,6 +401,8 @@ export function BotProvider({ children }: { children: ReactNode }) {
     }),
     [
       snapshot,
+      clockOffsetMs,
+      dataVersion,
       feedState,
       logs,
       history,

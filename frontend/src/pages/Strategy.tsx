@@ -3,6 +3,7 @@ import { SideBadge, StatusChip } from "../components/Badges";
 import { EmptyState } from "../components/EmptyState";
 import { IconActivity, IconClock, IconShield, IconTarget, IconZap } from "../components/Icons";
 import { useBot } from "../hooks/BotContext";
+import { LoadingPanel } from "../components/LoadingPanel";
 import { usePolled } from "../hooks/usePolled";
 import { clamp, cx, fmtCents, fmtNum, fmtTime, fmtUsd, shortId } from "../lib/format";
 
@@ -13,11 +14,12 @@ function mmss(seconds: number): string {
 
 function PhaseTimeline() {
   const { snapshot } = useBot();
-  const finalWindow = snapshot?.strategy.final_window_seconds ?? 60;
-  const duration = snapshot?.market?.duration_seconds ?? 300;
+  if (!snapshot) return <LoadingPanel className="xl:col-span-12" />;
+  const finalWindow = snapshot.strategy.final_window_seconds;
+  const duration = snapshot.market?.duration_seconds ?? 300; // a BTC 5-minute window
   const observeSeconds = Math.max(0, duration - finalWindow);
   const observePct = (observeSeconds / duration) * 100;
-  const active = snapshot?.strategy.in_window ?? false;
+  const active = snapshot.strategy.in_window;
 
   return (
     <section className="panel p-5 xl:col-span-7">
@@ -105,7 +107,7 @@ function ArmMeter({
 }: {
   side: "UP" | "DOWN";
   ask: number | null | undefined;
-  threshold: number;
+  threshold: number | null;
   armed: boolean | undefined;
 }) {
   const pct = clamp(ask ?? 0, 0, 1) * 100;
@@ -120,7 +122,7 @@ function ArmMeter({
       </div>
       <div className="relative mt-3 h-1.5 overflow-hidden rounded-full bg-white/[0.05]">
         <div className={cx("h-full rounded-full", tone)} style={{ width: `${pct}%`, opacity: armed ? 1 : 0.6 }} />
-        <div className="absolute inset-y-0 w-px bg-white/60" style={{ left: `${threshold * 100}%` }} />
+        {threshold !== null ? <div className="absolute inset-y-0 w-px bg-white/60" style={{ left: `${threshold * 100}%` }} /> : null}
       </div>
       <div className="mt-2 flex items-center justify-between text-[10px]">
         <span className="mono text-slate-600">trigger {fmtCents(threshold)}</span>
@@ -131,7 +133,7 @@ function ArmMeter({
           </span>
         ) : (
           <span className="chip border-white/8 bg-white/[0.03] text-slate-500">
-            {ask != null && ask < threshold ? `${fmtCents(threshold - ask)} away` : "idle"}
+            {ask != null && threshold !== null && ask < threshold ? `${fmtCents(threshold - ask)} away` : "idle"}
           </span>
         )}
       </div>
@@ -142,7 +144,7 @@ function ArmMeter({
 function LiveEvaluation() {
   const { snapshot } = useBot();
   const strategy = snapshot?.strategy;
-  const threshold = strategy?.trigger_threshold ?? 0.8;
+  const threshold = strategy?.trigger_threshold ?? null;
   const config = snapshot?.config ?? {};
   const armedSide = strategy?.up_armed ? "UP" : strategy?.down_armed ? "DOWN" : null;
 
@@ -176,8 +178,7 @@ function LiveEvaluation() {
           <span className="mono text-[12px] text-slate-300">{fmtUsd(Number(config.trade_amount_usdc ?? 0))}</span>
         </div>
         <div className="mono mt-1.5 text-[10px] text-slate-600">
-          max execution {fmtCents(Number(config.max_execution_price ?? 0.99))} · stale cap{" "}
-          {Number(config.stale_data_max_age_ms ?? 2000)} ms
+          max execution {fmtCents(typeof config.max_execution_price === "number" ? config.max_execution_price : null)}
         </div>
       </div>
 
@@ -192,7 +193,8 @@ function LiveEvaluation() {
 }
 
 function TriggerHistory() {
-  const triggers = usePolled(() => api.triggers(100), 3000, []);
+  const { dataVersion } = useBot();
+  const triggers = usePolled(() => api.triggers(100), 5000, [], dataVersion);
   const rows = triggers.data ?? [];
 
   return (
@@ -264,11 +266,10 @@ function PolicyPanel() {
   const strategy = snapshot?.strategy;
   const config = snapshot?.config ?? {};
   const rows: Array<[string, string]> = [
-    ["Trigger threshold", fmtCents(strategy?.trigger_threshold ?? 0.8)],
-    ["Final window", `${strategy?.final_window_seconds ?? 60}s`],
-    ["Max execution price", fmtCents(Number(config.max_execution_price ?? 0.99))],
+    ["Trigger threshold", fmtCents(strategy?.trigger_threshold ?? null)],
+    ["Final window", strategy ? `${strategy.final_window_seconds}s` : "—"],
+    ["Max execution price", fmtCents(typeof config.max_execution_price === "number" ? config.max_execution_price : null)],
     ["Trade size", fmtUsd(Number(config.trade_amount_usdc ?? 0))],
-    ["Stale data cap", `${Number(config.stale_data_max_age_ms ?? 2000)} ms`],
     ["Duplicate policy", String(strategy?.duplicate_policy ?? "—").replace(/_/g, " ")],
     ["Conflict policy", String(strategy?.conflict_policy ?? "—").replace(/_/g, " ")],
     ["Max trades / day", String(config.max_trades_per_day ?? "—")],

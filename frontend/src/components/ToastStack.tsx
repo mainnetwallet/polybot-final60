@@ -27,7 +27,7 @@ export function ToastStack() {
           <div
             key={toast.id}
             className={cx(
-              "pointer-events-auto rise relative flex gap-3 overflow-hidden rounded-xl border bg-ink-900/95 p-3.5 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.9)] backdrop-blur",
+              "pointer-events-auto relative flex gap-3 overflow-hidden rounded-xl border bg-ink-900/95 p-3.5 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.9)] backdrop-blur",
               tone.border,
             )}
           >

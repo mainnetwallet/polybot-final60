@@ -1,0 +1,148 @@
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime, timezone
+
+from app.config.settings import Settings
+from app.execution.base import OrderRequest
+from app.live_trading.engine import LiveExecutionEngine
+from app.market_data.book import OrderBook
+from app.market_data.client import ClobMarketDataClient
+from app.market_discovery.service import MarketDiscovery
+from app.market_discovery.types import MarketInfo
+
+
+def _market() -> MarketInfo:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    return MarketInfo(
+        market_id="0xm", slug="s", event_slug="s", series_id="1",
+        window_start=now, window_end=now, up_token_id="UP", down_token_id="DOWN",
+    )
+
+
+def _client():
+    seen = []
+
+    async def on_book(market_id, side, book):
+        seen.append((side, book.best_bid, book.best_ask))
+
+    client = ClobMarketDataClient(Settings(), on_book)
+    client.set_market(_market())
+    return client, seen
+
+
+def test_book_ignores_zero_size_levels():
+    book = OrderBook(token_id="t", market_id="m", side="UP", asks={0.5: 0.0, 0.8: 10.0}, bids={0.9: 0.0, 0.7: 5.0})
+    assert book.best_ask == 0.8
+    assert book.best_bid == 0.7
+
+
+def test_price_change_official_format_updates_and_prunes():
+    client, seen = _client()
+
+    async def run():
+        await client._handle_message({
+            "event_type": "book", "asset_id": "UP",
+            "bids": [{"price": "0.70", "size": "5"}],
+            "asks": [{"price": "0.75", "size": "9"}, {"price": "0.81", "size": "4"}],
+        })
+        # new better ask, then the 0.75 level is reported gone via best_ask 0.81
+        await client._handle_message({
+            "event_type": "price_change",
+            "price_changes": [
+                {"asset_id": "UP", "price": "0.75", "size": "0", "side": "SELL", "best_bid": "0.70", "best_ask": "0.81"},
+            ],
+        })
+
+    asyncio.run(run())
+    book = client.books["UP"]
+    assert book.best_ask == 0.81
+    assert book.ask_size == 4.0
+    assert seen[-1] == ("UP", 0.70, 0.81)
+
+
+def test_price_change_stale_best_is_pruned_without_fake_levels():
+    client, _ = _client()
+
+    async def run():
+        await client._handle_message({
+            "event_type": "book", "asset_id": "DOWN",
+            "bids": [{"price": "0.10", "size": "5"}],
+            "asks": [{"price": "0.20", "size": "9"}, {"price": "0.25", "size": "3"}],
+        })
+        await client._handle_message({
+            "event_type": "price_change",
+            "price_changes": [
+                {"asset_id": "DOWN", "price": "0.30", "size": "7", "side": "SELL", "best_bid": "0.10", "best_ask": "0.25"},
+            ],
+        })
+
+    asyncio.run(run())
+    book = client.books["DOWN"]
+    assert 0.20 not in book.asks  # stale level pruned by reported best_ask
+    assert book.best_ask == 0.25
+    assert all(size > 0 for size in book.asks.values())
+
+
+class _FakeV2Client:
+    def __init__(self, response):
+        self.response = response
+        self.args = None
+
+    def create_and_post_market_order(self, args, options, order_type):
+        self.args = args
+        return self.response
+
+
+def _request(notional=5.0, max_price=0.99):
+    return OrderRequest(
+        order_key="k", client_order_id="c", market_id="m", side="UP", token_id="tok",
+        notional=notional, max_price=max_price, observed_at_ms=0,
+    )
+
+
+def test_live_matched_fill_uses_real_amounts_not_limit_price():
+    engine = LiveExecutionEngine(Settings())
+    client = _FakeV2Client({
+        "success": True, "errorMsg": "", "orderID": "0xabc", "status": "matched",
+        "makingAmount": "5", "takingAmount": "6.25",
+    })
+    report = engine._place_sync(client, _request())
+    assert report.status == "FILLED"
+    assert report.filled_size == 6.25
+    assert report.avg_price == 0.8  # 5 / 6.25, not the 0.99 cap
+    assert client.args.price == 0.99 and client.args.amount == 5.0
+
+
+def test_live_amounts_in_base_units_are_normalised():
+    engine = LiveExecutionEngine(Settings())
+    client = _FakeV2Client({
+        "success": True, "orderID": "0xabc", "status": "matched",
+        "makingAmount": "5000000", "takingAmount": "6250000",
+    })
+    report = engine._place_sync(client, _request())
+    assert report.filled_size == 6.25 and report.avg_price == 0.8
+
+
+def test_live_fok_kill_is_canceled_not_filled():
+    engine = LiveExecutionEngine(Settings())
+    client = _FakeV2Client({"success": False, "errorMsg": "FOK orders are fully filled or killed", "orderID": ""})
+    report = engine._place_sync(client, _request())
+    assert report.status == "CANCELED" and report.filled_size == 0
+
+
+def test_live_cancel_all_counts_list():
+    engine = LiveExecutionEngine(Settings())
+
+    class C:
+        def cancel_all(self):
+            return {"canceled": ["a", "b"], "not_canceled": {}}
+
+    engine._client = C()
+    assert asyncio.run(engine.cancel_open_orders()) == 2
+
+
+def test_discovery_slug_gives_exact_window_start():
+    start = MarketDiscovery._start_from_slug("btc-updown-5m-1760000100")
+    assert start == datetime(2025, 10, 9, 8, 55, 0)
+    assert MarketDiscovery._start_from_slug("no-number-here") is None

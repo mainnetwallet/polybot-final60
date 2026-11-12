@@ -17,12 +17,13 @@ import { PriceCard } from "../components/PriceCard";
 import { Stat } from "../components/Stat";
 import { OrdersTable, PositionsTable } from "../components/Tables";
 import { useBot } from "../hooks/BotContext";
+import { LoadingPanel } from "../components/LoadingPanel";
+import { useRemainingSeconds } from "../hooks/useCountdown";
 import { usePolled } from "../hooks/usePolled";
 import {
   clamp,
   cx,
   fmtCents,
-  fmtMs,
   fmtNum,
   fmtSignedUsd,
   fmtTime,
@@ -70,14 +71,16 @@ function humanizeReason(reason: string): string {
 
 function MarketPanel() {
   const { snapshot } = useBot();
-  const market = snapshot?.market;
-  const strategy = snapshot?.strategy;
+  const remaining = useRemainingSeconds();
+  if (!snapshot) return <LoadingPanel className="xl:col-span-8" />;
+  const market = snapshot.market;
+  const strategy = snapshot.strategy;
   const duration = market?.duration_seconds ?? null;
-  const remaining = market?.remaining_seconds ?? null;
-  const finalWindow = strategy?.final_window_seconds ?? 60;
+  const finalWindow = strategy.final_window_seconds;
+  const inWindow = remaining !== null && remaining > 0 && remaining <= finalWindow;
   const elapsed = duration !== null && remaining !== null ? clamp(duration - remaining, 0, duration) : 0;
   const progress = duration ? (elapsed / duration) * 100 : 0;
-  const finalStart = duration && duration > finalWindow ? ((duration - finalWindow) / duration) * 100 : 83;
+  const finalStart = duration ? ((duration - finalWindow) / duration) * 100 : 0;
 
   return (
     <section className="panel relative overflow-hidden p-5 xl:col-span-8">
@@ -101,15 +104,15 @@ function MarketPanel() {
               <span
                 className={cx(
                   "chip",
-                  strategy?.in_window ? "border-amber/30 bg-amber/10 text-amber" : "border-sky/25 bg-sky/10 text-sky",
+                  inWindow ? "border-amber/30 bg-amber/10 text-amber" : "border-sky/25 bg-sky/10 text-sky",
                 )}
               >
                 <IconClock size={10} />
-                {strategy?.in_window ? "Final window" : "Observation"}
+                {inWindow ? "Final window" : "Observation"}
               </span>
               <span className="chip border-white/8 bg-white/[0.03] text-slate-400">
                 <IconTarget size={10} />
-                Trigger {fmtCents(strategy?.trigger_threshold ?? 0.8)}
+                Trigger {fmtCents(strategy.trigger_threshold)}
               </span>
               <span className="chip border-white/8 bg-white/[0.03] text-slate-400">
                 <IconZap size={10} />
@@ -152,7 +155,7 @@ function MarketPanel() {
               <div className="mt-2 flex items-center justify-between text-[10px] text-slate-600">
                 <span className="mono">0:00 · open</span>
                 <span className="mono text-amber/80">
-                  {Math.round((duration ?? 300) - finalWindow)}s · final window
+                  {duration !== null ? Math.round(duration - finalWindow) : "—"}s · final window
                 </span>
                 <span className="mono">{duration ? `${Math.round(duration / 60)}:00 · expiry` : "expiry"}</span>
               </div>
@@ -161,10 +164,10 @@ function MarketPanel() {
 
           <CountdownRing
             remaining={remaining}
-            inWindow={strategy?.in_window ?? false}
+            inWindow={inWindow}
             finalWindow={finalWindow}
             duration={duration}
-            armed={(strategy?.up_armed ?? false) || (strategy?.down_armed ?? false)}
+            armed={strategy.up_armed || strategy.down_armed}
           />
         </div>
       ) : (
@@ -189,13 +192,13 @@ function MarketPanel() {
         <div>
           <div className="label">Conflict policy</div>
           <div className="mt-1 text-[12px] capitalize text-slate-300">
-            {(strategy?.conflict_policy ?? "—").replace(/_/g, " ")}
+            {strategy.conflict_policy.replace(/_/g, " ")}
           </div>
         </div>
         <div>
           <div className="label">Duplicate policy</div>
           <div className="mt-1 text-[12px] capitalize text-slate-300">
-            {(strategy?.duplicate_policy ?? "—").replace(/_/g, " ")}
+            {strategy.duplicate_policy.replace(/_/g, " ")}
           </div>
         </div>
       </div>
@@ -309,7 +312,7 @@ function StrategyPulse() {
         {(["UP", "DOWN"] as const).map((side) => {
           const ask = side === "UP" ? strategy?.up_ask : strategy?.down_ask;
           const isArmed = side === "UP" ? strategy?.up_armed : strategy?.down_armed;
-          const threshold = strategy?.trigger_threshold ?? 0.8;
+          const threshold = strategy?.trigger_threshold ?? null;
           return (
             <div
               key={side}
@@ -369,7 +372,6 @@ function StrategyPulse() {
 function FeedPanel() {
   const { snapshot } = useBot();
   const data = snapshot?.market_data;
-  const latency = snapshot?.latency;
   const config = snapshot?.config ?? {};
   const lastMessage = data?.last_message_ms;
   const age = lastMessage ? Date.now() - lastMessage : null;
@@ -396,14 +398,14 @@ function FeedPanel() {
         <Stat
           label="Last message"
           value={age === null ? "—" : age < 1000 ? "now" : `${Math.round(age / 1000)}s ago`}
-          hint={`${data?.reconnects ?? 0} reconnects`}
+          hint="last book event"
         />
-        <Stat label="Latency" value={fmtMs(latency?.last_ms)} hint={`avg ${fmtMs(latency?.avg_ms)}`} />
+        <Stat label="Reconnects" value={data?.reconnects ?? 0} hint="websocket feed" />
         <Stat label="Order size" value={fmtUsd(Number(config.trade_amount_usdc ?? 0))} hint="marketable notional" />
         <Stat
           label="Max exec price"
-          value={fmtCents(Number(config.max_execution_price ?? 0.99))}
-          hint={`stale > ${Number(config.stale_data_max_age_ms ?? 2000)} ms`}
+          value={fmtCents(typeof config.max_execution_price === "number" ? config.max_execution_price : null)}
+          hint="hard price cap"
         />
       </div>
 
@@ -423,11 +425,11 @@ function FeedPanel() {
 }
 
 export function Overview() {
-  const { snapshot, history } = useBot();
+  const { snapshot, history, dataVersion } = useBot();
   const mode = snapshot?.bot.mode ?? "paper";
-  const orders = usePolled(() => api.orders(mode, 8), 5000, [mode]);
+  const orders = usePolled(() => api.orders(mode, 8), 5000, [mode], dataVersion);
   const config = snapshot?.config ?? {};
-  const stale = Number(config.stale_data_max_age_ms ?? 2000);
+  const stale = typeof config.stale_data_max_age_ms === "number" ? config.stale_data_max_age_ms : null;
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
@@ -438,7 +440,7 @@ export function Overview() {
         side="UP"
         book={snapshot?.books.up ?? null}
         armed={snapshot?.strategy.up_armed ?? false}
-        threshold={snapshot?.strategy.trigger_threshold ?? 0.8}
+        threshold={snapshot?.strategy.trigger_threshold ?? null}
         history={history.up}
         inWindow={snapshot?.strategy.in_window ?? false}
         staleAfterMs={stale}
@@ -448,7 +450,7 @@ export function Overview() {
         side="DOWN"
         book={snapshot?.books.down ?? null}
         armed={snapshot?.strategy.down_armed ?? false}
-        threshold={snapshot?.strategy.trigger_threshold ?? 0.8}
+        threshold={snapshot?.strategy.trigger_threshold ?? null}
         history={history.down}
         inWindow={snapshot?.strategy.in_window ?? false}
         staleAfterMs={stale}

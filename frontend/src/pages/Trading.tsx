@@ -1,7 +1,7 @@
 import { api } from "../api/client";
 import { ModeBadge, SideBadge, StatusChip } from "../components/Badges";
 import { EmptyState } from "../components/EmptyState";
-import { IconActivity, IconLayers, IconRefresh, IconZap } from "../components/Icons";
+import { IconActivity, IconLayers, IconZap } from "../components/Icons";
 import { Stat } from "../components/Stat";
 import { OrdersTable, PositionsTable } from "../components/Tables";
 import { useBot } from "../hooks/BotContext";
@@ -9,7 +9,6 @@ import { usePolled } from "../hooks/usePolled";
 import {
   cx,
   fmtCents,
-  fmtMs,
   fmtNum,
   fmtSignedUsd,
   fmtTime,
@@ -19,7 +18,7 @@ import {
 } from "../lib/format";
 
 export function Trading() {
-  const { snapshot } = useBot();
+  const { snapshot, dataVersion } = useBot();
   const mode = snapshot?.bot.mode ?? "paper";
   const polled = usePolled(async () => {
     const [orders, positions, analytics] = await Promise.all([
@@ -28,7 +27,7 @@ export function Trading() {
       api.analytics(mode),
     ]);
     return { orders, positions, analytics };
-  }, 3500, [mode]);
+  }, 5000, [mode], dataVersion);
 
   const analytics = polled.data?.analytics;
   const last = snapshot?.last_order;
@@ -65,15 +64,11 @@ export function Trading() {
             <div className="label">Open orders</div>
             <div className="mono mt-1 text-[16px] text-slate-100">{openOrders.length}</div>
           </div>
-          <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
-            <IconRefresh size={12} />
-            refreshing 3.5s
-          </div>
         </div>
       </section>
 
       <section className="panel p-5 xl:col-span-12">
-        <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-5">
           <Stat label="Total trades" value={analytics?.total_trades ?? 0} hint={`${analytics?.closed_trades ?? 0} settled`} />
           <Stat
             label="Win rate"
@@ -89,7 +84,6 @@ export function Trading() {
           />
           <Stat label="Volume" value={fmtUsd(analytics?.volume_usdc ?? 0)} hint="USDC notional" />
           <Stat label="Avg entry" value={fmtCents(analytics?.avg_entry_price)} hint="share price" />
-          <Stat label="Avg latency" value={fmtMs(analytics?.avg_latency_ms)} hint={`last ${fmtMs(analytics?.last_latency_ms)}`} />
         </div>
       </section>
 
@@ -115,10 +109,6 @@ export function Trading() {
               <div>
                 <div className="label">Avg price</div>
                 <div className="mono mt-1 text-[13px] text-slate-200">{fmtCents(last.avg_price)}</div>
-              </div>
-              <div>
-                <div className="label">Latency</div>
-                <div className="mono mt-1 text-[13px] text-slate-200">{fmtMs(last.latency_ms)}</div>
               </div>
               <div>
                 <div className="label">Order id</div>

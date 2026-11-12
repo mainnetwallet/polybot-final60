@@ -75,7 +75,7 @@ class TradingBot:
         self.data = ClobMarketDataClient(settings, self._on_book)
 
         self.paper_engine = PaperExecutionEngine(settings, self.data.book_for)
-        self.live_engine = LiveExecutionEngine(settings)
+        self.live_engine = LiveExecutionEngine(settings, balance_hint=lambda: self._live_balance)
         self.orders = OrderManager(
             settings, runtime, portfolio, self.risk, self._executor_for, self.logs
         )
@@ -100,6 +100,7 @@ class TradingBot:
         self._last_live_reconcile = 0.0
         self._risk_halt_reason: str | None = None
         self._risk_halt_logged = False
+        self._tick_pending = False
 
     @property
     def status(self) -> str:
@@ -205,6 +206,10 @@ class TradingBot:
             self._persist_market(market)
             self.monitor.track(market)
             self.data.set_market(market)
+            if self._mode == "live":
+                asyncio.create_task(
+                    self.live_engine.prewarm([market.up_token_id, market.down_token_id])
+                )
             self.orders.reset_trigger_cache()
             self._evaluation = None
             self._market_finalized.discard(market.market_id)
@@ -274,15 +279,19 @@ class TradingBot:
 
         evaluation = self.strategy.evaluate(market, self.data.books, now_ms, config)
         self._evaluation = evaluation
+        self._schedule_tick()
         if self._status != "RUNNING":
             return
 
-        try:
-            ctx = self._risk_context(market, config, now_ms)
-        except Exception as exc:
-            logger.exception("risk context failed")
-            self.logs.log("ERROR", "error", f"risk context failed: {exc}", mode=self._mode)
-            return
+        # The risk context hits the database; only build it when a signal needs it.
+        ctx = None
+        if evaluation.signals:
+            try:
+                ctx = self._risk_context(market, config, now_ms)
+            except Exception as exc:
+                logger.exception("risk context failed")
+                self.logs.log("ERROR", "error", f"risk context failed: {exc}", mode=self._mode)
+                return
 
         try:
             results = await self.orders.handle_event(
@@ -300,6 +309,38 @@ class TradingBot:
                     self._latencies.append(result.latency_ms)
         if results:
             await self._broadcast_state()
+
+    # ------------------------------------------------------------------
+    def _schedule_tick(self) -> None:
+        """Push books/countdown to the dashboard on every book event (coalesced, no timer)."""
+        if self._tick_pending or not getattr(self.hub, "client_count", 0):
+            return
+        self._tick_pending = True
+        asyncio.get_running_loop().create_task(self._send_tick())
+
+    async def _send_tick(self) -> None:
+        self._tick_pending = False
+        try:
+            market = self._market
+            evaluation = self._evaluation
+            up_book = self.data.book_for("UP")
+            down_book = self.data.book_for("DOWN")
+            await self.hub.broadcast(
+                {
+                    "type": "tick",
+                    "data": {
+                        "server_time_ms": int(time.time() * 1000),
+                        "remaining_seconds": round(market.remaining_seconds(), 3) if market else None,
+                        "books": {
+                            "up": up_book.snapshot() if up_book else None,
+                            "down": down_book.snapshot() if down_book else None,
+                        },
+                        "strategy": evaluation.summary() if evaluation else None,
+                    },
+                }
+            )
+        except Exception as exc:
+            logger.debug("tick broadcast failed: %s", exc)
 
     def _persist_price(self, market_id: str, side: str, book) -> None:
         from app.database.models import PriceUpdate
