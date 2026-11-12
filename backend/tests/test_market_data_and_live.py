@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from app.config.settings import Settings
 from app.execution.base import OrderRequest
 from app.live_trading.engine import LiveExecutionEngine
 from app.market_data.book import OrderBook
 from app.market_data.client import ClobMarketDataClient
-from app.market_discovery.service import MarketDiscovery
+from app.market_discovery.service import DiscoveryError, MarketDiscovery
 from app.market_discovery.types import MarketInfo
 
 
@@ -255,37 +255,88 @@ def test_market_discovery_uses_protocol_v2_position_ids():
     assert market.down_token_id == "position-down"
 
 
-def test_active_market_fetches_series_detail_not_undocumented_filter():
+def _event_payload(start):
+    slug_start = int(start.replace(tzinfo=timezone.utc).timestamp())
+    return {
+        "slug": f"btc-updown-5m-{slug_start}",
+        "startDate": start.isoformat() + "Z",
+        "endDate": (start + timedelta(minutes=5)).isoformat() + "Z",
+        "markets": [{
+            "conditionId": "0xcondition",
+            "slug": f"btc-updown-5m-{slug_start}",
+            "closed": False,
+            "version": "v1",
+            "outcomes": '["Up", "Down"]',
+            "clobTokenIds": '["token-up", "token-down"]',
+        }],
+    }
+
+
+def test_active_market_found_by_deterministic_slug_first():
     discovery = MarketDiscovery(Settings())
     start = datetime(2026, 11, 12, 12, 0, 0)
-    slug_start = int(start.replace(tzinfo=timezone.utc).timestamp())
     calls = []
 
     async def fake_get(path, params=None):
         calls.append((path, params))
-        if path == "/series":
-            return [{"id": "series-1"}]
-        return {
-            "events": [{
-                "slug": f"btc-updown-5m-{slug_start}",
-                "startDate": "2026-11-12T12:00:00Z",
-                "endDate": "2026-11-12T12:05:00Z",
-                "markets": [{
-                    "conditionId": "0xcondition",
-                    "slug": f"btc-updown-5m-{slug_start}",
-                    "closed": False,
-                    "version": "v1",
-                    "outcomes": '["Up", "Down"]',
-                    "clobTokenIds": '["token-up", "token-down"]',
-                }],
-            }]
-        }
+        return [_event_payload(start)]
 
     discovery._get = fake_get
     market = asyncio.run(discovery.get_active_market(start.replace(second=20, tzinfo=timezone.utc)))
     assert market is not None
     assert market.up_token_id == "token-up"
-    assert calls == [("/series", {"slug": "btc-up-or-down-5m"}), ("/series/series-1", None)]
+    slug_start = int(start.replace(tzinfo=timezone.utc).timestamp())
+    assert calls == [("/events", {"slug": f"btc-updown-5m-{slug_start}"})]
+
+
+def test_active_market_falls_back_to_series_slug_events():
+    discovery = MarketDiscovery(Settings())
+    start = datetime(2026, 11, 12, 12, 0, 0)
+    calls = []
+
+    async def fake_get(path, params=None):
+        calls.append((path, params))
+        if "slug" in (params or {}):
+            return []  # slug lookup finds nothing
+        return [_event_payload(start)]
+
+    discovery._get = fake_get
+    market = asyncio.run(discovery.get_active_market(start.replace(second=20, tzinfo=timezone.utc)))
+    assert market is not None
+    assert calls[-1][1]["series_slug"] == "btc-up-or-down-5m"
+    assert calls[-1][1]["closed"] == "false"
+
+
+def test_active_market_falls_back_to_series_detail_last():
+    discovery = MarketDiscovery(Settings())
+    start = datetime(2026, 11, 12, 12, 0, 0)
+    calls = []
+
+    async def fake_get(path, params=None):
+        calls.append((path, params))
+        if path == "/events":
+            raise DiscoveryError("boom")
+        if path == "/series":
+            return [{"id": "series-1"}]
+        return {"events": [_event_payload(start)]}
+
+    discovery._get = fake_get
+    market = asyncio.run(discovery.get_active_market(start.replace(second=20, tzinfo=timezone.utc)))
+    assert market is not None
+    assert calls[-2:] == [("/series", {"slug": "btc-up-or-down-5m"}), ("/series/series-1", None)]
+
+
+def test_active_market_raises_only_when_every_lookup_fails():
+    discovery = MarketDiscovery(Settings())
+
+    async def fake_get(path, params=None):
+        raise DiscoveryError("network down")
+
+    discovery._get = fake_get
+    import pytest
+
+    with pytest.raises(DiscoveryError):
+        asyncio.run(discovery.get_active_market(datetime(2026, 11, 12, 12, 0, 20, tzinfo=timezone.utc)))
 
 
 class _FeeV2Client(_FakeV2Client):

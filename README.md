@@ -393,6 +393,7 @@ Other `.env` keys (all present in `.env.example`):
 | `CLOB_BASE_URL` | `https://clob.polymarket.com` | CLOB REST endpoint |
 | `CLOB_WS_URL` | `wss://ws-subscriptions-clob.polymarket.com/ws/market` | CLOB WebSocket endpoint |
 | `SERIES_SLUG` | `btc-up-or-down-5m` | Market series to trade |
+| `EVENT_SLUG_PREFIX` | `btc-updown-5m` | Prefix of the per-window event slug (`<prefix>-<window start unix>`) used to find the active market |
 | `DISCOVERY_REFRESH_SECONDS` | `3` | Market discovery refresh interval |
 | `RESOLUTION_POLL_SECONDS` | `5` | Settlement/resolution check interval |
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -71,18 +72,73 @@ class MarketDiscovery:
             logger.info("resolved series %s -> id %s", self._settings.series_slug, self._series_id)
             return self._series_id
 
-    async def get_active_market(self, now: datetime | None = None) -> MarketInfo | None:
-        now = to_utc_naive(now or datetime.now(timezone.utc))
-        sid = await self.series_id()
-        # Gamma documents events as a member of a series resource. Fetching the
-        # series detail avoids relying on the undocumented events?series_id filter.
-        series = await self._get(f"/series/{sid}")
-        events = series.get("events") if isinstance(series, dict) else None
-        if not isinstance(events, list):
-            return None
+    def _window_seconds(self) -> int:
+        """Window length from the series slug (``...-5m`` -> 300, ``...-15m`` -> 900)."""
+        match = re.search(r"-(\d+)m$", self._settings.series_slug)
+        return int(match.group(1)) * 60 if match else 300
 
+    async def get_active_market(self, now: datetime | None = None) -> MarketInfo | None:
+        """Find the market whose window contains ``now``.
+
+        Three lookups, most reliable first. A lookup that errors or finds nothing falls
+        through to the next one; only if every lookup errors is an error raised.
+        """
+        now = to_utc_naive(now or datetime.now(timezone.utc))
+        window = self._window_seconds()
+        errors: list[Exception] = []
+
+        # 1) Deterministic slug: <prefix>-<window start unix>. One small request.
+        epoch = int(now.replace(tzinfo=timezone.utc).timestamp())
+        prefix = self._settings.event_slug_prefix
+        for window_start in (epoch - epoch % window, epoch - epoch % window - window):
+            try:
+                events = await self._get("/events", {"slug": f"{prefix}-{window_start}"})
+            except DiscoveryError as exc:
+                errors.append(exc)
+                break
+            if isinstance(events, list):
+                market = self._pick_active(events, now)
+                if market is not None:
+                    return market
+
+        # 2) Series filter on /events: every open event of the series, soonest end first.
+        try:
+            events = await self._get(
+                "/events",
+                {
+                    "series_slug": self._settings.series_slug,
+                    "closed": "false",
+                    "limit": 100,
+                    "order": "endDate",
+                    "ascending": "true",
+                },
+            )
+            if isinstance(events, list):
+                market = self._pick_active(events, now)
+                if market is not None:
+                    return market
+        except DiscoveryError as exc:
+            errors.append(exc)
+
+        # 3) Legacy: events embedded in the series detail (can lag behind or be truncated).
+        try:
+            sid = await self.series_id()
+            series = await self._get(f"/series/{sid}")
+            events = series.get("events") if isinstance(series, dict) else None
+            if isinstance(events, list):
+                return self._pick_active(events, now)
+        except DiscoveryError as exc:
+            errors.append(exc)
+
+        if errors and len(errors) >= 3:
+            raise DiscoveryError(f"all market lookups failed: {errors[-1]}")
+        return None
+
+    def _pick_active(self, events: list, now: datetime) -> MarketInfo | None:
         candidates: list[MarketInfo] = []
         for event in events:
+            if not isinstance(event, dict):
+                continue
             markets = event.get("markets") or []
             if not markets:
                 continue
@@ -104,6 +160,8 @@ class MarketDiscovery:
                 continue
             if not (start <= now < end):
                 continue
+            series_info = (event.get("series") or [{}])[0]
+            sid = str(series_info.get("id") or self._series_id or self._settings.series_slug)
             info = self._build_market(event, market, sid, start, end)
             if info is not None:
                 candidates.append(info)

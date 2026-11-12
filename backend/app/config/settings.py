@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     clob_base_url: str = "https://clob.polymarket.com"
     clob_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     series_slug: str = "btc-up-or-down-5m"
+    event_slug_prefix: str = "btc-updown-5m"  # event slug = <prefix>-<window start unix>
     http_user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
