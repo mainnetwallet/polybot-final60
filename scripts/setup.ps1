@@ -20,15 +20,12 @@ Write-Host ""
 Write-Step "Checking Python"
 $python = Get-Command python -ErrorAction SilentlyContinue
 if (-not $python) {
-    Fail "Python was not found on PATH. Install Python 3.12+ from python.org and reopen this window."
+    Fail "Python was not found on PATH. Install Python 3.11 or newer from python.org and reopen this window."
 }
 $pyVersion = (& python -c "import sys; print('%d.%d.%d' % sys.version_info[:3])").Trim()
 $pyParts = $pyVersion.Split(".")
 if (([int]$pyParts[0] -lt 3) -or (([int]$pyParts[0] -eq 3) -and ([int]$pyParts[1] -lt 11))) {
     Fail "Python 3.11 or newer is required; found $pyVersion."
-}
-if (([int]$pyParts[0] -eq 3) -and ([int]$pyParts[1] -lt 12)) {
-    Write-Host "    WARNING: found Python $pyVersion. The project targets 3.12+; this code is 3.11-compatible." -ForegroundColor Yellow
 }
 Write-Host "    Python $pyVersion" -ForegroundColor DarkGray
 

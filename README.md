@@ -16,12 +16,19 @@ Paper trading is the default. Live trading is implemented but disabled by defaul
 ## Requirements
 
 - Windows 10 or 11
-- Python 3.12+ (the code is 3.11-compatible; this host was verified on 3.11.9)
+- Python 3.11 or newer (3.11 and 3.12 both supported; full test suite passes on 3.11.18)
 - Node.js 20.19+ or 22.12+ (verified on 24.20.0)
 - Internet access to `gamma-api.polymarket.com`, `clob.polymarket.com`, and the CLOB WebSocket
 - A correctly synchronized system clock (Windows Settings > Time & Language > Sync now)
 
 ---
+
+## Restarting
+
+Running `start.bat` again (even from a new terminal) always does a **fresh restart**: it first stops the previous
+instance (bot stopped gracefully through the API, then only processes that belong to this project folder are killed),
+then starts the API and dashboard again with the current code. After a restart the bot is `STOPPED`; open positions
+are re-tracked and settled automatically. Use `start.bat -NoRestart` to keep an already-running instance instead.
 
 ## Settlement & balance after a 5m market ends
 
@@ -65,7 +72,7 @@ Check that the tools are installed and on PATH:
 
 ```powershell
 git --version
-python --version     # 3.11+ (3.12+ recommended)
+python --version     # 3.11 or newer
 node --version       # 20.19+ or 22.12+
 ```
 
@@ -386,7 +393,7 @@ These are paper-execution results. See limitations below.
 - **On-chain reconciliation is best-effort.** Live fills depend on the CLOB API responses; there is no separate on-chain balance reconciler.
 - **Single market family.** Discovery targets the `btc-up-or-down-5m` series only.
 - **Clock skew matters.** Windows clock drift can make books look stale and block trades. Fix time sync rather than relaxing `STALE_DATA_MAX_AGE_MS`.
-- **Python version.** The project targets 3.12+; the verified host runs 3.11.9.
+- **Python version.** Python 3.11+ is supported (tests pass on 3.11 and 3.12).
 
 ---
 

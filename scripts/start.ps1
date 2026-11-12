@@ -1,5 +1,8 @@
 param(
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    # By default start.bat does a fresh restart: any previous instance is stopped first.
+    # Pass -NoRestart to keep an already-running healthy instance instead.
+    [switch]$NoRestart
 )
 
 $ErrorActionPreference = "Stop"
@@ -102,6 +105,14 @@ Write-Host ""
 Write-Host "FINAL60 - Polymarket BTC 5m bot" -ForegroundColor Green
 Write-Host "Starting backend and dashboard" -ForegroundColor DarkGray
 Write-Host ""
+
+if (-not $NoRestart) {
+    # Stop the old server first (also frees the venv files before setup/pip touch them).
+    # stop.ps1 only kills processes it can prove belong to this project folder.
+    Write-Step "Stopping any previous instance (fresh restart)"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "stop.ps1")
+    Write-Host ""
+}
 
 $needsSetup = $false
 if (-not (Test-Path $VenvPython)) { $needsSetup = $true }
