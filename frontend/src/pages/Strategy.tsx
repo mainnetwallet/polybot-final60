@@ -213,7 +213,7 @@ function TriggerHistory() {
       </div>
       {rows.length ? (
         <div className="max-h-[420px] overflow-auto scrollbar">
-          <table className="grid">
+          <table className="data-table">
             <thead className="sticky top-0 bg-ink-900/95 backdrop-blur">
               <tr>
                 <th>Time</th>

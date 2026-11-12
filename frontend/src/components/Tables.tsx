@@ -25,7 +25,7 @@ export function OrdersTable({
 
   return (
     <div className="overflow-x-auto scrollbar">
-      <table className="grid">
+      <table className="data-table">
         <thead>
           <tr>
             <th>Time</th>
@@ -93,7 +93,7 @@ export function PositionsTable({
 
   return (
     <div className="overflow-x-auto scrollbar">
-      <table className="grid">
+      <table className="data-table">
         <thead>
           <tr>
             <th>Market</th>

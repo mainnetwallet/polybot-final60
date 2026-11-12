@@ -163,13 +163,13 @@ body {
   background: transparent;
 }
 
-table.grid {
+table.data-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12.5px;
 }
 
-table.grid th {
+table.data-table th {
   text-align: left;
   font-size: 10px;
   letter-spacing: 0.14em;
@@ -181,14 +181,14 @@ table.grid th {
   white-space: nowrap;
 }
 
-table.grid td {
+table.data-table td {
   padding: 11px 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   color: #c3d0de;
   white-space: nowrap;
 }
 
-table.grid tbody tr:hover {
+table.data-table tbody tr:hover {
   background: rgba(255, 255, 255, 0.02);
 }
 
