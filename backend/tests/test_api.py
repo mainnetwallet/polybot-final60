@@ -235,7 +235,7 @@ def test_settings_never_expose_secrets():
             _restore_live(bot, previous)
 
 
-def test_unresolved_live_order_counts_toward_position_limit():
+def test_unresolved_order_from_previous_market_does_not_block_new_market():
     with TestClient(create_app()) as client:
         bot = client.app.state.bot
         bot._mode = "live"
@@ -254,7 +254,25 @@ def test_unresolved_live_order_counts_toward_position_limit():
                 )
             )
 
-        context = bot._risk_context(make_market(), bot.runtime.get(), int(time.time() * 1000))
+        market = make_market()
+        context = bot._risk_context(market, bot.runtime.get(), int(time.time() * 1000))
+        assert context.open_positions == 0
+
+        with session_scope() as session:
+            session.add(
+                Order(
+                    order_key="live:current-exposure",
+                    client_order_id="current-exposure",
+                    mode="live",
+                    market_id=market.market_id,
+                    side="UP",
+                    token_id="position-up",
+                    status="SUBMITTED",
+                    requested_notional=5.0,
+                    requested_price=0.8,
+                )
+            )
+        context = bot._risk_context(market, bot.runtime.get(), int(time.time() * 1000))
         assert context.open_positions == 1
 
 

@@ -414,9 +414,12 @@ class TradingBot:
             unrealized = self.portfolio.unrealized_pnl(session, self._mode, marks, market.market_id)
             pnl = self.portfolio.pnl_summary(session, self._mode, unrealized)["daily_pnl"]
             trades_today = self.portfolio.trades_today(session, self._mode)
+            # max_open_positions is a per-market cap: a position from an earlier 5-minute
+            # window that is still waiting to settle must not block the current market.
             exposure_keys = {
                 (position.market_id, position.side)
                 for position in self.portfolio.open_positions(session, self._mode)
+                if position.market_id == market.market_id
             }
             active_orders = session.execute(
                 select(Order).where(
@@ -424,7 +427,11 @@ class TradingBot:
                     Order.status.in_(["PENDING", "SUBMITTED", "PARTIALLY_FILLED"]),
                 )
             ).scalars().all()
-            exposure_keys.update((order.market_id, order.side) for order in active_orders)
+            exposure_keys.update(
+                (order.market_id, order.side)
+                for order in active_orders
+                if order.market_id == market.market_id
+            )
             open_positions = len(exposure_keys)
             balance = self._balance(session)
         remaining = market.remaining_seconds()
