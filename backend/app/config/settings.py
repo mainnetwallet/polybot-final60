@@ -39,11 +39,8 @@ class Settings(BaseSettings):
     clob_base_url: str = "https://clob.polymarket.com"
     clob_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     rtds_ws_url: str = "wss://ws-live-data.polymarket.com"
-    crypto_price_api_url: str = "https://polymarket.com/api/crypto/crypto-price"
     # Since 2026-08-14 Polymarket's 5-minute crypto markets settle on the Chainlink 60-second TWAP (both
-    # the price to beat and the final price), not on the plain spot price.
-    rtds_price_topic: str = "crypto_prices_twap_sixty"  # "crypto_prices_chainlink" = plain spot (does NOT match the site)
-    price_to_beat_source: str = "gamma"  # "gamma" = event eventMetadata.priceToBeat | "crypto-price" = website endpoint
+    # the price to beat and the final price); the bot streams only that official series (no spot fallback).
     btc_price_enabled: bool = True  # dashboard-only official Polymarket BTC price / price-to-beat
     series_slug: str = "btc-up-or-down-5m"
     event_slug_prefix: str = "btc-updown-5m"  # event slug = <prefix>-<window start unix>

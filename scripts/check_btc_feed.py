@@ -3,7 +3,6 @@
 Run from the repo root:   .venv\Scripts\python.exe scripts\check_btc_feed.py
 Prints exactly what Polymarket answers so a blocked/changed endpoint is obvious:
   * Gamma eventMetadata.priceToBeat (the default Price To Beat source) for the current window
-  * the legacy website crypto-price endpoint, for comparison
   * the first frames of every RTDS connection variant on the configured topic (default: Chainlink 60s TWAP)
 Compare the printed values with the Polymarket event page of the same window.
 """
@@ -13,7 +12,6 @@ import asyncio
 import json
 import sys
 import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
@@ -39,32 +37,12 @@ async def check_gamma(settings: Settings) -> None:
             print(f"  ERROR {type(exc).__name__}: {exc}")
 
 
-async def check_price_to_beat(settings: Settings) -> None:
-    now = datetime.now(timezone.utc)
-    start = now.replace(second=0, microsecond=0) - timedelta(minutes=now.minute % 5)
-    end = start + timedelta(minutes=5)
-    print(f"== legacy crypto-price endpoint: window {start:%H:%M:%S}Z -> {end:%H:%M:%S}Z")
-    async with httpx.AsyncClient(timeout=8, headers=BROWSER_HEADERS, follow_redirects=True) as http:
-        for suffix in ("Z", ".000Z"):
-            params = {
-                "symbol": "BTC",
-                "eventStartTime": start.strftime("%Y-%m-%dT%H:%M:%S") + suffix,
-                "variant": "fiveminute",
-                "endDate": end.strftime("%Y-%m-%dT%H:%M:%S") + suffix,
-            }
-            try:
-                r = await http.get(settings.crypto_price_api_url, params=params)
-                print(f"  [{suffix}] HTTP {r.status_code}: {r.text[:300]}")
-            except Exception as exc:
-                print(f"  [{suffix}] ERROR {type(exc).__name__}: {exc}")
-
-
 async def check_ws(settings: Settings, mode: int, seconds: float = 10.0) -> None:
     feed = BtcPriceFeed(settings)
-    print(f"== RTDS topic {settings.rtds_price_topic} mode {mode} (filtered={mode >= 2}, origin={mode % 2 == 1})")
+    print(f"== RTDS topic {"crypto_prices_twap_sixty"} mode {mode} (filtered={mode >= 2}, origin={mode % 2 == 1})")
     try:
         async with feed._connect(mode) as ws:
-            await ws.send(feed._subscribe_frame(mode, settings.rtds_price_topic))
+            await ws.send(feed._subscribe_frame(mode))
             end = time.monotonic() + seconds
             shown = 0
             while time.monotonic() < end:
@@ -86,7 +64,6 @@ async def check_ws(settings: Settings, mode: int, seconds: float = 10.0) -> None
 async def main() -> None:
     settings = Settings()
     await check_gamma(settings)
-    await check_price_to_beat(settings)
     for mode in range(4):
         await check_ws(settings, mode)
 

@@ -118,7 +118,7 @@ async def test_price_to_beat_comes_from_gamma_event_metadata_no_fallback():
     market = _market(start)
     feed = BtcPriceFeed(Settings())
 
-    # Gamma publishes the TWAP-based price to beat; the website endpoint is NOT consulted
+    # Gamma publishes the TWAP-based price to beat; no other endpoint is consulted
     feed._http = _FakeHttp({"/events": [{"eventMetadata": {"priceToBeat": 70_123.45}}], "crypto-price": {"openPrice": 70_222.0}})
     assert await feed._fetch_open_price(market) == (70_123.45, "polymarket")
     assert not any("crypto-price" in url for url in feed._http.calls)
@@ -138,16 +138,7 @@ async def test_price_to_beat_comes_from_gamma_event_metadata_no_fallback():
     assert "down" in feed.snapshot(market)["price_to_beat_error"]
 
 
-async def test_website_endpoint_only_when_explicitly_selected():
-    start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
-    market = _market(start)
-    feed = BtcPriceFeed(Settings(price_to_beat_source="crypto-price"))
-    feed._http = _FakeHttp({"/events": [{"eventMetadata": {"priceToBeat": 70_123.45}}], "crypto-price": {"openPrice": 70_222.0}})
-    assert await feed._fetch_open_price(market) == (70_222.0, "polymarket")
-
-
 def test_current_price_stream_is_the_twap60_topic():
-    assert Settings().rtds_price_topic == "crypto_prices_twap_sixty"
     sub = json.loads(BtcPriceFeed._subscribe_frame(0))["subscriptions"][0]
     assert sub["topic"] == "crypto_prices_twap_sixty"
     assert BtcPriceFeed(Settings()).snapshot(None)["price_source"] == "chainlink-twap60"
