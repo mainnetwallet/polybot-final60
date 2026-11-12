@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     gamma_base_url: str = "https://gamma-api.polymarket.com"
     clob_base_url: str = "https://clob.polymarket.com"
     clob_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+    rtds_ws_url: str = "wss://ws-live-data.polymarket.com"
+    crypto_price_api_url: str = "https://polymarket.com/api/crypto/crypto-price"
+    btc_price_enabled: bool = True  # dashboard-only BTC price / price-to-beat feed
     series_slug: str = "btc-up-or-down-5m"
     event_slug_prefix: str = "btc-updown-5m"  # event slug = <prefix>-<window start unix>
     http_user_agent: str = (

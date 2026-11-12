@@ -14,6 +14,7 @@ import {
   IconZap,
 } from "../components/Icons";
 import { PriceCard } from "../components/PriceCard";
+import { PriceToBeatBar } from "../components/PriceToBeatBar";
 import { Stat } from "../components/Stat";
 import { OrdersTable, PositionsTable } from "../components/Tables";
 import { useBot } from "../hooks/BotContext";
@@ -464,6 +465,7 @@ export function Overview() {
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+      <PriceToBeatBar className="xl:col-span-12" />
       <MarketPanel />
       <AccountPanel />
 

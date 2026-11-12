@@ -11,6 +11,11 @@ export function fmtUsd(value: number | null | undefined, digits = 2): string {
   return `${value < 0 ? "-" : ""}$${Math.abs(value).toFixed(digits)}`;
 }
 
+export function fmtUsdGrouped(value: number | null | undefined, digits = 2): string {
+  if (!isNum(value)) return "—";
+  return `$${value.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+}
+
 export function fmtSignedUsd(value: number | null | undefined, digits = 2): string {
   if (!isNum(value)) return "—";
   const sign = value > 0 ? "+" : value < 0 ? "-" : "";

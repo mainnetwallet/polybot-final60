@@ -17,6 +17,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB.as_posix()}"
 os.environ["LIVE_TRADING_ENABLED"] = "false"
 os.environ["POLYMARKET_GEO_VERIFIED"] = "false"
 os.environ["POLYMARKET_PRIVATE_KEY"] = ""
+os.environ["BTC_PRICE_ENABLED"] = "false"
 os.environ["DISCOVERY_REFRESH_SECONDS"] = "3600"
 os.environ["RESOLUTION_POLL_SECONDS"] = "3600"
 

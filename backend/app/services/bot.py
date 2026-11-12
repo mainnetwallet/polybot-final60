@@ -17,6 +17,7 @@ from app.database.models import AppState, Market, Order, Position, TriggerEvent,
 from app.database.session import session_scope
 from app.execution.base import ExecutionEngine
 from app.live_trading.engine import LiveExecutionEngine, LiveTradingUnavailable
+from app.market_data.btc_price import BtcPriceFeed
 from app.market_data.client import ClobMarketDataClient
 from app.market_discovery.service import MarketDiscovery, MarketMonitor
 from app.market_discovery.types import MarketInfo, ResolutionInfo
@@ -75,6 +76,7 @@ class TradingBot:
         self.discovery = MarketDiscovery(settings)
         self.monitor = MarketMonitor(self.discovery, settings, self._on_market)
         self.data = ClobMarketDataClient(settings, self._on_book)
+        self.btc = BtcPriceFeed(settings)
 
         self.paper_engine = PaperExecutionEngine(settings, self.data.book_for)
         self.live_engine = LiveExecutionEngine(settings, balance_hint=lambda: self._live_balance)
@@ -193,6 +195,7 @@ class TradingBot:
 
         await self.discovery.start()
         await self.data.start()
+        await self.btc.start()
         await self.monitor.start()
         self.logs.start()
         self._tasks = [
@@ -230,6 +233,7 @@ class TradingBot:
                 pass
         await self.monitor.stop()
         await self.data.stop()
+        await self.btc.stop()
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
         await self.orders.close()
@@ -248,6 +252,7 @@ class TradingBot:
             self._persist_market(market)
             self.monitor.track(market)
             self.data.set_market(market)
+            self.btc.set_market(market)
             if self._mode == "live":
                 await self.live_engine.prewarm(
                     [market.up_token_id, market.down_token_id], market.market_id
@@ -277,6 +282,7 @@ class TradingBot:
                 self._snapshot_unrealized(previous.market_id)
                 self._market = None
                 self.data.set_market(None)
+                self.btc.set_market(None)
                 self._evaluation = None
                 if previous.market_id not in self._market_finalized:
                     await self.orders.finalize_market(previous.market_id, self._mode, "market closed")
@@ -1284,6 +1290,7 @@ class TradingBot:
             "open_orders": order_rows,
             "last_order": self._last_order,
             "market_data": self.data.status,
+            "btc": self.btc.snapshot(market),
             "live": self.live_readiness(),
             "config": {
                 **config.to_public_dict(),

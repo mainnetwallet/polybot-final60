@@ -110,6 +110,18 @@ export interface LiveReadiness {
   balance: number | null;
 }
 
+export interface BtcState {
+  price: number | null;
+  price_to_beat: number | null;
+  price_to_beat_source: string | null;
+  diff: number | null;
+  age_ms: number | null;
+  stale: boolean;
+  connected: boolean;
+  enabled: boolean;
+  last_error: string | null;
+}
+
 export interface Snapshot {
   server_time: string;
   bot: {
@@ -132,6 +144,7 @@ export interface Snapshot {
     last_message_ms: number | null;
     last_error: string | null;
   };
+  btc?: BtcState;
   live: LiveReadiness;
   config: Record<string, number | string | boolean | null>;
 }
