@@ -130,7 +130,7 @@ def test_official_price_to_beat_and_gap():
     assert round(snap["diff"], 2) == 39.5
 
 
-async def test_price_to_beat_comes_from_gamma_event_metadata_no_fallback():
+async def test_price_to_beat_comes_from_gamma_event_metadata_first():
     start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
     market = _market(start)
     feed = BtcPriceFeed(Settings())
@@ -138,19 +138,26 @@ async def test_price_to_beat_comes_from_gamma_event_metadata_no_fallback():
     # Gamma publishes the TWAP-based price to beat; no other endpoint is consulted
     feed._http = _FakeHttp({"/events": [{"eventMetadata": {"priceToBeat": 70_123.45}}], "crypto-price": {"openPrice": 70_222.0}})
     assert await feed._fetch_open_price(market) == (70_123.45, "polymarket")
-    assert not any("crypto-price" in url for url in feed._http.calls)
+    assert not any("crypto-price" in url for url in feed._http.calls)  # Gamma answered: site endpoint untouched
 
     # metadata as a JSON string / on the market object / numeric string are all accepted
     feed._http = _FakeHttp({"/events": [{"markets": [{"eventMetadata": json.dumps({"priceToBeat": "70123.5"})}]}]})
     assert await feed._fetch_open_price(market) == (70_123.5, "polymarket")
 
-    # not published yet: nothing is shown, no substitution
+    # Gamma not published, no RTDS tick at the start: the website endpoint is the last resort
     feed._http = _FakeHttp({"/events": [{"eventMetadata": {"priceToBeat": None}}], "crypto-price": {"openPrice": 70_222.0}})
     assert await feed._fetch_open_price(market) is None
-    assert feed.snapshot(market)["price_to_beat"] is None
-    assert feed.snapshot(market)["price_to_beat_error"]
+    snap = feed.snapshot(market)
+    assert snap["price_to_beat"] == 70_222.0 and snap["price_to_beat_source"] == "polymarket-site"
 
-    feed._http = _FakeHttp({"/events": RuntimeError("down")})
+    # nothing anywhere: shown as missing with the reasons, no substitution
+    feed = BtcPriceFeed(Settings())
+    feed._http = _FakeHttp({"/events": [{"eventMetadata": {"priceToBeat": None}}], "crypto-price": {}})
+    assert await feed._fetch_open_price(market) is None
+    assert feed.snapshot(market)["price_to_beat"] is None
+    assert "gamma" in feed.snapshot(market)["price_to_beat_error"] and "site" in feed.snapshot(market)["price_to_beat_error"]
+
+    feed._http = _FakeHttp({"/events": RuntimeError("down"), "crypto-price": RuntimeError("down")})
     assert await feed._fetch_open_price(market) is None
     assert "down" in feed.snapshot(market)["price_to_beat_error"]
 

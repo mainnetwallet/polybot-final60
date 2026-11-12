@@ -37,6 +37,24 @@ async def check_gamma(settings: Settings) -> None:
             print(f"  ERROR {type(exc).__name__}: {exc}")
 
 
+async def check_site(settings: Settings) -> None:
+    now = int(time.time())
+    start = now - now % 300
+    from datetime import datetime, timezone
+
+    f = lambda t: datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"  # noqa: E731
+    print(f"== website open-price endpoint: {settings.crypto_price_api_url}")
+    async with httpx.AsyncClient(timeout=8, headers=BROWSER_HEADERS, follow_redirects=True) as http:
+        try:
+            r = await http.get(
+                settings.crypto_price_api_url,
+                params={"symbol": "BTC", "eventStartTime": f(start), "variant": "fiveminute", "endDate": f(start + 300)},
+            )
+            print(f"  HTTP {r.status_code}  body: {r.text[:300]}")
+        except Exception as exc:
+            print(f"  ERROR {type(exc).__name__}: {exc}")
+
+
 async def check_ws(settings: Settings, mode: int, seconds: float = 10.0) -> None:
     feed = BtcPriceFeed(settings)
     print(f"== RTDS topic {"crypto_prices_twap_sixty"} mode {mode} (filtered={mode >= 2}, origin={mode % 2 == 1})")
@@ -64,6 +82,7 @@ async def check_ws(settings: Settings, mode: int, seconds: float = 10.0) -> None
 async def main() -> None:
     settings = Settings()
     await check_gamma(settings)
+    await check_site(settings)
     for mode in range(4):
         await check_ws(settings, mode)
 

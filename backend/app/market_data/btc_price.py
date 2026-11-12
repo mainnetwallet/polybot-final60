@@ -92,6 +92,7 @@ class BtcPriceFeed:
         # recent RTDS TWAP60 ticks (ts_ms, price) and the window-start values read from them
         self._ticks: deque[tuple[int, float]] = deque(maxlen=TICK_HISTORY)
         self._rtds_opens: dict[str, tuple[float, str]] = {}
+        self._site_opens: dict[str, tuple[float, str]] = {}  # website endpoint, ranked below Gamma and RTDS
         self._http: httpx.AsyncClient | None = None
 
     # ------------------------------------------------------------------ public
@@ -140,7 +141,7 @@ class BtcPriceFeed:
         official = self._opens.get(market.market_id)
         if official is not None:
             return official
-        return self._rtds_open(market)
+        return self._rtds_open(market) or self._site_opens.get(market.market_id)
 
     def _rtds_open(self, market: MarketInfo) -> tuple[float, str] | None:
         """TWAP60 tick stamped at the window start (== Polymarket's price to beat), if we saw it."""
@@ -332,10 +333,55 @@ class BtcPriceFeed:
                 pass
 
     async def _fetch_open_price(self, market: MarketInfo) -> tuple[float, str] | None:
-        """Official price to beat for this window, or None until Polymarket publishes it."""
+        """Official price to beat for this window, or None until Polymarket publishes it.
+
+        Order: Gamma ``eventMetadata.priceToBeat`` (returned, replaces everything); otherwise the website's
+        own open-price endpoint is stored as a last resort for windows where the RTDS window-start tick
+        was missed (it never overrides the RTDS tick or Gamma).
+        """
         if self._http is None:
             return None
-        return await self._fetch_open_price_gamma(market)
+        gamma = await self._fetch_open_price_gamma(market)
+        if gamma is not None:
+            return gamma
+        gamma_error = self._beat_error
+        if self._rtds_open(market) is None and market.market_id not in self._site_opens:
+            site = await self._fetch_open_price_site(market)
+            if site is not None:
+                self._site_opens[market.market_id] = site
+                self._beat_error = None
+                logger.info("price to beat (site endpoint) %s = %s", market.slug, site[0])
+            else:
+                self._beat_error = f"{gamma_error}; {self._beat_error}"
+        return None
+
+    async def _fetch_open_price_site(self, market: MarketInfo) -> tuple[float, str] | None:
+        assert self._http is not None
+        variant = {300: "fiveminute", 900: "fifteen"}.get(int(market.duration_seconds))
+        if not variant:
+            self._beat_error = f"site: unsupported window length {int(market.duration_seconds)}s"
+            return None
+        error: str | None = None
+        for suffix in ("Z", ".000Z"):
+            start = market.window_start.strftime("%Y-%m-%dT%H:%M:%S") + suffix
+            end = market.window_end.strftime("%Y-%m-%dT%H:%M:%S") + suffix
+            try:
+                response = await self._http.get(
+                    self._settings.crypto_price_api_url,
+                    params={"symbol": "BTC", "eventStartTime": start, "variant": variant, "endDate": end},
+                )
+                response.raise_for_status()
+                data = response.json()
+                value = _to_float(data.get("openPrice")) if isinstance(data, dict) else None
+                if value is not None:
+                    return value, "polymarket-site"
+                error = "site: no openPrice yet"
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                error = f"site: {type(exc).__name__}: {exc}"
+        self._beat_error = error
+        return None
 
     async def _fetch_open_price_gamma(self, market: MarketInfo) -> tuple[float, str] | None:
         """``eventMetadata.priceToBeat`` of the event: the number the event page shows (TWAP60 at start)."""
