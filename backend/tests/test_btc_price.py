@@ -113,16 +113,30 @@ def test_official_price_to_beat_and_gap():
     assert round(snap["diff"], 2) == 39.5
 
 
-async def test_fetch_prefers_gamma_then_crypto_price():
+async def test_fetch_prefers_website_endpoint_then_gamma():
     start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
     market = _market(start)
     feed = BtcPriceFeed(Settings())
 
-    feed._http = _FakeHttp({"/events": [{"eventMetadata": {"priceToBeat": 70_123.45}}]})
-    assert await feed._fetch_open_price(market) == (70_123.45, "gamma")
-
-    feed._http = _FakeHttp({"/events": [{"eventMetadata": {}}], "crypto-price": {"openPrice": 70_222.0}})
+    both = {"/events": [{"eventMetadata": {"priceToBeat": 70_123.45}}], "crypto-price": {"openPrice": 70_222.0}}
+    feed._http = _FakeHttp(both)
     assert await feed._fetch_open_price(market) == (70_222.0, "polymarket")
+
+    feed._http = _FakeHttp({"/events": [{"eventMetadata": {"priceToBeat": 70_123.45}}], "crypto-price": {"openPrice": None}})
+    assert await feed._fetch_open_price(market) == (70_123.45, "gamma")
+    assert await feed._fetch_open_price(market, allow_gamma=False) is None
 
     feed._http = _FakeHttp({"/events": RuntimeError("down"), "crypto-price": RuntimeError("down")})
     assert await feed._fetch_open_price(market) is None
+
+
+def test_subscription_frames():
+    filtered = json.loads(BtcPriceFeed._subscribe_frame(0))
+    assert filtered["subscriptions"][0]["topic"] == "crypto_prices_chainlink"
+    assert json.loads(filtered["subscriptions"][0]["filters"]) == {"symbol": "btc/usd"}
+    unfiltered = json.loads(BtcPriceFeed._subscribe_frame(1))
+    assert "filters" not in unfiltered["subscriptions"][0]
+    feed = BtcPriceFeed(Settings())
+    feed.handle_message(_frame(5, 3000.0, symbol="eth/usd"))  # unfiltered stream: other symbols ignored
+    feed.handle_message(_frame(6, 71_111.0))
+    assert feed.latest == (6, 71_111.0)
