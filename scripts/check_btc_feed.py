@@ -43,7 +43,7 @@ async def check_price_to_beat(settings: Settings) -> None:
 
 async def check_ws(settings: Settings, mode: int, seconds: float = 10.0) -> None:
     feed = BtcPriceFeed(settings)
-    print(f"== RTDS mode {mode} (filtered={mode % 2 == 0}, origin={mode >= 2})")
+    print(f"== RTDS mode {mode} (filtered={mode >= 2}, origin={mode % 2 == 1})")
     try:
         async with feed._connect(mode) as ws:
             await ws.send(feed._subscribe_frame(mode))

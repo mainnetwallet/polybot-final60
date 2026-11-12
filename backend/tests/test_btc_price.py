@@ -134,14 +134,21 @@ async def test_fetch_uses_only_the_website_endpoint_no_fallback():
 
 
 def test_subscription_frames():
-    filtered = json.loads(BtcPriceFeed._subscribe_frame(0))
-    assert filtered["subscriptions"][0]["topic"] == "crypto_prices_chainlink"
-    assert json.loads(filtered["subscriptions"][0]["filters"]) == {"symbol": "btc/usd"}
-    unfiltered = json.loads(BtcPriceFeed._subscribe_frame(1))
-    assert "filters" not in unfiltered["subscriptions"][0]
-    assert "filters" in json.loads(BtcPriceFeed._subscribe_frame(2))["subscriptions"][0]
-    assert "filters" not in json.loads(BtcPriceFeed._subscribe_frame(3))["subscriptions"][0]
+    def sub(mode):
+        return json.loads(BtcPriceFeed._subscribe_frame(mode))["subscriptions"][0]
+
+    assert sub(0)["topic"] == "crypto_prices_chainlink" and "filters" not in sub(0)  # default: unfiltered
+    assert "filters" not in sub(1)
+    assert json.loads(sub(2)["filters"]) == {"symbol": "btc/usd"}
+    assert "filters" in sub(3)
     feed = BtcPriceFeed(Settings())
     feed.handle_message(_frame(5, 3000.0, symbol="eth/usd"))  # unfiltered stream: other symbols ignored
     feed.handle_message(_frame(6, 71_111.0))
     assert feed.latest == (6, 71_111.0)
+
+
+def test_history_batch_with_any_topic_label_is_parsed():
+    feed = BtcPriceFeed(Settings())
+    batch = {"payload": {"data": [{"timestamp": 1000, "value": 71_000.5}, {"timestamp": 2000, "value": 71_001.5}], "symbol": "btc/usd"}}
+    feed.handle_message(json.dumps(batch))
+    assert feed.latest == (2000, 71_001.5)

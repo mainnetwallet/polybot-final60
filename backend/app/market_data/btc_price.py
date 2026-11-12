@@ -43,7 +43,9 @@ BROWSER_HEADERS = {
 }
 # Every variant is the same official RTDS Chainlink BTC/USD stream; they only differ in how the
 # connection is opened, so a server/proxy quirk on one form cannot leave the price blank.
-#   mode: 0 server-side btc/usd filter, 1 whole topic filtered client-side, 2/3 same but sending Origin
+#   mode: 0 whole topic filtered client-side (verified live: streams every second), 1 same + Origin,
+#         2 server-side btc/usd filter, 3 same + Origin (the server-side filter only returned one
+#         history batch and no live updates when checked)
 _WS_VARIANT_COUNT = 4
 
 
@@ -164,9 +166,8 @@ class BtcPriceFeed:
             return
         if not isinstance(message, dict):
             return
-        topic = str(message.get("topic") or "")
-        if topic and "chainlink" not in topic:
-            return
+        # Only the Chainlink topic is ever subscribed, so the topic string is not checked: the
+        # history batch can carry a different type/topic label than live updates.
         payload = message.get("payload")
         if not isinstance(payload, dict):
             return
@@ -197,10 +198,10 @@ class BtcPriceFeed:
 
     @staticmethod
     def _subscribe_frame(mode: int) -> str:
-        """RTDS subscription frame. Even modes filter btc/usd server-side; odd modes subscribe to
-        the whole Chainlink topic and rely on the client-side symbol filter in handle_message."""
+        """RTDS subscription frame. Modes 0/1 subscribe to the whole Chainlink topic and rely on the
+        client-side btc symbol filter in handle_message; modes 2/3 filter btc/usd server-side."""
         subscription: dict = {"topic": "crypto_prices_chainlink", "type": "*"}
-        if mode % 2 == 0:
+        if mode >= 2:
             subscription["filters"] = json.dumps({"symbol": "btc/usd"})
         return json.dumps({"action": "subscribe", "subscriptions": [subscription]})
 
@@ -213,7 +214,7 @@ class BtcPriceFeed:
             open_timeout=10,
             max_size=2**22,
         )
-        if mode >= 2:
+        if mode % 2 == 1:
             kwargs["origin"] = "https://polymarket.com"
         return websockets.connect(self._settings.rtds_ws_url, **kwargs)
 
