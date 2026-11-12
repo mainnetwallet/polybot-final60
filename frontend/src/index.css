@@ -1,0 +1,234 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --color-ink-950: #070a0f;
+  --color-ink-900: #0b1017;
+  --color-ink-850: #0d141d;
+  --color-ink-800: #111a25;
+  --color-line: #1c2836;
+  --color-up: #35e0a1;
+  --color-down: #ff5f7e;
+  --color-amber: #f5b544;
+  --color-sky: #5cc8ff;
+  --color-muted: #8a9bb0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1100px 520px at 82% -8%, rgba(53, 224, 161, 0.07), transparent 62%),
+    radial-gradient(900px 500px at 8% 108%, rgba(92, 200, 255, 0.05), transparent 60%),
+    #070a0f;
+  color: #e6edf5;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgba(53, 224, 161, 0.28);
+}
+
+.panel {
+  background: linear-gradient(180deg, rgba(17, 26, 37, 0.92), rgba(11, 16, 23, 0.92));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+  box-shadow: 0 18px 40px -28px rgba(0, 0, 0, 0.9);
+}
+
+.panel-hover:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.hairline {
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.label {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #74859b;
+  font-weight: 600;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #dbe6f2;
+  background: rgba(255, 255, 255, 0.03);
+  transition: all 0.15s ease;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: linear-gradient(180deg, #3ee8a8, #25c187);
+  border-color: transparent;
+  color: #04140d;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #55f2b7, #2dd092);
+}
+
+.btn-danger {
+  background: rgba(255, 95, 126, 0.12);
+  border-color: rgba(255, 95, 126, 0.35);
+  color: #ff8ba2;
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: #8a9bb0;
+}
+
+.input {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(7, 10, 15, 0.7);
+  padding: 9px 12px;
+  color: #e6edf5;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.input:focus {
+  border-color: rgba(53, 224, 161, 0.55);
+  box-shadow: 0 0 0 3px rgba(53, 224, 161, 0.08);
+}
+
+.input.mono {
+  font-family: var(--font-mono);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.scrollbar::-webkit-scrollbar-thumb {
+  background: #1e2a39;
+  border-radius: 8px;
+}
+
+.scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+table.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+table.grid th {
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #74859b;
+  font-weight: 600;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  white-space: nowrap;
+}
+
+table.grid td {
+  padding: 11px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  color: #c3d0de;
+  white-space: nowrap;
+}
+
+table.grid tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.glow-up {
+  box-shadow: 0 0 0 1px rgba(53, 224, 161, 0.28), 0 0 34px -12px rgba(53, 224, 161, 0.5);
+}
+
+.glow-down {
+  box-shadow: 0 0 0 1px rgba(255, 95, 126, 0.28), 0 0 34px -12px rgba(255, 95, 126, 0.45);
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+
+.live-dot {
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rise {
+  animation: rise 0.28s ease-out both;
+}
