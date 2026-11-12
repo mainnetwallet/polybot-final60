@@ -196,6 +196,29 @@ class Portfolio:
             total += position.size * mark - position.cost_basis - position.fees
         return round(total, 10)
 
+    def snapshot_unrealized(
+        self,
+        session: Session,
+        mode: str,
+        market_id: str,
+        marks: dict[tuple[str, str], float],
+    ) -> None:
+        """Persist bid-marked PnL for open positions of a market that has just ended."""
+        positions = session.execute(
+            select(Position).where(
+                Position.mode == mode,
+                Position.market_id == market_id,
+                Position.status == "open",
+            )
+        ).scalars().all()
+        for position in positions:
+            mark = marks.get((position.market_id, position.side))
+            if mark is None:
+                continue
+            position.unrealized_pnl = round(
+                position.size * mark - position.cost_basis - position.fees, 10
+            )
+
     def open_positions(self, session: Session, mode: str) -> list[Position]:
         return list(
             session.execute(

@@ -105,6 +105,7 @@ class TradingBot:
         self._background_tasks: set[asyncio.Task] = set()
         self._shutdown = False
         self._market_finalized: set[str] = set()
+        self._last_marks: dict[tuple[str, str], float] = {}
         self._resolution_pending_logged: set[str] = set()
         self._last_resolution_poll = 0.0
         self._last_live_reconcile = 0.0
@@ -241,6 +242,7 @@ class TradingBot:
             previous = self._market
             self._market = market
             if previous is not None and previous.market_id != market.market_id:
+                self._snapshot_unrealized(previous.market_id)
                 await self.orders.finalize_market(previous.market_id, self._mode, "market changed")
             self._persist_market(market)
             self.monitor.track(market)
@@ -270,6 +272,8 @@ class TradingBot:
         else:
             previous = self._market
             if previous is not None:
+                self._marks()
+                self._snapshot_unrealized(previous.market_id)
                 self._market = None
                 self.data.set_market(None)
                 self._evaluation = None
@@ -461,7 +465,24 @@ class TradingBot:
             book = self.data.book_for(side)
             if book is not None and book.best_bid is not None:
                 marks[(market.market_id, side)] = book.best_bid
+        # remember the latest bids so positions can still be valued after the window ends
+        self._last_marks.update(marks)
         return marks
+
+    def _snapshot_unrealized(self, market_id: str) -> None:
+        """Freeze the last known bid-based PnL on positions whose window just ended.
+
+        Once the market is no longer tracked there are no live marks, so a position
+        waiting for settlement would otherwise show $0.00 unrealized.
+        """
+        marks = {key: value for key, value in self._last_marks.items() if key[0] == market_id}
+        if not marks:
+            return
+        try:
+            with session_scope() as session:
+                self.portfolio.snapshot_unrealized(session, self._mode, market_id, marks)
+        except Exception as exc:  # display-only; must never break the market lifecycle
+            logger.warning("unrealized snapshot failed: %s", exc)
 
     # ------------------------------------------------------------------
     async def _state_broadcast_loop(self) -> None:
@@ -765,6 +786,8 @@ class TradingBot:
             return
         if market.market_id in self._market_finalized:
             return
+        self._marks()  # refresh last known bids before the market is dropped
+        self._snapshot_unrealized(market.market_id)
         await self.orders.finalize_market(market.market_id, self._mode, "market expired")
         self._market_finalized.add(market.market_id)
         self.logs.log(

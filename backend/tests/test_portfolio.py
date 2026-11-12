@@ -182,3 +182,26 @@ def test_reset_all_wipes_every_table_and_recreates_accounts():
         assert session.query(Account).count() == 2
         assert session.get(AppState, 1).status == "STOPPED"
         assert portfolio.balance(session, "paper") == 10.0
+
+
+def test_snapshot_unrealized_keeps_pnl_for_settling_position():
+    stack = build_stack()
+    portfolio = stack["portfolio"]
+    with session_scope() as session:
+        _fill(portfolio, session, "paper", "market-ended")  # 5 sh @ 0.80, fee 0.05
+        # market already dropped from tracking: no live marks, only the stored value
+        assert portfolio.unrealized_pnl(session, "paper", {}) == 0.0
+
+        portfolio.snapshot_unrealized(
+            session, "paper", "market-ended", {("market-ended", "UP"): 0.99}
+        )
+
+        # 5 * 0.99 - 4.0 - 0.05 = 0.90
+        assert portfolio.unrealized_pnl(session, "paper", {}) == 0.9
+        # other markets are untouched
+        _fill(portfolio, session, "paper", "market-other", "DOWN")
+        portfolio.snapshot_unrealized(
+            session, "paper", "market-ended", {("market-ended", "UP"): 0.50}
+        )
+        positions = {p.market_id: p for p in portfolio.open_positions(session, "paper")}
+        assert positions["market-other"].unrealized_pnl == 0.0
