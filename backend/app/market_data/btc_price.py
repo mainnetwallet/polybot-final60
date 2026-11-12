@@ -1,10 +1,14 @@
 """BTC/USD reference price feed and the per-window "price to beat".
 
-Polymarket's 5-minute BTC markets resolve UP when the Chainlink BTC/USD price at the
-window end is >= the price at the window start (the "price to beat"). Only official
-Polymarket data is used here, with no estimates:
-  * current price  -> Chainlink BTC/USD stream from Polymarket's real-time data socket (RTDS)
-  * price to beat  -> the crypto-price endpoint the Polymarket website itself calls
+Polymarket's 5-minute BTC markets resolve UP when the Chainlink BTC/USD *60-second TWAP* at the
+window end is >= the same TWAP at the window start (the "price to beat"); this has been the rule
+since 2026-08-14 (docs.polymarket.com changelog). The plain spot price is NOT what the site shows.
+Only official Polymarket data is used here, with no estimates:
+  * current price  -> Chainlink BTC/USD 60s TWAP stream from Polymarket's real-time data socket (RTDS,
+                      topic ``crypto_prices_twap_sixty``)
+  * price to beat  -> the event's ``eventMetadata.priceToBeat`` from the Gamma API (the value the
+                      Polymarket event page displays); the old website crypto-price endpoint is only
+                      used if ``PRICE_TO_BEAT_SOURCE=crypto-price`` is set explicitly
 No fallback values: if the official value is not available yet it is shown as missing
 (with the reason in `last_error` / `price_to_beat_error`), never guessed or substituted.
 
@@ -41,12 +45,13 @@ BROWSER_HEADERS = {
     "Origin": "https://polymarket.com",
     "Referer": "https://polymarket.com/",
 }
-# Every variant is the same official RTDS Chainlink BTC/USD stream; they only differ in how the
+# Every variant is the same official RTDS Chainlink BTC/USD (TWAP60) stream; they only differ in how the
 # connection is opened, so a server/proxy quirk on one form cannot leave the price blank.
 #   mode: 0 whole topic filtered client-side (verified live: streams every second), 1 same + Origin,
 #         2 server-side btc/usd filter, 3 same + Origin (the server-side filter only returned one
 #         history batch and no live updates when checked)
 _WS_VARIANT_COUNT = 4
+DEFAULT_TOPIC = "crypto_prices_twap_sixty"  # Chainlink BTC/USD 60s TWAP, the series Polymarket settles on
 
 
 def _now_ms() -> int:
@@ -141,6 +146,7 @@ class BtcPriceFeed:
             "stale": age_ms is None or age_ms > STALE_AFTER_MS,
             "connected": self._connected,
             "enabled": self._settings.btc_price_enabled,
+            "price_source": "chainlink-twap60" if self._settings.rtds_price_topic == DEFAULT_TOPIC else self._settings.rtds_price_topic,
             "last_error": self._last_error,
             "ticks": self._messages,
             "reconnects": self._reconnects,
@@ -197,10 +203,10 @@ class BtcPriceFeed:
         self._record(ts_ms, price)
 
     @staticmethod
-    def _subscribe_frame(mode: int) -> str:
-        """RTDS subscription frame. Modes 0/1 subscribe to the whole Chainlink topic and rely on the
+    def _subscribe_frame(mode: int, topic: str = DEFAULT_TOPIC) -> str:
+        """RTDS subscription frame. Modes 0/1 subscribe to the whole topic and rely on the
         client-side btc symbol filter in handle_message; modes 2/3 filter btc/usd server-side."""
-        subscription: dict = {"topic": "crypto_prices_chainlink", "type": "*"}
+        subscription: dict = {"topic": topic, "type": "*"}
         if mode >= 2:
             subscription["filters"] = json.dumps({"symbol": "btc/usd"})
         return json.dumps({"action": "subscribe", "subscriptions": [subscription]})
@@ -225,7 +231,7 @@ class BtcPriceFeed:
             got_tick = False
             try:
                 async with self._connect(mode) as ws:
-                    await ws.send(self._subscribe_frame(mode))
+                    await ws.send(self._subscribe_frame(mode, self._settings.rtds_price_topic))
                     self._connected = True
                     logger.info("btc price ws connected (mode %s)", mode)
                     opened = time.monotonic()
@@ -293,9 +299,52 @@ class BtcPriceFeed:
                 pass
 
     async def _fetch_open_price(self, market: MarketInfo) -> tuple[float, str] | None:
-        """Official value from the crypto-price endpoint the Polymarket website calls."""
+        """Official price to beat for this window, or None until Polymarket publishes it."""
         if self._http is None:
             return None
+        if self._settings.price_to_beat_source == "crypto-price":
+            return await self._fetch_open_price_website(market)
+        return await self._fetch_open_price_gamma(market)
+
+    async def _fetch_open_price_gamma(self, market: MarketInfo) -> tuple[float, str] | None:
+        """``eventMetadata.priceToBeat`` of the event: the number the event page shows (TWAP60 at start)."""
+        assert self._http is not None
+        slug = market.event_slug or market.slug
+        try:
+            response = await self._http.get(
+                f"{self._settings.gamma_base_url.rstrip('/')}/events",
+                params={"slug": slug},
+            )
+            response.raise_for_status()
+            data = response.json()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._beat_error = f"gamma: {type(exc).__name__}: {exc}"
+            logger.warning("price-to-beat unavailable: %s", self._beat_error)
+            return None
+        events = data if isinstance(data, list) else [data]
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            holders = [event] + [m for m in (event.get("markets") or []) if isinstance(m, dict)]
+            for holder in holders:
+                metadata = holder.get("eventMetadata")
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except json.JSONDecodeError:
+                        metadata = None
+                if isinstance(metadata, dict):
+                    value = _to_float(metadata.get("priceToBeat"))
+                    if value is not None:
+                        return value, "polymarket"
+        self._beat_error = "gamma: priceToBeat not published yet"
+        return None
+
+    async def _fetch_open_price_website(self, market: MarketInfo) -> tuple[float, str] | None:
+        """Legacy source: the crypto-price endpoint the website calls (may not be TWAP-based)."""
+        assert self._http is not None
         variant = {300: "fiveminute", 900: "fifteen"}.get(int(market.duration_seconds))
         if not variant:
             self._beat_error = f"unsupported window length {int(market.duration_seconds)}s"

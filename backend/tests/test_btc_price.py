@@ -113,31 +113,51 @@ def test_official_price_to_beat_and_gap():
     assert round(snap["diff"], 2) == 39.5
 
 
-async def test_fetch_uses_only_the_website_endpoint_no_fallback():
+async def test_price_to_beat_comes_from_gamma_event_metadata_no_fallback():
     start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
     market = _market(start)
     feed = BtcPriceFeed(Settings())
 
-    both = {"/events": [{"eventMetadata": {"priceToBeat": 70_123.45}}], "crypto-price": {"openPrice": 70_222.0}}
-    feed._http = _FakeHttp(both)
-    assert await feed._fetch_open_price(market) == (70_222.0, "polymarket")
+    # Gamma publishes the TWAP-based price to beat; the website endpoint is NOT consulted
+    feed._http = _FakeHttp({"/events": [{"eventMetadata": {"priceToBeat": 70_123.45}}], "crypto-price": {"openPrice": 70_222.0}})
+    assert await feed._fetch_open_price(market) == (70_123.45, "polymarket")
+    assert not any("crypto-price" in url for url in feed._http.calls)
 
-    # Gamma has a value but the official endpoint does not: nothing is shown, no substitution
-    feed._http = _FakeHttp({"/events": [{"eventMetadata": {"priceToBeat": 70_123.45}}], "crypto-price": {"openPrice": None}})
+    # metadata as a JSON string / on the market object / numeric string are all accepted
+    feed._http = _FakeHttp({"/events": [{"markets": [{"eventMetadata": json.dumps({"priceToBeat": "70123.5"})}]}]})
+    assert await feed._fetch_open_price(market) == (70_123.5, "polymarket")
+
+    # not published yet: nothing is shown, no substitution
+    feed._http = _FakeHttp({"/events": [{"eventMetadata": {"priceToBeat": None}}], "crypto-price": {"openPrice": 70_222.0}})
     assert await feed._fetch_open_price(market) is None
     assert feed.snapshot(market)["price_to_beat"] is None
     assert feed.snapshot(market)["price_to_beat_error"]
 
-    feed._http = _FakeHttp({"crypto-price": RuntimeError("down")})
+    feed._http = _FakeHttp({"/events": RuntimeError("down")})
     assert await feed._fetch_open_price(market) is None
     assert "down" in feed.snapshot(market)["price_to_beat_error"]
+
+
+async def test_website_endpoint_only_when_explicitly_selected():
+    start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
+    market = _market(start)
+    feed = BtcPriceFeed(Settings(price_to_beat_source="crypto-price"))
+    feed._http = _FakeHttp({"/events": [{"eventMetadata": {"priceToBeat": 70_123.45}}], "crypto-price": {"openPrice": 70_222.0}})
+    assert await feed._fetch_open_price(market) == (70_222.0, "polymarket")
+
+
+def test_current_price_stream_is_the_twap60_topic():
+    assert Settings().rtds_price_topic == "crypto_prices_twap_sixty"
+    sub = json.loads(BtcPriceFeed._subscribe_frame(0))["subscriptions"][0]
+    assert sub["topic"] == "crypto_prices_twap_sixty"
+    assert BtcPriceFeed(Settings()).snapshot(None)["price_source"] == "chainlink-twap60"
 
 
 def test_subscription_frames():
     def sub(mode):
         return json.loads(BtcPriceFeed._subscribe_frame(mode))["subscriptions"][0]
 
-    assert sub(0)["topic"] == "crypto_prices_chainlink" and "filters" not in sub(0)  # default: unfiltered
+    assert sub(0)["topic"] == "crypto_prices_twap_sixty" and "filters" not in sub(0)  # default: unfiltered
     assert "filters" not in sub(1)
     assert json.loads(sub(2)["filters"]) == {"symbol": "btc/usd"}
     assert "filters" in sub(3)

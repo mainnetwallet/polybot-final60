@@ -114,6 +114,7 @@ export interface BtcState {
   price: number | null;
   price_to_beat: number | null;
   price_to_beat_source: string | null;
+  price_source?: string | null;
   diff: number | null;
   age_ms: number | null;
   stale: boolean;
