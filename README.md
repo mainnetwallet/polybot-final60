@@ -52,16 +52,24 @@ Three scripts control the app: `setup.bat` (one-time install), `start.bat` (star
 
 Copy-paste commands (PowerShell):
 
+First-time install (once, after `git clone`):
+
 ```powershell
-cd .\polybot-final60          # go into the project folder (after git clone)
-git pull
+cd .\polybot-final60          # go into the project folder
 .\setup.bat                   # one-time install
 ```
 
-Start and stop (run these whenever you need them):
+Update and start (every time):
 
 ```powershell
-.\start.bat                   # start backend + dashboard
+cd .\polybot-final60          # go into the project folder (after git clone)
+git pull
+.\start.bat
+```
+
+Stop:
+
+```powershell
 .\stop.bat                    # stop everything
 ```
 
