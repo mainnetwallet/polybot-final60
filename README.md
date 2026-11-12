@@ -25,13 +25,11 @@ Paper trading is the default. Live trading is implemented but disabled by defaul
 
 ## Quick start
 
-```text
-setup.bat     one-time install (Python venv, dependencies, .env, database)
-start.bat     start backend + dashboard and open the dashboard
-stop.bat      stop both services
-```
+Three scripts control the app: `setup.bat` (one-time install), `start.bat` (start backend + dashboard), `stop.bat` (stop both). In PowerShell run them as `.\setup.bat`, `.\start.bat`, `.\stop.bat`.
 
 `start.bat` runs setup automatically if `.venv`, `frontend\node_modules`, or `.env` is missing.
+
+New to the project? Follow the [Step-by-step guide (PowerShell)](#step-by-step-guide-powershell) below: clone, first setup, `.env`, start, and how to run it the second time.
 
 URLs:
 
@@ -40,6 +38,157 @@ URLs:
 - API docs: `http://127.0.0.1:8000/docs`
 
 The launcher refuses to start a second copy when ports 8000/5173 are already served by this app, and fails clearly when an unrelated process holds a port. PIDs are tracked in `logs\pids`.
+
+---
+
+## Step-by-step guide (PowerShell)
+
+Open **PowerShell** (Start menu > type `PowerShell`). All commands below are run there. In PowerShell a `.bat` file must be started with `.\` in front, for example `.\setup.bat`.
+
+### 0. Prerequisites (one time)
+
+Check that the tools are installed and on PATH:
+
+```powershell
+git --version
+python --version     # 3.11+ (3.12+ recommended)
+node --version       # 20.19+ or 22.12+
+```
+
+If one of them is missing, install it, then **close and reopen PowerShell** so PATH is refreshed.
+
+### 1. Clone the repository
+
+```powershell
+cd $HOME\Documents
+git clone https://github.com/mainnetwallet/polybot-final60.git
+cd polybot-final60
+```
+
+- If the repository is private, Git opens a browser/login window the first time (Git Credential Manager). Sign in with your GitHub account, or paste a Personal Access Token when it asks for a password.
+- Do **not** put your token inside the clone URL. It would be saved in `.git\config` in plain text.
+
+### 2. First-time setup
+
+```powershell
+.\setup.bat
+```
+
+Setup does everything in one go and is safe to run again:
+
+1. checks Python and Node.js versions
+2. creates the `.venv` virtual environment
+3. installs backend packages (`backend\requirements.txt`) and dashboard packages (`npm install`)
+4. creates `.env` from `.env.example` (only if `.env` does not exist yet)
+5. creates the `data\` and `logs\` folders and initializes the SQLite database
+
+Wait for `Setup complete.` before going to the next step.
+
+### 3. Set up `.env`
+
+`.env` is created automatically by setup. Open it in Notepad:
+
+```powershell
+notepad .env
+```
+
+**Paper mode (default) needs no edits.** You can run the bot as it is and it will only simulate trades.
+
+Common things to change:
+
+| Goal | Edit in `.env` |
+| --- | --- |
+| Bigger/smaller paper trades | `TRADE_AMOUNT_USDC=5.0` |
+| Paper bankroll | `PAPER_STARTING_BALANCE=10.0` |
+| Daily loss stop / profit target | `MAX_DAILY_LOSS`, `DAILY_PROFIT_TARGET` |
+| Trigger level | `TRIGGER_THRESHOLD=0.80` |
+
+To enable **live trading** (real money, optional, read the Risk warning first), all of these must be set:
+
+```text
+LIVE_TRADING_ENABLED=true
+POLYMARKET_GEO_VERIFIED=true          # only after you confirmed your jurisdiction is eligible
+POLYMARKET_PRIVATE_KEY=<your key>
+POLYMARKET_FUNDER_ADDRESS=<your funder address>
+POLYMARKET_SIGNATURE_TYPE=0           # 0 = EOA, 1 = email/magic proxy, 2 = browser proxy
+POLYMARKET_API_KEY=<optional, if you have one>
+POLYMARKET_API_SECRET=<optional>
+POLYMARKET_API_PASSPHRASE=<optional>
+```
+
+Rules for `.env`:
+
+- Save the file, then **restart** the bot (`.\stop.bat`, then `.\start.bat`). Changes are only read at startup.
+- `.env` is listed in `.gitignore`, so it is never committed. Never share it or paste your private key anywhere.
+- Write values without quotes and without spaces around `=`.
+- Even with the keys set, going live still requires the dashboard confirmation phrase `GO LIVE`.
+
+### 4. Start the bot
+
+```powershell
+.\start.bat
+```
+
+This starts the API (port 8000) and the dashboard (port 5173) and opens the dashboard in your browser: `http://127.0.0.1:5173`.
+
+The bot always starts in the **STOPPED** state. Open the dashboard and start it from there when you are ready. The API and dashboard run as hidden background processes, so you can close the PowerShell window and the dashboard tab; they keep running until you run `.\stop.bat`. Logs are written to the `logs\` folder.
+
+To start without opening the browser:
+
+```powershell
+.\start.bat -NoBrowser
+```
+
+### 5. Running it a second time (and every time after)
+
+Setup is **not** needed again. Next time you just do:
+
+```powershell
+cd $HOME\Documents\polybot-final60
+.\start.bat
+```
+
+What to know about repeat runs:
+
+- Your orders, positions, analytics, and settings overrides are kept in `data\polymarket_bot.db`, so they are still there after a restart.
+- The bot comes back **STOPPED**. Start it again from the dashboard.
+- If the app is already running, `start.bat` detects it and does not start a second copy.
+- `start.bat` runs setup by itself if `.venv`, `frontend\node_modules`, or `.env` is missing.
+- Stop everything when you are done:
+
+```powershell
+.\stop.bat
+```
+
+### 6. Updating to the latest version
+
+```powershell
+cd $HOME\Documents\polybot-final60
+.\stop.bat
+git pull
+.\setup.bat      # re-installs dependencies if they changed; keeps your .env and database
+.\start.bat
+```
+
+### 7. Using the dashboard (quick guide)
+
+1. Open `http://127.0.0.1:5173`.
+2. **Overview**: check that the market is found, the feed is healthy, and the UP/DOWN asks are updating.
+3. **Settings**: review the mode (it should say PAPER), trigger, trade amount, and risk limits.
+4. Start the bot. During the first 4 minutes of each 5-minute market nothing happens by design. In the final 60 seconds it buys a side when its best ask reaches the trigger.
+5. **Trading** shows orders, fills, and positions; **Strategy** shows why each trigger was taken or blocked; **Analytics** shows PnL and win rate; **Logs** shows live server logs.
+6. Stop the bot from the dashboard before changing mode or resetting paper data.
+
+### 8. Clean reinstall (if something is badly broken)
+
+```powershell
+.\stop.bat
+Remove-Item -Recurse -Force .venv, frontend\node_modules
+.\setup.bat
+.\start.bat
+```
+
+This keeps `.env` and `data\polymarket_bot.db`. To clear paper history only, use **Settings > Paper reset** in the dashboard (bot must be stopped); live records are not touched.
 
 ---
 
@@ -227,6 +376,14 @@ These are paper-execution results. See limitations below.
 ---
 
 ## Troubleshooting
+
+**`setup.bat` / `start.bat` is not recognized (PowerShell)** - PowerShell does not run files from the current folder without a prefix. Use `.\setup.bat`, `.\start.bat`, `.\stop.bat`.
+
+**`python` / `node` / `git` is not recognized** - install it, then close and reopen PowerShell so PATH updates. Re-run `.\setup.bat`.
+
+**My `.env` change had no effect** - `.env` is only read at startup. Run `.\stop.bat`, then `.\start.bat`.
+
+**Dashboard opens but the bot is STOPPED after a restart** - this is intended. Restart recovery always keeps the bot stopped; start it from the dashboard.
 
 **"Port 8000/5173 is already in use"** - close the other process, or run `stop.bat` if it is a previous copy of this app.
 
