@@ -187,3 +187,25 @@ def test_history_batch_with_any_topic_label_is_parsed():
     batch = {"payload": {"data": [{"timestamp": 1000, "value": 71_000.5}, {"timestamp": 2000, "value": 71_001.5}], "symbol": "btc/usd"}}
     feed.handle_message(json.dumps(batch))
     assert feed.latest == (2000, 71_001.5)
+
+
+def test_price_to_beat_is_the_first_tick_at_or_after_the_window_start_not_the_nearest():
+    start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
+    start_ms = int(start.replace(tzinfo=timezone.utc).timestamp() * 1000)
+    feed = BtcPriceFeed(Settings())
+    market = _market(start)
+    feed.handle_message(_frame(start_ms - 100, 71_793.42))  # nearest, but stamped before the start
+    assert feed.snapshot(market)["price_to_beat"] is None  # waits for the at/after-start tick
+    feed.handle_message(_frame(start_ms + 600, 71_794.38))
+    feed.handle_message(_frame(start_ms + 1_600, 71_795.0))
+    assert feed.snapshot(market)["price_to_beat"] == 71_794.38
+
+
+def test_price_to_beat_falls_back_to_nearest_tick_when_the_start_tick_was_missed():
+    start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
+    start_ms = int(start.replace(tzinfo=timezone.utc).timestamp() * 1000)
+    feed = BtcPriceFeed(Settings())
+    market = _market(start)
+    feed.handle_message(_frame(start_ms - 300, 71_000.0))
+    feed.handle_message(_frame(start_ms + 2_000, 71_010.0))  # stream moved on without an at/after-start tick
+    assert feed.snapshot(market)["price_to_beat"] == 71_000.0

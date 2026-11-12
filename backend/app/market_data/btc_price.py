@@ -150,11 +150,21 @@ class BtcPriceFeed:
         if cached is not None:
             return cached
         start_ms = int(market.window_start.replace(tzinfo=timezone.utc).timestamp() * 1000)
+        # The price to beat is the TWAP60 value stamped AT the window start: the first tick at or after it.
+        # (Taking the nearest tick could pick the one just before the start, ~1 s older = about $1 off.)
         best: tuple[int, float] | None = None
         for ts_ms, price in self._ticks:
-            distance = abs(ts_ms - start_ms)
-            if distance <= RTDS_OPEN_TOLERANCE_MS and (best is None or distance < abs(best[0] - start_ms)):
+            if start_ms <= ts_ms <= start_ms + RTDS_OPEN_TOLERANCE_MS and (best is None or ts_ms < best[0]):
                 best = (ts_ms, price)
+        if best is None:
+            latest = self._latest
+            if latest is None or latest[0] <= start_ms + RTDS_OPEN_TOLERANCE_MS:
+                return None  # the at/after-start tick may still arrive: wait for it instead of guessing
+            # that tick was missed (e.g. a gap in the stream): fall back to the nearest tick, if close enough
+            for ts_ms, price in self._ticks:
+                distance = abs(ts_ms - start_ms)
+                if distance <= RTDS_OPEN_TOLERANCE_MS and (best is None or distance < abs(best[0] - start_ms)):
+                    best = (ts_ms, price)
         if best is None:
             return None
         found = (best[1], "polymarket-rtds")
