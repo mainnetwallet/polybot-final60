@@ -86,10 +86,6 @@ class RiskManager:
             )
         return None
 
-    def price_gap_passes(self, signal: Signal, ctx: RiskContext, config: RuntimeSettings) -> bool:
-        """True when the price-gap rule is satisfied (or off) for this signal."""
-        return self._check_price_gap(signal, ctx, config) is None
-
     def check(self, signal: Signal, ctx: RiskContext, config: RuntimeSettings) -> RiskDecision:
         if ctx.kill_switch:
             return RiskDecision(False, "kill_switch", "emergency kill switch is active")
