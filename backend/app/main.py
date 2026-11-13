@@ -61,7 +61,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Polymarket Final-60s BTC Bot",
         version="1.0.0",
-        description="Final 60 seconds, marketable BUY when the ask is >= 0.80.",
+        description="Final 80 seconds, marketable BUY when the ask is >= 0.80.",
         lifespan=lifespan,
     )
     app.add_middleware(

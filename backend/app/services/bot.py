@@ -810,7 +810,7 @@ class TradingBot:
         self.logs.log(
             "INFO",
             "market",
-            f"final 60s window closed for {market.slug}",
+            f"final {self.runtime.get().final_window_seconds}s window closed for {market.slug}",
             payload={"market_id": market.market_id},
             mode=self._mode,
         )

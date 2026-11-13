@@ -78,7 +78,7 @@ const FIELDS: FieldSpec[] = [
     label: "Max execution price",
     hint: "Hard ceiling for the live ask. Must be at least the trigger.",
     kind: "number",
-    step: "0.01",
+    step: "0.001",
     min: "0.01",
     max: "1",
   },

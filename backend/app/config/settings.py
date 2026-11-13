@@ -54,9 +54,9 @@ class Settings(BaseSettings):
 
     # --- strategy -------------------------------------------------------
     trigger_threshold: float = 0.80
-    final_window_seconds: int = 60
-    max_execution_price: float = 0.99
-    trade_amount_usdc: float = 5.0
+    final_window_seconds: int = 80
+    max_execution_price: float = 0.991
+    trade_amount_usdc: float = 1.0
     stale_data_max_age_ms: int = 2000
     max_open_positions: int = 1
     duplicate_policy: str = "one_per_market"  # one_per_market | one_per_side | allow
@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     # --- risk -----------------------------------------------------------
     max_daily_loss: float = 5.0
     daily_profit_target: float = 10.0
-    max_trades_per_day: int = 60
+    max_trades_per_day: int = 600
     kill_switch: bool = False
 
     # --- paper ----------------------------------------------------------

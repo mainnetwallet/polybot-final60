@@ -372,16 +372,16 @@ Strategy and risk defaults:
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `TRIGGER_THRESHOLD` | `0.80` | Ask level that triggers a BUY |
-| `FINAL_WINDOW_SECONDS` | `60` | Trading window at the end of the market |
-| `MAX_EXECUTION_PRICE` | `0.99` | Hard cap on the price paid |
-| `TRADE_AMOUNT_USDC` | `5.0` | Requested notional per trade |
+| `FINAL_WINDOW_SECONDS` | `80` | Trading window at the end of the market |
+| `MAX_EXECUTION_PRICE` | `0.991` | Hard cap on the price paid |
+| `TRADE_AMOUNT_USDC` | `1.0` | Requested notional per trade |
 | `STALE_DATA_MAX_AGE_MS` | `2000` | Maximum book age for execution |
 | `MAX_OPEN_POSITIONS` | `1` | Concurrent position cap |
 | `DUPLICATE_POLICY` | `one_per_market` | `one_per_market`, `one_per_side`, `allow` |
 | `CONFLICT_POLICY` | `up_first` | `up_first`, `down_first`, `highest_ask`, `block_both` |
 | `MAX_DAILY_LOSS` | `5.0` | Daily loss stop (USDC) |
 | `DAILY_PROFIT_TARGET` | `10.0` | Daily profit target (USDC) |
-| `MAX_TRADES_PER_DAY` | `60` | Trade count cap |
+| `MAX_TRADES_PER_DAY` | `600` | Trade count cap |
 | `PAPER_STARTING_BALANCE` | `10.0` | Paper bankroll |
 | `PAPER_FILL_RATIO` | `1.0` | Simulated fill fraction (partial fills) |
 | `PAPER_SLIPPAGE_BPS` | `0` | Simulated slippage |
