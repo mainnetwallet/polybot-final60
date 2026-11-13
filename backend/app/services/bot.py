@@ -1458,6 +1458,7 @@ class TradingBot:
                 "stage3_threshold": config.stage3_threshold,
                 "stage0_enabled": config.stage0_enabled,
                 "stage0_start_seconds": config.stage0_start_seconds,
+                "stage0_min_ask": config.stage0_min_ask,
                 "stage0_max_ask": config.stage0_max_ask,
                 "stage0_min_price_gap_usd": config.stage0_min_price_gap_usd,
                 "stage0_sell_price": config.stage0_sell_price,

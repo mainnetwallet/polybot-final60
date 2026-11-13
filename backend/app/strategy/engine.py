@@ -6,7 +6,7 @@ Final N seconds (default 80): monitor UP and DOWN best asks.
 Entries are staged. Each stage may place ONE buy per market:
 
 * stage 0 (optional, independent): while stage0_start_seconds (default 200) or fewer remain and the
-  final window has NOT started yet, best_ask <= stage0_max_ask (default 0.95). The risk manager also
+  final window has NOT started yet, stage0_min_ask (default 0.60) <= best_ask <= stage0_max_ask (default 0.95). The risk manager also
   demands the BTC price gap (default $100) and the order manager sells the shares again once the
   best bid reaches stage0_sell_price (default 0.98).
 
@@ -99,7 +99,7 @@ class FinalWindowStrategy:
             ):
                 if book is None or ask is None:
                     continue
-                if ask > config.stage0_max_ask + 1e-9:
+                if ask > config.stage0_max_ask + 1e-9 or ask + 1e-9 < config.stage0_min_ask:
                     continue
                 signals.append(
                     Signal(

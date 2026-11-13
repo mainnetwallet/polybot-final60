@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     # The shares are sold again as soon as the best bid reaches stage0_sell_price.
     stage0_enabled: bool = True
     stage0_start_seconds: int = 200
+    stage0_min_ask: float = 0.60
     stage0_max_ask: float = 0.95
     stage0_min_price_gap_usd: float = 100.0
     stage0_sell_price: float = 0.98

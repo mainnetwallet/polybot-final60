@@ -44,6 +44,7 @@ export interface StrategyState {
   stage3_threshold: number;
   stage0_enabled: boolean;
   stage0_start_seconds: number;
+  stage0_min_ask: number;
   stage0_max_ask: number;
   stage0_min_price_gap_usd: number;
   stage0_sell_price: number;
@@ -229,6 +230,7 @@ export interface SettingsState {
   stage3_min_price_gap_usd: number;
   stage0_enabled: boolean;
   stage0_start_seconds: number;
+  stage0_min_ask: number;
   stage0_max_ask: number;
   stage0_min_price_gap_usd: number;
   stage0_sell_price: number;

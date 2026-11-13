@@ -273,7 +273,7 @@ function PolicyPanel() {
     [
       "Stage 0 (early buy + sell)",
       strategy?.stage0_enabled
-        ? `≤${strategy.stage0_start_seconds}s · ask ≤ ${fmtCents(strategy.stage0_max_ask)} · gap ≥ $${strategy.stage0_min_price_gap_usd} · sell at ${fmtCents(strategy.stage0_sell_price)}`
+        ? `≤${strategy.stage0_start_seconds}s · ask ${fmtCents(strategy.stage0_min_ask)}–${fmtCents(strategy.stage0_max_ask)} · gap ≥ $${strategy.stage0_min_price_gap_usd} · sell at ${fmtCents(strategy.stage0_sell_price)}`
         : "off",
     ],
     [

@@ -62,6 +62,15 @@ const FIELDS: FieldSpec[] = [
     suffix: "s",
   },
   {
+    key: "stage0_min_ask",
+    label: "Stage 0: min ask",
+    hint: "Stage 0 buys only while the best ask is at or above this decimal (e.g. 0.60).",
+    kind: "number",
+    step: "0.01",
+    min: "0.01",
+    max: "0.999",
+  },
+  {
     key: "stage0_max_ask",
     label: "Stage 0: max ask",
     hint: "Stage 0 buys only while the best ask is at or below this decimal. It is also the highest price it will pay.",
@@ -397,6 +406,10 @@ export function Settings() {
       Number(draft.stage2_threshold),
       Number(draft.stage3_threshold),
     );
+    if (Number(draft.stage0_min_ask) > Number(draft.stage0_max_ask)) {
+      setError("Stage 0 min ask must not be higher than the stage 0 max ask.");
+      return;
+    }
     if (Number(draft.stage0_sell_price) <= Number(draft.stage0_max_ask)) {
       setError("Stage 0 sell price must be higher than the stage 0 max ask.");
       return;

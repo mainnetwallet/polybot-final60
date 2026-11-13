@@ -37,12 +37,19 @@ def evaluate(remaining: float, up: float, down: float, **config):
 def test_stage0_signals_between_200s_and_final_window():
     result = evaluate(150, up=0.90, down=0.10)
     assert result.in_window is True
-    assert {(s.stage, s.side) for s in result.signals} == {(0, "UP"), (0, "DOWN")}  # both asks <= .95
+    # UP ask .90 is inside .60-.95; DOWN ask .10 is below the .60 minimum
+    assert {(s.stage, s.side) for s in result.signals} == {(0, "UP")}
+    both = evaluate(150, up=0.65, down=0.62)
+    assert {(s.stage, s.side) for s in both.signals} == {(0, "UP"), (0, "DOWN")}
 
 
-def test_stage0_ask_above_limit_is_not_a_signal():
-    result = evaluate(150, up=0.96, down=0.04)
-    assert [(s.stage, s.side) for s in result.signals] == [(0, "DOWN")]
+def test_stage0_ask_outside_60_95_is_not_a_signal():
+    above = evaluate(150, up=0.96, down=0.04)
+    assert above.signals == []  # .96 is above the .95 limit, .04 below the .60 minimum
+    assert evaluate(150, up=0.95, down=0.05).signals[0].side == "UP"  # .95 itself is allowed
+    assert evaluate(150, up=0.60, down=0.40).signals[0].side == "UP"  # .60 itself is allowed
+    assert evaluate(150, up=0.59, down=0.41).signals == []  # below the minimum
+    result = evaluate(150, up=0.70, down=0.30)
     assert result.signals[0].threshold == 0.95
 
 
@@ -420,3 +427,15 @@ async def test_stage0_sell_pnl_uses_stage0_cost_not_blended_average():
         assert abs(position.realized_pnl - expected) < 1e-6
         # the cost still held belongs to the unsold shares (stage 1 + the sub-cent leftover)
         assert position.cost_basis > 0 and position.status == "open"
+
+
+def test_risk_blocks_stage0_ask_below_minimum():
+    from dataclasses import replace
+
+    config = make_config(**STAGE0)
+    good = make_ctx(remaining=150, btc_price=100_150.0, price_to_beat=100_000.0)
+    signal = _signal(up=0.70)
+    assert RiskManager().check(signal, good, config).approved
+    low = RiskManager().check(replace(signal, best_ask=0.55), good, config)
+    assert low.approved is False and low.reason == "stage0_ask_too_low"
+    assert RiskManager().check(replace(signal, best_ask=0.60), good, config).approved

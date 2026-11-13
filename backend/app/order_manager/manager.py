@@ -581,6 +581,8 @@ class OrderManager:
                 continue
             if book.best_ask > max_price + 1e-9:
                 continue
+            if stage == 0 and book.best_ask + 1e-9 < config.stage0_min_ask:
+                continue
             spent = filled_size * avg_fill_price
             remaining = requested_notional - spent
             if remaining <= 0.01:

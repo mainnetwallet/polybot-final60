@@ -127,6 +127,12 @@ class RiskManager:
                 False, "stale_data", f"book age {signal.book_age_ms:.0f}ms exceeds limit"
             )
         if signal.stage == 0:
+            if signal.best_ask + 1e-9 < config.stage0_min_ask:
+                return RiskDecision(
+                    False,
+                    "stage0_ask_too_low",
+                    f"ask {signal.best_ask:.3f} below the stage 0 minimum {config.stage0_min_ask:.3f}",
+                )
             if signal.best_ask > config.stage0_max_ask + 1e-9:
                 return RiskDecision(
                     False,
