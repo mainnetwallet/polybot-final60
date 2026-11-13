@@ -20,6 +20,10 @@ os.environ["POLYMARKET_PRIVATE_KEY"] = ""
 os.environ["BTC_PRICE_ENABLED"] = "false"
 os.environ["DISCOVERY_REFRESH_SECONDS"] = "3600"
 os.environ["RESOLUTION_POLL_SECONDS"] = "3600"
+# The shared test books carry a 0.50 bid; with the production stop-loss defaults (20 / 15 %) every
+# bot-level test would be stopped out right after its buy. The stop-loss tests switch it on explicitly.
+for _stage in range(4):
+    os.environ[f"STAGE{_stage}_STOP_LOSS_PCT"] = "0"
 
 import pytest  # noqa: E402
 

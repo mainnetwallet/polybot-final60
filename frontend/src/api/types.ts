@@ -58,6 +58,10 @@ export interface StrategyState {
   stage1_sell_price_high: number;
   stage2_sell_enabled: boolean;
   stage2_sell_price: number;
+  stage0_stop_loss_pct: number;
+  stage1_stop_loss_pct: number;
+  stage2_stop_loss_pct: number;
+  stage3_stop_loss_pct: number;
   conflict_policy: string;
   duplicate_policy: string;
 }
@@ -254,6 +258,10 @@ export interface SettingsState {
   stage1_sell_price_high: number;
   stage2_sell_enabled: boolean;
   stage2_sell_price: number;
+  stage0_stop_loss_pct: number;
+  stage1_stop_loss_pct: number;
+  stage2_stop_loss_pct: number;
+  stage3_stop_loss_pct: number;
   paper_fill_ratio: number;
   paper_fee_exponent: number;
   paper_starting_balance: number;

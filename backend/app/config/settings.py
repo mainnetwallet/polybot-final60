@@ -108,6 +108,13 @@ class Settings(BaseSettings):
     # Stage 2 take-profit: stage 2 shares are sold as soon as the best bid reaches stage2_sell_price.
     stage2_sell_enabled: bool = True
     stage2_sell_price: float = 0.99
+    # Stop-loss per entry stage, in percent of the average price paid per share: once the best bid
+    # is at or below cost * (1 - pct / 100), that stage's own shares are sold at the market.
+    # 0 switches the stop-loss off for that stage. Stage 0 = 20 %, stages 1/2/3 = 15 % by default.
+    stage0_stop_loss_pct: float = 20.0
+    stage1_stop_loss_pct: float = 15.0
+    stage2_stop_loss_pct: float = 15.0
+    stage3_stop_loss_pct: float = 15.0
     duplicate_policy: str = "one_per_market"  # one_per_market | one_per_side | allow
     conflict_policy: str = "up_first"  # up_first | down_first | highest_ask | block_both
 

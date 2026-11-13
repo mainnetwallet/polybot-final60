@@ -71,6 +71,10 @@ class SettingsPatch(BaseModel):
     stage1_sell_price_high: float | None = Field(default=None, ge=0.02, le=0.999)
     stage2_sell_enabled: bool | None = None
     stage2_sell_price: float | None = Field(default=None, ge=0.02, le=0.999)
+    stage0_stop_loss_pct: float | None = Field(default=None, ge=0, le=99)
+    stage1_stop_loss_pct: float | None = Field(default=None, ge=0, le=99)
+    stage2_stop_loss_pct: float | None = Field(default=None, ge=0, le=99)
+    stage3_stop_loss_pct: float | None = Field(default=None, ge=0, le=99)
 
     def changes(self) -> dict:
         return {k: v for k, v in self.model_dump().items() if v is not None}

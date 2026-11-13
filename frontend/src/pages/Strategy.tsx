@@ -287,6 +287,19 @@ function PolicyPanel() {
       strategy?.stage2_sell_enabled ? `sell at ${fmtCents(strategy.stage2_sell_price)}` : "off",
     ],
     [
+      "Stop-loss (stage 0 / 1 / 2 / 3)",
+      strategy
+        ? [
+            strategy.stage0_stop_loss_pct,
+            strategy.stage1_stop_loss_pct,
+            strategy.stage2_stop_loss_pct,
+            strategy.stage3_stop_loss_pct,
+          ]
+            .map((pct) => (pct > 0 ? `${pct}%` : "off"))
+            .join(" / ")
+        : "—",
+    ],
+    [
       "Stage 2 (after stage 1)",
       strategy ? `≤${strategy.stage2_seconds}s · ask ≥ ${fmtCents(strategy.stage2_threshold)}` : "—",
     ],

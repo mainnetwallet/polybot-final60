@@ -52,6 +52,10 @@ OVERRIDABLE_KEYS = (
     "stage1_sell_price_high",
     "stage2_sell_enabled",
     "stage2_sell_price",
+    "stage0_stop_loss_pct",
+    "stage1_stop_loss_pct",
+    "stage2_stop_loss_pct",
+    "stage3_stop_loss_pct",
 )
 
 
@@ -94,6 +98,12 @@ class RuntimeSettings(BaseModel):
     stage1_sell_price_high: float = Field(default=0.99, ge=0.02, le=0.999)
     stage2_sell_enabled: bool = False
     stage2_sell_price: float = Field(default=0.99, ge=0.02, le=0.999)
+    # Stop-loss in percent below the average buy price (0 = off). Off when a RuntimeSettings is built
+    # directly; the app's Settings (.env) sets 20 for stage 0 and 15 for stages 1-3.
+    stage0_stop_loss_pct: float = Field(default=0.0, ge=0.0, le=99.0)
+    stage1_stop_loss_pct: float = Field(default=0.0, ge=0.0, le=99.0)
+    stage2_stop_loss_pct: float = Field(default=0.0, ge=0.0, le=99.0)
+    stage3_stop_loss_pct: float = Field(default=0.0, ge=0.0, le=99.0)
     paper_fill_ratio: float = Field(gt=0.0, le=1.0)
     paper_fee_exponent: float = Field(ge=0.0, le=5.0)
     paper_starting_balance: float = Field(gt=0.0)
@@ -146,6 +156,26 @@ class RuntimeSettings(BaseModel):
     def stage2_sell_price_for(self, cost_per_share: float | None) -> float | None:
         """Take-profit price for stage 2 shares (same price whatever they cost); None = off."""
         return self.stage2_sell_price if self.stage2_sell_enabled else None
+
+    def stop_loss_pct_for(self, stage: int) -> float:
+        """Stop-loss percentage configured for `stage` (0 = off)."""
+        return {
+            0: self.stage0_stop_loss_pct,
+            1: self.stage1_stop_loss_pct,
+            2: self.stage2_stop_loss_pct,
+            3: self.stage3_stop_loss_pct,
+        }.get(stage, 0.0)
+
+    def stop_loss_price_for(self, stage: int, cost_per_share: float | None) -> float | None:
+        """Best-bid level at or below which `stage`'s shares are sold; None = no stop-loss.
+
+        cost * (1 - pct / 100) with the average price paid per share. An unknown cost has no
+        reference price, so there is no stop for those shares.
+        """
+        pct = self.stop_loss_pct_for(stage)
+        if pct <= 0 or cost_per_share is None or cost_per_share <= 0:
+            return None
+        return cost_per_share * (1.0 - pct / 100.0)
 
     def stage0_sell_price_for(self, cost_per_share: float | None) -> float:
         """Take-profit sell price for shares stage 0 bought at `cost_per_share` (unknown -> highest tier)."""
