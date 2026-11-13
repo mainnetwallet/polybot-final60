@@ -857,7 +857,11 @@ class OrderManager:
         return key not in self._stage0_holdings or self._stage0_holdings[key] is not None
 
     def has_stage0_holding(self, mode: str, market_id: str) -> bool:
-        holding = self._stage0_holdings.get((mode, market_id))
+        key = (mode, market_id)
+        if key not in self._stage0_holdings:
+            # not loaded yet (e.g. right after the buy): keep the retry loop awake for this market
+            return key in self._stage0_bought
+        holding = self._stage0_holdings[key]
         return holding is not None and not holding.sell_in_flight
 
     async def handle_exits(

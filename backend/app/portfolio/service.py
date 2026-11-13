@@ -322,6 +322,9 @@ class Portfolio:
                 Order.mode == mode,
                 Order.created_at >= self.daily_floor(session, mode),
                 Order.status.in_(["SUBMITTED", "PARTIALLY_FILLED", "FILLED", "CANCELED", "EXPIRED"]),
+                # Stage 0 take-profit SELLs are exits, not entries: they (and their FOK retries)
+                # must not eat the max_trades_per_day cap.
+                Order.order_key.not_like("%:sell:%"),
             )
         ).scalar_one()
         return int(value)

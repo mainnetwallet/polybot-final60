@@ -325,3 +325,26 @@ async def test_bot_stage0_needs_gap_and_stops_in_final_window():
     with session_scope() as session:
         stages = [bot2.orders._key_stage(o.order_key) for o in session.execute(select(Order)).scalars()]
     assert 0 not in stages
+
+
+async def test_stage0_sell_orders_do_not_count_as_daily_trades():
+    stack = build_stack(make_config(**STAGE0, trade_amount_usdc=4.0))
+    market = make_market(remaining=150)
+    books = books_for(market, up_ask=0.90, down_ask=0.10)
+    await _stage0_buy(stack, market, books)
+    books[market.up_token_id].bids = {0.98: 100.0}
+    results = await stack["manager"].handle_exits(market, books, "paper", stack["config"])
+    assert [r.status for r in results] == ["FILLED"]
+    with session_scope() as session:
+        assert session.query(Order).count() == 2  # one BUY + one SELL row
+        assert stack["portfolio"].trades_today(session, "paper") == 1  # only the entry counts
+
+
+async def test_stage0_retry_loop_stays_awake_right_after_the_buy():
+    stack = build_stack(make_config(**STAGE0, trade_amount_usdc=4.0))
+    market = make_market(remaining=150)
+    books = books_for(market, up_ask=0.90, down_ask=0.10)
+    await _stage0_buy(stack, market, books)
+    # the holding registry is not loaded yet, but the bought marker keeps the exit watch active
+    assert stack["manager"].has_stage0_holding("paper", market.market_id) is True
+    assert stack["manager"].has_stage0_holding("paper", "some-other-market") is False

@@ -294,6 +294,25 @@ class LiveExecutionEngine(ExecutionEngine):
             report.latency_ms = float(max(0, int(time.time() * 1000) - request.observed_at_ms))
             return report
 
+    def _ensure_conditional_allowance(self, client, token_id: str) -> None:
+        """Best effort, once per token: let the CLOB re-sync the outcome-token balance/allowance.
+
+        A SELL spends outcome tokens, which needs the conditional-token allowance (BUYs only need
+        the collateral one). Failures are ignored; the sell itself reports a real problem.
+        """
+        done = self.__dict__.setdefault("_conditional_synced", set())
+        if token_id in done:
+            return
+        try:
+            from py_clob_client_v2 import AssetType, BalanceAllowanceParams
+
+            client.update_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=token_id)
+            )
+            done.add(token_id)
+        except Exception as exc:
+            logger.warning("conditional allowance sync failed (%s)", type(exc).__name__)
+
     def _place_sell_sync(self, client, request: SellRequest) -> ExecutionReport:
         from py_clob_client_v2 import MarketOrderArgs, OrderType, Side
 
@@ -304,6 +323,7 @@ class LiveExecutionEngine(ExecutionEngine):
         shares = floor_size(request.size)
         if shares <= 0:
             return ExecutionReport(status="REJECTED", error="sell size rounds down to zero")
+        self._ensure_conditional_allowance(client, request.token_id)
         args = MarketOrderArgs(
             token_id=request.token_id if request.asset_version == 1 else None,
             amount=shares,  # SELL amount is in shares
