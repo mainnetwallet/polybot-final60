@@ -83,16 +83,23 @@ class Settings(BaseSettings):
     # Stage 0: an early, independent entry with its own take-profit SELL. While `stage0_start_seconds`
     # (or fewer) remain and the final window has not started yet, buy a side whose best ask is
     # <= stage0_max_ask and whose BTC price gap beyond the price to beat is >= stage0_min_price_gap_usd.
-    # The shares are sold again as soon as the best bid is stage0_take_profit_pct above the buy price.
+    # The shares are sold again as soon as the best bid is the tier's take-profit percentage above the buy price.
     stage0_enabled: bool = True
     stage0_start_seconds: int = 200
     stage0_min_ask: float = 0.60
-    stage0_max_ask: float = 0.95
+    stage0_max_ask: float = 0.85
     stage0_min_price_gap_usd: float = 50.0
-    # Take-profit for stage 0: sell once the best bid is this many percent ABOVE the average price
-    # paid per share (cost * (1 + pct / 100)), capped at 0.99 because a share never pays more than 1.00.
-    # 20 = sell at +20 %. 0 = off: the shares are held to settlement.
-    stage0_take_profit_pct: float = 20.0
+    # Take-profit for stage 0: sell once the best bid is this many percent ABOVE the average price paid per
+    # share (cost * (1 + pct / 100), capped at 0.99). The percentage depends on what stage 0 paid per share:
+    #   cost <  stage0_mid_from_ask   -> stage0_take_profit_pct_low  (default 0.60-0.70 buy -> +15 %)
+    #   cost <  stage0_high_from_ask  -> stage0_take_profit_pct_mid  (default 0.70-0.80 buy -> +10 %)
+    #   otherwise                     -> stage0_take_profit_pct_high (default 0.80-0.85 buy -> +5 %)
+    # 0 = no take-profit for that tier: the shares are held to settlement.
+    stage0_mid_from_ask: float = 0.70
+    stage0_high_from_ask: float = 0.80
+    stage0_take_profit_pct_low: float = 15.0
+    stage0_take_profit_pct_mid: float = 10.0
+    stage0_take_profit_pct_high: float = 5.0
     # Stage 1 take-profit: stage 1 shares are sold again as soon as the best bid reaches a price that
     # depends on what they cost per share: cost <= stage1_sell_max_buy -> stage1_sell_price (0.95),
     # cost above it -> stage1_sell_price_high (0.99).

@@ -107,11 +107,11 @@ async def test_stop_loss_is_a_market_sell_even_when_the_bid_is_far_below_the_sto
 async def test_take_profit_still_sells_at_its_price_with_the_stop_loss_on():
     stack = build_stack(make_config(**STAGE0, **STOPS, trade_amount_usdc=4.0))
     market = make_market(remaining=150)
-    books = books_for(market, up_ask=0.80, down_ask=0.10)  # bought at 0.80 -> take-profit at +20 % = 0.96
+    books = books_for(market, up_ask=0.80, down_ask=0.10)  # bought at 0.80 -> high tier: take-profit at +5 % = 0.84
     await _stage0_buy(stack, market, books)
-    books[market.up_token_id].bids = {0.95: 100.0}  # between the stop (0.64) and the take-profit
+    books[market.up_token_id].bids = {0.83: 100.0}  # between the stop (0.64) and the take-profit
     assert await stack["manager"].handle_exits(market, books, "paper", stack["config"]) == []
-    books[market.up_token_id].bids = {0.96: 100.0}
+    books[market.up_token_id].bids = {0.84: 100.0}
     results = await stack["manager"].handle_exits(market, books, "paper", stack["config"])
     assert [(r.status, r.reason) for r in results] == [("FILLED", "stage0_sell")]
 
@@ -230,8 +230,8 @@ async def test_bot_stops_out_stage0_reports_a_loss_and_does_not_rebuy():
     bot = _running_bot(market, btc=(99_850.0, 100_000.0, ""))  # BTC $150 below the price to beat -> DOWN
     with session_scope() as session:
         bot.runtime.update(session, {"stage0_stop_loss_pct": 20.0})
-    books = books_for(market, up_ask=0.40, down_ask=0.88)
-    books[market.down_token_id].bids = {0.87: 100.0}  # a normal spread: no stop right after the buy
+    books = books_for(market, up_ask=0.40, down_ask=0.80)
+    books[market.down_token_id].bids = {0.79: 100.0}  # a normal spread: no stop right after the buy
     bot.data._books = dict(books)
 
     await _event(bot, market)
@@ -239,7 +239,7 @@ async def test_bot_stops_out_stage0_reports_a_loss_and_does_not_rebuy():
         orders = session.execute(select(Order)).scalars().all()
     assert [(o.side, o.status) for o in orders] == [("DOWN", "FILLED")]
 
-    books[market.down_token_id].bids = {0.70: 100.0}  # stop = 0.88 * 0.8 = 0.704
+    books[market.down_token_id].bids = {0.63: 100.0}  # stop = 0.80 * 0.8 = 0.64
     await _event(bot, market)
     rows = await bot.recent_orders("paper")
     assert sorted((r["action"], r["stage"], r["status"]) for r in rows) == [

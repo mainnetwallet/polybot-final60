@@ -89,9 +89,47 @@ const FIELDS: FieldSpec[] = [
     suffix: "USD",
   },
   {
-    key: "stage0_take_profit_pct",
-    label: "Stage 0: take-profit",
-    hint: "Stage 0 shares are sold once the best bid is this many percent above the average buy price (default 20), capped at bid 0.99. 0 = off: stage 0 shares are held to settlement.",
+    key: "stage0_mid_from_ask",
+    label: "Stage 0: mid tier from (buy price)",
+    hint: "Shares bought below this price use the low take-profit %; at or above it, the mid % (default 0.70).",
+    kind: "number",
+    step: "0.01",
+    min: "0.01",
+    max: "0.999",
+  },
+  {
+    key: "stage0_high_from_ask",
+    label: "Stage 0: high tier from (buy price)",
+    hint: "Shares bought at or above this price use the high take-profit % (default 0.80).",
+    kind: "number",
+    step: "0.01",
+    min: "0.01",
+    max: "0.999",
+  },
+  {
+    key: "stage0_take_profit_pct_low",
+    label: "Stage 0: take-profit (low tier)",
+    hint: "Percent above the buy price at which shares bought below the mid-tier border are sold (default 15, i.e. 0.60-0.70 buy). 0 = held to settlement.",
+    kind: "number",
+    step: "1",
+    min: "0",
+    max: "500",
+    suffix: "%",
+  },
+  {
+    key: "stage0_take_profit_pct_mid",
+    label: "Stage 0: take-profit (mid tier)",
+    hint: "Percent above the buy price for shares bought between the mid and high borders (default 10, i.e. 0.70-0.80 buy). 0 = held to settlement.",
+    kind: "number",
+    step: "1",
+    min: "0",
+    max: "500",
+    suffix: "%",
+  },
+  {
+    key: "stage0_take_profit_pct_high",
+    label: "Stage 0: take-profit (high tier)",
+    hint: "Percent above the buy price for shares bought at the high border or above (default 5, i.e. 0.80-0.85 buy). The sell price is capped at 0.99. 0 = held to settlement.",
     kind: "number",
     step: "1",
     min: "0",
@@ -505,6 +543,10 @@ export function Settings() {
     );
     if (Number(draft.stage0_min_ask) > Number(draft.stage0_max_ask)) {
       setError("Stage 0 min ask must not be higher than the stage 0 max ask.");
+      return;
+    }
+    if (Number(draft.stage0_mid_from_ask) > Number(draft.stage0_high_from_ask)) {
+      setError("Stage 0 mid tier border must not be higher than the high tier border.");
       return;
     }
     if (Number(draft.stage1_sell_price) <= Number(draft.stage1_sell_max_buy)) {

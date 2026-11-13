@@ -47,7 +47,11 @@ export interface StrategyState {
   stage0_min_ask: number;
   stage0_max_ask: number;
   stage0_min_price_gap_usd: number;
-  stage0_take_profit_pct: number;
+  stage0_mid_from_ask: number;
+  stage0_high_from_ask: number;
+  stage0_take_profit_pct_low: number;
+  stage0_take_profit_pct_mid: number;
+  stage0_take_profit_pct_high: number;
   stage1_sell_enabled: boolean;
   stage1_sell_max_buy: number;
   stage1_sell_price: number;
@@ -243,7 +247,11 @@ export interface SettingsState {
   stage0_min_ask: number;
   stage0_max_ask: number;
   stage0_min_price_gap_usd: number;
-  stage0_take_profit_pct: number;
+  stage0_mid_from_ask: number;
+  stage0_high_from_ask: number;
+  stage0_take_profit_pct_low: number;
+  stage0_take_profit_pct_mid: number;
+  stage0_take_profit_pct_high: number;
   stage1_sell_enabled: boolean;
   stage1_sell_max_buy: number;
   stage1_sell_price: number;
