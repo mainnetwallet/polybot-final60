@@ -53,9 +53,11 @@ export interface StrategyState {
   stage0_sell_price_low: number;
   stage0_sell_price_mid: number;
   stage1_sell_enabled: boolean;
-  stage1_sell_min_buy: number;
   stage1_sell_max_buy: number;
   stage1_sell_price: number;
+  stage1_sell_price_high: number;
+  stage2_sell_enabled: boolean;
+  stage2_sell_price: number;
   conflict_policy: string;
   duplicate_policy: string;
 }
@@ -247,9 +249,11 @@ export interface SettingsState {
   stage0_sell_price_low: number;
   stage0_sell_price_mid: number;
   stage1_sell_enabled: boolean;
-  stage1_sell_min_buy: number;
   stage1_sell_max_buy: number;
   stage1_sell_price: number;
+  stage1_sell_price_high: number;
+  stage2_sell_enabled: boolean;
+  stage2_sell_price: number;
   paper_fill_ratio: number;
   paper_fee_exponent: number;
   paper_starting_balance: number;

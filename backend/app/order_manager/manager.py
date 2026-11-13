@@ -46,6 +46,7 @@ _SELL_STAGE = re.compile(r":s(\d+):sell:")
 _SELL_MARK = ":sell:"
 MAX_SELL_ATTEMPTS = 30
 SELL_DUST = 0.01
+EXIT_STAGES = (0, 1, 2)  # entry stages whose shares have a take-profit sell
 
 
 def _floor_shares(size: float) -> float:
@@ -55,14 +56,14 @@ def _floor_shares(size: float) -> float:
 
 @dataclass
 class Stage0Holding:
-    """Shares bought by stage 0 (or stage 1, see `stage`) in one market that have not been sold yet."""
+    """Shares bought by stage 0 (or stage 1/2, see `stage`) in one market that have not been sold yet."""
 
     side: str
     token_id: str
     size: float
     sell_in_flight: bool = False
     cost: float | None = None  # average price paid per share (decides the take-profit tier)
-    stage: int = 0  # which entry stage bought these shares (0 or 1)
+    stage: int = 0  # which entry stage bought these shares (0, 1 or 2)
 
 
 @dataclass
@@ -124,18 +125,23 @@ class OrderManager:
         self._stage0_holdings: dict[tuple[str, str], Stage0Holding | None] = {}
         # same for the shares stage 1 bought (stage 1 take-profit sells)
         self._stage1_holdings: dict[tuple[str, str], Stage0Holding | None] = {}
+        self._stage2_holdings: dict[tuple[str, str], Stage0Holding | None] = {}
         self._sell_attempts: dict[tuple[str, str, int], int] = {}
         self._last_sell_ms: dict[tuple[str, str, int], int] = {}
         # (mode, market) pairs where stage 0 already got an accepted buy (it buys once per market)
         self._stage0_bought: set[tuple[str, str]] = set()
 
     def _holdings(self, stage: int) -> dict[tuple[str, str], Stage0Holding | None]:
-        return self._stage1_holdings if stage == 1 else self._stage0_holdings
+        if stage == 1:
+            return self._stage1_holdings
+        if stage == 2:
+            return self._stage2_holdings
+        return self._stage0_holdings
 
     def _drop_holdings(self, mode: str, market_id: str) -> None:
         """Forget what is cached as held so the next exit pass reloads it from the database."""
-        self._stage0_holdings.pop((mode, market_id), None)
-        self._stage1_holdings.pop((mode, market_id), None)
+        for stage in EXIT_STAGES:
+            self._holdings(stage).pop((mode, market_id), None)
 
     def stage1_remaining(self, mode: str, market_id: str) -> float | None:
         return self._stage1_remaining.get((mode, market_id))
@@ -397,8 +403,8 @@ class OrderManager:
             )
 
         result = await asyncio.to_thread(self._finalize_order, order_id, report, signal, mode)
-        if signal.stage == 1:
-            self._stage1_holdings.pop((mode, market.market_id), None)  # reload what is held
+        if signal.stage in (1, 2):
+            self._holdings(signal.stage).pop((mode, market.market_id), None)  # reload what is held
         if signal.stage == 0:
             self._stage0_holdings.pop((mode, market.market_id), None)  # reload what is held
             if result.status not in {"REJECTED", "CANCELED"}:
@@ -624,7 +630,7 @@ class OrderManager:
             if not report.fills:
                 continue
             await asyncio.to_thread(self._apply_partial_retry, order_id, report, mode)
-            if stage in (0, 1):
+            if stage in EXIT_STAGES:
                 self._holdings(stage).pop((mode, market.market_id), None)
             self._logs.log(
                 "INFO",
@@ -832,6 +838,7 @@ class OrderManager:
         self._retry_after.clear()
         self._stage0_holdings.clear()  # re-read from the database on the next event
         self._stage1_holdings.clear()
+        self._stage2_holdings.clear()
         if len(self._sell_attempts) > 500:
             self._sell_attempts.clear()
             self._last_sell_ms.clear()
@@ -914,15 +921,16 @@ class OrderManager:
         key = (mode, market_id)
         return any(
             key not in holdings or holdings[key] is not None
-            for holdings in (self._stage0_holdings, self._stage1_holdings)
+            for holdings in (self._stage0_holdings, self._stage1_holdings, self._stage2_holdings)
         )
 
     def has_stage0_holding(self, mode: str, market_id: str) -> bool:
-        """True while a take-profit sell may still be due (stage 0 or stage 1 shares held)."""
+        """True while a take-profit sell may still be due (stage 0, 1 or 2 shares held)."""
         key = (mode, market_id)
-        stage1 = self._stage1_holdings.get(key)
-        if stage1 is not None and not stage1.sell_in_flight:
-            return True
+        for later in (1, 2):
+            held = self._holdings(later).get(key)
+            if held is not None and not held.sell_in_flight:
+                return True
         if key not in self._stage0_holdings:
             # not loaded yet (e.g. right after the buy): keep the retry loop awake for this market
             return key in self._stage0_bought
@@ -932,11 +940,11 @@ class OrderManager:
     async def handle_exits(
         self, market: MarketInfo, books: dict[str, OrderBook], mode: str, config
     ) -> list[OrderResult]:
-        """Take-profit sells: stage 0 shares at their tier price, stage 1 shares (bought 0.80-0.90) at 0.98."""
+        """Take-profit sells for stage 0 (tiered), stage 1 (0.95 / 0.99 by cost) and stage 2 (0.99) shares."""
         if market.remaining_seconds() <= 0:
             return []
         results: list[OrderResult] = []
-        for stage in (0, 1):
+        for stage in EXIT_STAGES:
             results.extend(await self._handle_stage_exit(market, books, mode, config, stage))
         return results
 
@@ -963,13 +971,14 @@ class OrderManager:
                 return []
             book = books.get(holding.token_id)
             bid = book.best_bid if book is not None else None
-            sell_price = (
-                config.stage0_sell_price_for(holding.cost)
-                if stage == 0
-                else config.stage1_sell_price_for(holding.cost)
-            )
+            if stage == 0:
+                sell_price = config.stage0_sell_price_for(holding.cost)
+            elif stage == 1:
+                sell_price = config.stage1_sell_price_for(holding.cost)
+            else:
+                sell_price = config.stage2_sell_price_for(holding.cost)
             if sell_price is None:
-                return []  # stage 1 shares bought outside the take-profit band: held to settlement
+                return []  # this stage's take-profit is switched off: held to settlement
             if bid is None or bid + 1e-9 < sell_price:
                 return []
             attempts = self._sell_attempts.get(sell_key, 0)

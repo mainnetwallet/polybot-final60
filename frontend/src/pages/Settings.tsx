@@ -136,7 +136,7 @@ const FIELDS: FieldSpec[] = [
   {
     key: "stage1_sell_enabled",
     label: "Stage 1: take-profit sell",
-    hint: "On: stage 1 shares bought inside the buy band are sold as soon as the best bid reaches the sell price.",
+    hint: "On: stage 1 shares are sold as soon as the best bid reaches their sell price.",
     kind: "select",
     options: [
       { value: "true", label: "On" },
@@ -144,18 +144,9 @@ const FIELDS: FieldSpec[] = [
     ],
   },
   {
-    key: "stage1_sell_min_buy",
-    label: "Stage 1: sell band from (buy price)",
-    hint: "Stage 1 shares are sold only if their average buy price is at or above this (default 0.80).",
-    kind: "number",
-    step: "0.01",
-    min: "0.01",
-    max: "0.999",
-  },
-  {
     key: "stage1_sell_max_buy",
-    label: "Stage 1: sell band to (buy price)",
-    hint: "...and at or below this (default 0.90). Shares bought higher are held to settlement.",
+    label: "Stage 1: cheap buy up to",
+    hint: "Stage 1 shares that cost up to this per share use the first sell price, dearer ones the high sell price (default 0.90).",
     kind: "number",
     step: "0.01",
     min: "0.01",
@@ -163,8 +154,36 @@ const FIELDS: FieldSpec[] = [
   },
   {
     key: "stage1_sell_price",
-    label: "Stage 1: sell at",
-    hint: "Stage 1 sells its shares as soon as the best bid reaches this decimal (default 0.98). Must be higher than the band's upper end.",
+    label: "Stage 1: sell at (cheap buy)",
+    hint: "Sell price for stage 1 shares bought up to the limit above (default 0.95). Must be higher than that limit.",
+    kind: "number",
+    step: "0.01",
+    min: "0.02",
+    max: "0.999",
+  },
+  {
+    key: "stage1_sell_price_high",
+    label: "Stage 1: sell at (dearer buy)",
+    hint: "Sell price for stage 1 shares bought above the limit (default 0.99).",
+    kind: "number",
+    step: "0.01",
+    min: "0.02",
+    max: "0.999",
+  },
+  {
+    key: "stage2_sell_enabled",
+    label: "Stage 2: take-profit sell",
+    hint: "On: stage 2 shares are sold as soon as the best bid reaches the stage 2 sell price.",
+    kind: "select",
+    options: [
+      { value: "true", label: "On" },
+      { value: "false", label: "Off" },
+    ],
+  },
+  {
+    key: "stage2_sell_price",
+    label: "Stage 2: sell at",
+    hint: "Stage 2 sells its shares as soon as the best bid reaches this decimal (default 0.99). Must be higher than the stage 2 threshold.",
     kind: "number",
     step: "0.01",
     min: "0.02",
@@ -487,12 +506,16 @@ export function Settings() {
       setError("Stage 0 sell price must be higher than the stage 0 max ask.");
       return;
     }
-    if (Number(draft.stage1_sell_min_buy) > Number(draft.stage1_sell_max_buy)) {
-      setError("Stage 1 sell band start must not be higher than its end.");
+    if (Number(draft.stage1_sell_price) <= Number(draft.stage1_sell_max_buy)) {
+      setError("Stage 1 sell price must be higher than the stage 1 cheap-buy limit.");
       return;
     }
-    if (Number(draft.stage1_sell_price) <= Number(draft.stage1_sell_max_buy)) {
-      setError("Stage 1 sell price must be higher than the top of the stage 1 sell band.");
+    if (Number(draft.stage1_sell_price_high) < Number(draft.stage1_sell_price)) {
+      setError("Stage 1 high sell price must not be lower than the stage 1 sell price.");
+      return;
+    }
+    if (Number(draft.stage2_sell_price) <= Number(draft.stage2_threshold)) {
+      setError("Stage 2 sell price must be higher than the stage 2 threshold.");
       return;
     }
     if (Number(draft.stage0_mid_from_ask) > Number(draft.stage0_high_from_ask)) {

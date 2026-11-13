@@ -47,9 +47,11 @@ OVERRIDABLE_KEYS = (
     "stage0_sell_price_low",
     "stage0_sell_price_mid",
     "stage1_sell_enabled",
-    "stage1_sell_min_buy",
     "stage1_sell_max_buy",
     "stage1_sell_price",
+    "stage1_sell_price_high",
+    "stage2_sell_enabled",
+    "stage2_sell_price",
 )
 
 
@@ -87,9 +89,11 @@ class RuntimeSettings(BaseModel):
     stage0_sell_price_low: float = Field(default=0.80, ge=0.02, le=0.999)
     stage0_sell_price_mid: float = Field(default=0.90, ge=0.02, le=0.999)
     stage1_sell_enabled: bool = False
-    stage1_sell_min_buy: float = Field(default=0.80, ge=0.01, le=0.999)
     stage1_sell_max_buy: float = Field(default=0.90, ge=0.01, le=0.999)
-    stage1_sell_price: float = Field(default=0.98, ge=0.02, le=0.999)
+    stage1_sell_price: float = Field(default=0.95, ge=0.02, le=0.999)
+    stage1_sell_price_high: float = Field(default=0.99, ge=0.02, le=0.999)
+    stage2_sell_enabled: bool = False
+    stage2_sell_price: float = Field(default=0.99, ge=0.02, le=0.999)
     paper_fill_ratio: float = Field(gt=0.0, le=1.0)
     paper_fee_exponent: float = Field(ge=0.0, le=5.0)
     paper_starting_balance: float = Field(gt=0.0)
@@ -117,19 +121,31 @@ class RuntimeSettings(BaseModel):
             raise ValueError("stage0_sell_price_low must be above the buy prices of its tier")
         if self.stage0_sell_price_mid <= min(self.stage0_high_from_ask, self.stage0_max_ask):
             raise ValueError("stage0_sell_price_mid must be above the buy prices of its tier")
-        if self.stage1_sell_min_buy > self.stage1_sell_max_buy:
-            raise ValueError("stage1_sell_min_buy must be <= stage1_sell_max_buy")
         if self.stage1_sell_price <= self.stage1_sell_max_buy:
             raise ValueError("stage1_sell_price must be greater than stage1_sell_max_buy")
+        if self.stage1_sell_price_high < self.stage1_sell_price:
+            raise ValueError("stage1_sell_price_high must be >= stage1_sell_price")
+        if self.stage2_sell_price <= self.stage2_threshold:
+            raise ValueError("stage2_sell_price must be greater than stage2_threshold")
         return self
 
     def stage1_sell_price_for(self, cost_per_share: float | None) -> float | None:
-        """Take-profit price for stage 1 shares bought at `cost_per_share`; None = hold (no sale)."""
-        if not self.stage1_sell_enabled or cost_per_share is None:
+        """Take-profit price for stage 1 shares bought at `cost_per_share`; None = take-profit is off.
+
+        Paid up to stage1_sell_max_buy (default 0.90) -> stage1_sell_price (0.95); paid more ->
+        stage1_sell_price_high (0.99). Unknown cost uses the high price, so it never sells too early.
+        """
+        if not self.stage1_sell_enabled:
             return None
-        if self.stage1_sell_min_buy - 1e-6 <= cost_per_share <= self.stage1_sell_max_buy + 1e-6:
+        if cost_per_share is None:
+            return self.stage1_sell_price_high
+        if cost_per_share <= self.stage1_sell_max_buy + 1e-6:
             return self.stage1_sell_price
-        return None
+        return self.stage1_sell_price_high
+
+    def stage2_sell_price_for(self, cost_per_share: float | None) -> float | None:
+        """Take-profit price for stage 2 shares (same price whatever they cost); None = off."""
+        return self.stage2_sell_price if self.stage2_sell_enabled else None
 
     def stage0_sell_price_for(self, cost_per_share: float | None) -> float:
         """Take-profit sell price for shares stage 0 bought at `cost_per_share` (unknown -> highest tier)."""
