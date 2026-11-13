@@ -45,7 +45,7 @@ FIRST_TICK_TIMEOUT_SECONDS = 8.0  # no BTC tick this long after subscribing -> t
 TICK_SILENCE_RECONNECT_SECONDS = 15.0  # stream was alive but went quiet -> reconnect
 RTDS_OPEN_TOLERANCE_MS = 1_000  # max distance between the window start and the RTDS tick used as its open
 TICK_HISTORY = 2_400  # ~40 minutes of one-per-second TWAP ticks kept to look up window-start values
-OPEN_LOOKUP_RETRY_SECONDS = 3.0  # keeps asking until the official value is published
+OPEN_LOOKUP_RETRY_SECONDS = 1.0  # keeps asking until the official value is published
 BROWSER_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
