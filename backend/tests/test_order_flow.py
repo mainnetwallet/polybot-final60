@@ -66,7 +66,7 @@ async def test_order_uses_current_market_ask_not_threshold():
 
 async def test_no_fixed_limit_price_order():
     stack = build_stack()
-    market = make_market(remaining=25)
+    market = make_market(remaining=55)
     books = books_for(market, up_ask=0.97, down_ask=0.03)
 
     await _submit(stack, market, books)
@@ -132,7 +132,7 @@ async def test_stop_waiter_drains_submission_handlers_already_in_flight():
 
 async def test_conflict_policy_up_first_selects_one_side():
     stack = build_stack()
-    market = make_market(remaining=20)
+    market = make_market(remaining=55)
     books = books_for(market, up_ask=0.88, down_ask=0.86)
 
     _, results = await _submit(stack, market, books)
@@ -145,7 +145,7 @@ async def test_conflict_policy_up_first_selects_one_side():
 
 async def test_conflict_policy_block_both_places_no_order():
     stack = build_stack(make_config(conflict_policy="block_both"))
-    market = make_market(remaining=20)
+    market = make_market(remaining=55)
     books = books_for(market, up_ask=0.88, down_ask=0.86)
 
     _, results = await _submit(stack, market, books)
@@ -156,7 +156,7 @@ async def test_conflict_policy_block_both_places_no_order():
 
 async def test_stale_market_data_blocks_execution():
     stack = build_stack()
-    market = make_market(remaining=30)
+    market = make_market(remaining=55)
     books = books_for(market, 0.90, 0.10, up_age_ms=5000)
 
     evaluation, results = await _submit(stack, market, books)
@@ -183,7 +183,7 @@ async def test_expired_market_blocks_execution():
 
 async def test_max_execution_price_blocks():
     stack = build_stack()
-    market = make_market(remaining=30)
+    market = make_market(remaining=55)
     books = books_for(market, up_ask=0.995, down_ask=0.005)
 
     _, results = await _submit(stack, market, books)
@@ -194,7 +194,7 @@ async def test_max_execution_price_blocks():
 
 async def test_partial_fill_then_retry_completes():
     stack = build_stack()
-    market = make_market(remaining=30)
+    market = make_market(remaining=55)
     books = books_for(market, up_ask=0.85, down_ask=0.10, up_size=3.0)
 
     _, results = await _submit(stack, market, books)
@@ -213,7 +213,7 @@ async def test_partial_fill_then_retry_completes():
 
 async def test_stop_drain_waits_for_paper_partial_retry_and_blocks_next_retry():
     stack = build_stack()
-    market = make_market(remaining=30)
+    market = make_market(remaining=55)
     partial_books = books_for(market, up_ask=0.85, down_ask=0.10, up_size=2.0)
     await _submit(stack, market, partial_books)
     assert _orders()[0].status == "PARTIALLY_FILLED"
@@ -264,7 +264,7 @@ async def test_stop_drain_waits_for_paper_partial_retry_and_blocks_next_retry():
 
 async def test_unfilled_remainder_expires_with_market():
     stack = build_stack()
-    market = make_market(remaining=30)
+    market = make_market(remaining=55)
     books = books_for(market, up_ask=0.85, down_ask=0.10, up_size=2.0)
     await _submit(stack, market, books)
     assert _orders()[0].status == "PARTIALLY_FILLED"
@@ -279,7 +279,7 @@ async def test_unfilled_remainder_expires_with_market():
 
 async def test_paper_mode_never_calls_live_engine():
     stack = build_stack()
-    market = make_market(remaining=30)
+    market = make_market(remaining=55)
     books = books_for(market, up_ask=0.95, down_ask=0.05)
 
     await _submit(stack, market, books)
@@ -290,7 +290,7 @@ async def test_paper_mode_never_calls_live_engine():
 
 async def test_paper_report_measures_latency():
     stack = build_stack()
-    market = make_market(remaining=30)
+    market = make_market(remaining=55)
     books = books_for(market, up_ask=0.90, down_ask=0.10)
     started = time.perf_counter()
 
@@ -332,7 +332,9 @@ async def test_stage2_and_stage3_add_one_order_each():
     # 45s left: stage 2 (ask >= 0.90) adds one order on the same side
     market = make_market(remaining=45)
     books = books_for(market, up_ask=0.93, down_ask=0.07)
-    ctx = make_ctx(remaining=45, open_positions=1, exposed_sides=frozenset({"UP"}))
+    ctx = make_ctx(
+        remaining=45, open_positions=1, exposed_sides=frozenset({"UP"}), stage1_bought=True, stage1_remaining=55
+    )
     await _submit(stack, market, books, ctx)
     assert len(_orders()) == 2
 
@@ -343,7 +345,9 @@ async def test_stage2_and_stage3_add_one_order_each():
     # 25s left: stage 3 adds the last order
     market = make_market(remaining=25)
     books = books_for(market, up_ask=0.93, down_ask=0.07)
-    ctx = make_ctx(remaining=25, open_positions=1, exposed_sides=frozenset({"UP"}))
+    ctx = make_ctx(
+        remaining=25, open_positions=1, exposed_sides=frozenset({"UP"}), stage1_bought=True, stage1_remaining=55
+    )
     await _submit(stack, market, books, ctx)
     await _submit(stack, market, books, ctx)
     orders = _orders()
@@ -436,16 +440,16 @@ async def test_failed_entry_has_cooldown_and_attempt_cap():
 
 async def test_price_gap_blocks_order_until_btc_is_far_enough_from_price_to_beat():
     stack = build_stack(make_config(min_price_gap_usd=20.0))
-    market = make_market(remaining=30)
+    market = make_market(remaining=55)
     books = books_for(market, up_ask=0.85, down_ask=0.10)
 
-    weak = make_ctx(remaining=30, btc_price=100_005.0, price_to_beat=100_000.0)
+    weak = make_ctx(remaining=55, btc_price=100_005.0, price_to_beat=100_000.0)
     _, results = await _submit(stack, market, books, ctx=weak)
     assert results[0].reason == "price_gap_too_small"
     assert _orders() == []
 
     # same market, same book: the next event buys as soon as BTC has moved far enough
-    strong = make_ctx(remaining=30, btc_price=100_025.0, price_to_beat=100_000.0)
+    strong = make_ctx(remaining=55, btc_price=100_025.0, price_to_beat=100_000.0)
     _, results = await _submit(stack, market, books, ctx=strong)
     assert results[0].status == "FILLED"
     assert len(_orders()) == 1
@@ -453,7 +457,7 @@ async def test_price_gap_blocks_order_until_btc_is_far_enough_from_price_to_beat
 
 async def test_chain_gap_met_late_buys_only_stage1_then_stage3_next_event():
     # gap rule blocks until 25s left: stage 1 must be refused at <=30s, so nothing buys at all
-    stack = build_stack(make_config(min_price_gap_usd=20.0, stage_chain_enabled=True))
+    stack = build_stack(make_config(min_price_gap_usd=20.0))
     market = make_market(remaining=25)
     books = books_for(market, up_ask=0.93, down_ask=0.05)
     strong = make_ctx(remaining=25, btc_price=100_030.0, price_to_beat=100_000.0)
@@ -466,7 +470,7 @@ async def test_chain_full_sequence_three_buys_in_one_market():
     from .helpers import stage_books
 
     config = make_config(
-        min_price_gap_usd=0.0, stage_chain_enabled=True, trade_amount_usdc=1.0, stale_data_max_age_ms=60_000
+        min_price_gap_usd=0.0, trade_amount_usdc=1.0, stale_data_max_age_ms=60_000
     )
     stack = build_stack(config)
     manager = stack["manager"]
@@ -500,7 +504,7 @@ async def test_chain_stage1_late_blocks_stage2_but_not_stage3():
     from .helpers import stage_books
 
     config = make_config(
-        min_price_gap_usd=0.0, stage_chain_enabled=True, trade_amount_usdc=1.0, stale_data_max_age_ms=60_000
+        min_price_gap_usd=0.0, trade_amount_usdc=1.0, stale_data_max_age_ms=60_000
     )
     stack = build_stack(config)
     manager = stack["manager"]

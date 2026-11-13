@@ -81,14 +81,14 @@ def staged(stage: int, side: str = "UP") -> Signal:
 
 def test_add_on_stage_may_add_to_existing_position_even_at_position_cap():
     config = make_config(max_open_positions=1)
-    ctx = make_ctx(open_positions=1, exposed_sides=frozenset({"UP"}))
+    ctx = make_ctx(open_positions=1, exposed_sides=frozenset({"UP"}), stage1_bought=True, stage1_remaining=60)
     assert RiskManager().check(staged(2), ctx, config).approved is True
     assert RiskManager().check(staged(3), ctx, config).approved is True
 
 
 def test_stage1_and_opposite_side_still_respect_position_cap():
     config = make_config(max_open_positions=1)
-    ctx = make_ctx(open_positions=1, exposed_sides=frozenset({"UP"}))
+    ctx = make_ctx(open_positions=1, exposed_sides=frozenset({"UP"}), stage1_bought=True, stage1_remaining=60)
     assert RiskManager().check(staged(1), ctx, config).reason == "max_open_positions"
     assert RiskManager().check(staged(2, side="DOWN"), ctx, config).reason == "max_open_positions"
 
@@ -135,8 +135,14 @@ def test_down_needs_price_at_least_gap_below_price_to_beat():
 def test_gap_rule_applies_to_add_on_stages_too():
     config = _gap_config(max_open_positions=1)
     exposed = frozenset({"UP"})
-    weak = make_ctx(open_positions=1, exposed_sides=exposed, btc_price=100_010.0, price_to_beat=100_000.0)
-    strong = make_ctx(open_positions=1, exposed_sides=exposed, btc_price=100_030.0, price_to_beat=100_000.0)
+    weak = make_ctx(
+        open_positions=1, exposed_sides=exposed, btc_price=100_010.0, price_to_beat=100_000.0,
+        stage1_bought=True, stage1_remaining=60,
+    )
+    strong = make_ctx(
+        open_positions=1, exposed_sides=exposed, btc_price=100_030.0, price_to_beat=100_000.0,
+        stage1_bought=True, stage1_remaining=60,
+    )
     for stage in (2, 3):
         assert RiskManager().check(_side("UP", stage=stage, ask=0.93), weak, config).reason == "price_gap_too_small"
         assert RiskManager().check(_side("UP", stage=stage, ask=0.93), strong, config).approved is True
@@ -162,7 +168,7 @@ def test_gap_threshold_is_configurable():
 # Stage chain
 # ---------------------------------------------------------------------------
 def _chain_config(**overrides):
-    return make_config(stage_chain_enabled=True, max_open_positions=1, **overrides)
+    return make_config(max_open_positions=1, **overrides)
 
 
 def _chain_ctx(remaining, bought=False, s1_remaining=None):
@@ -173,12 +179,6 @@ def _chain_ctx(remaining, bought=False, s1_remaining=None):
         stage1_bought=bought,
         stage1_remaining=s1_remaining,
     )
-
-
-def test_chain_is_off_by_default():
-    config = make_config()
-    assert config.stage_chain_enabled is False
-    assert RiskManager().check(_side("UP", stage=3, ask=0.93), make_ctx(remaining=20), config).approved is True
 
 
 def test_stage1_can_buy_until_the_last_30_seconds_then_everything_stops():

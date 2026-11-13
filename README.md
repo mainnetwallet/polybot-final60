@@ -379,7 +379,6 @@ Strategy and risk defaults:
 | `STAGE3_SECONDS` / `STAGE3_THRESHOLD` | `30` / `0.90` | Stage 3 add-on: time left and ask level |
 | `MAX_EXECUTION_PRICE` | `0.99` | Hard cap on the price paid (clamped to `1 - tick size` at order time) |
 | `MIN_PRICE_GAP_USD` | `20` | Price-to-beat filter: an entry needs the current BTC price (Chainlink TWAP60) at least this many USD beyond the price to beat in the bought direction (UP: above, DOWN: below). `0` disables it. Applies to every stage; missing/stale BTC data blocks the buy |
-| `STAGE_CHAIN_ENABLED` | `true` | Chained stages per 5m market: stage 1 must buy first, and only while more than `STAGE3_SECONDS` remain (otherwise nothing buys that market); stage 2 needs stage 1 to have bought *before* `STAGE2_SECONDS` remained; stage 3 needs stage 1 to have bought (stage 2 not required). Up to 3 buys per market. `false` = independent stages |
 | `TRADE_AMOUNT_USDC` | `1.0` | Requested notional per trade |
 | `STALE_DATA_MAX_AGE_MS` | `5000` | Maximum book age for execution |
 | `ENTRY_MAX_ATTEMPTS` / `ENTRY_RETRY_GAP_MS` | `5` / `1000` | Per stage and market: max tries for a failed/cancelled entry, and minimum gap between tries |
@@ -396,6 +395,8 @@ Strategy and risk defaults:
 | `PAPER_FEE_EXPONENT` | `1.0` | Fee curve exponent |
 | `LIVE_TRADING_ENABLED` | `false` | Master live switch |
 | `POLYMARKET_GEO_VERIFIED` | `false` | Set true only after verifying eligibility |
+
+Stage chain (always on, not configurable): stage 1 must buy first, and only while more than `STAGE3_SECONDS` remain (otherwise nothing buys that market); stage 2 needs stage 1 to have bought *before* `STAGE2_SECONDS` remained; stage 3 needs stage 1 to have bought (stage 2 not required). Up to 3 buys per 5m market.
 
 Other `.env` keys (all present in `.env.example`):
 

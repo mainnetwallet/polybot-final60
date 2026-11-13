@@ -40,15 +40,13 @@ class RiskContext:
 class RiskManager:
     @staticmethod
     def _check_stage_chain(signal: Signal, ctx: RiskContext, config: RuntimeSettings) -> RiskDecision | None:
-        """Chained entries per market.
+        """Chained entries per market (always on).
 
         * stage 1: once only stage3_seconds (30s) or less remain, a missed stage 1 means no entry
           at all (stages 1, 2 and 3 stay off).
         * stage 2: only if stage 1 bought while MORE than stage2_seconds (50s) remained.
         * stage 3: only if stage 1 bought (stage 2 is not required).
         """
-        if not config.stage_chain_enabled:
-            return None
         if signal.stage == 1:
             if not ctx.stage1_bought and ctx.remaining_seconds <= config.stage3_seconds:
                 return RiskDecision(

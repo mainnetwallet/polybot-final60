@@ -18,7 +18,7 @@ from app.strategy.engine import FinalWindowStrategy
 
 
 def make_market(
-    remaining: float = 30.0,
+    remaining: float = 55.0,
     duration: float = 300.0,
     market_id: str = "0xmarket",
     slug: str = "btc-updown-5m-test",
@@ -108,7 +108,7 @@ def make_ctx(
     daily_pnl: float = 0.0,
     trades_today: int = 0,
     open_positions: int = 0,
-    remaining: float = 30.0,
+    remaining: float = 55.0,
     kill_switch: bool = False,
     exposed_sides: frozenset[str] = frozenset(),
     btc_price: float | None = None,

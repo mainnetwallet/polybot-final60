@@ -34,7 +34,6 @@ OVERRIDABLE_KEYS = (
     "max_trades_per_day",
     "max_open_positions",
     "min_price_gap_usd",
-    "stage_chain_enabled",
 )
 
 
@@ -57,7 +56,6 @@ class RuntimeSettings(BaseModel):
     max_trades_per_day: int = Field(ge=1, le=10000)
     max_open_positions: int = Field(ge=0, le=100)
     min_price_gap_usd: float = Field(default=0.0, ge=0.0, le=1_000_000.0)
-    stage_chain_enabled: bool = False
     paper_fill_ratio: float = Field(gt=0.0, le=1.0)
     paper_fee_exponent: float = Field(ge=0.0, le=5.0)
     paper_starting_balance: float = Field(gt=0.0)
