@@ -532,6 +532,7 @@ class TradingBot:
             ).scalars().all()
             stage1_bought = any(
                 self.orders._key_stage(order.order_key) == 1
+                and self.orders._key_action(order.order_key) == "BUY"
                 and (
                     order.status in {"PENDING", "SUBMITTED", "PARTIALLY_FILLED", "FILLED"}
                     or order.filled_size > 0
@@ -1466,6 +1467,10 @@ class TradingBot:
                 "stage0_high_from_ask": config.stage0_high_from_ask,
                 "stage0_sell_price_low": config.stage0_sell_price_low,
                 "stage0_sell_price_mid": config.stage0_sell_price_mid,
+                "stage1_sell_enabled": config.stage1_sell_enabled,
+                "stage1_sell_min_buy": config.stage1_sell_min_buy,
+                "stage1_sell_max_buy": config.stage1_sell_max_buy,
+                "stage1_sell_price": config.stage1_sell_price,
                 "conflict_policy": config.conflict_policy,
                 "duplicate_policy": config.duplicate_policy,
             },

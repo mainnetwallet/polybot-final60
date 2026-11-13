@@ -277,6 +277,12 @@ function PolicyPanel() {
         : "off",
     ],
     [
+      "Stage 1 take-profit",
+      strategy?.stage1_sell_enabled
+        ? `bought ${fmtCents(strategy.stage1_sell_min_buy)}–${fmtCents(strategy.stage1_sell_max_buy)} → sell at ${fmtCents(strategy.stage1_sell_price)}`
+        : "off",
+    ],
+    [
       "Stage 2 (after stage 1)",
       strategy ? `≤${strategy.stage2_seconds}s · ask ≥ ${fmtCents(strategy.stage2_threshold)}` : "—",
     ],

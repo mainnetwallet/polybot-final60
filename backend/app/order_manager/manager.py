@@ -41,6 +41,7 @@ TERMINAL_EMPTY = ("REJECTED", "CANCELED", "EXPIRED")
 ExecutorProvider = Callable[[str], ExecutionEngine]
 SubmissionAllowed = Callable[[str], bool]
 _STAGE_SUFFIX = re.compile(r":s(\d+)$")
+_SELL_STAGE = re.compile(r":s(\d+):sell:")
 # Stage 0 take-profit SELL orders carry this marker in their order key.
 _SELL_MARK = ":sell:"
 MAX_SELL_ATTEMPTS = 30
@@ -54,13 +55,14 @@ def _floor_shares(size: float) -> float:
 
 @dataclass
 class Stage0Holding:
-    """Shares bought by stage 0 in one market that have not been sold yet."""
+    """Shares bought by stage 0 (or stage 1, see `stage`) in one market that have not been sold yet."""
 
     side: str
     token_id: str
     size: float
     sell_in_flight: bool = False
     cost: float | None = None  # average price paid per share (decides the take-profit tier)
+    stage: int = 0  # which entry stage bought these shares (0 or 1)
 
 
 @dataclass
@@ -120,10 +122,20 @@ class OrderManager:
         self._background_writes: set[asyncio.Task] = set()
         # (mode, market) -> stage 0 shares still held; absent = not loaded from the database yet
         self._stage0_holdings: dict[tuple[str, str], Stage0Holding | None] = {}
-        self._sell_attempts: dict[tuple[str, str], int] = {}
-        self._last_sell_ms: dict[tuple[str, str], int] = {}
+        # same for the shares stage 1 bought (stage 1 take-profit sells)
+        self._stage1_holdings: dict[tuple[str, str], Stage0Holding | None] = {}
+        self._sell_attempts: dict[tuple[str, str, int], int] = {}
+        self._last_sell_ms: dict[tuple[str, str, int], int] = {}
         # (mode, market) pairs where stage 0 already got an accepted buy (it buys once per market)
         self._stage0_bought: set[tuple[str, str]] = set()
+
+    def _holdings(self, stage: int) -> dict[tuple[str, str], Stage0Holding | None]:
+        return self._stage1_holdings if stage == 1 else self._stage0_holdings
+
+    def _drop_holdings(self, mode: str, market_id: str) -> None:
+        """Forget what is cached as held so the next exit pass reloads it from the database."""
+        self._stage0_holdings.pop((mode, market_id), None)
+        self._stage1_holdings.pop((mode, market_id), None)
 
     def stage1_remaining(self, mode: str, market_id: str) -> float | None:
         return self._stage1_remaining.get((mode, market_id))
@@ -191,7 +203,8 @@ class OrderManager:
     @staticmethod
     def _key_stage(order_key: str | None) -> int:
         if _SELL_MARK in (order_key or ""):
-            return 0  # sells only exist for stage 0
+            match = _SELL_STAGE.search(order_key or "")
+            return int(match.group(1)) if match else 0  # take-profit sells exist for stage 0 and 1
         match = _STAGE_SUFFIX.search(order_key or "")
         return int(match.group(1)) if match else 1
 
@@ -384,6 +397,8 @@ class OrderManager:
             )
 
         result = await asyncio.to_thread(self._finalize_order, order_id, report, signal, mode)
+        if signal.stage == 1:
+            self._stage1_holdings.pop((mode, market.market_id), None)  # reload what is held
         if signal.stage == 0:
             self._stage0_holdings.pop((mode, market.market_id), None)  # reload what is held
             if result.status not in {"REJECTED", "CANCELED"}:
@@ -421,8 +436,8 @@ class OrderManager:
                 query = query.where(Order.side == signal.side)
             orders = session.execute(query).scalars().all()
             for order in orders:
-                # each entry stage has its own one-order allowance
-                if self._key_stage(order.order_key) != signal.stage:
+                # each entry stage has its own one-order allowance (take-profit sells are not entries)
+                if _SELL_MARK in (order.order_key or "") or self._key_stage(order.order_key) != signal.stage:
                     continue
                 if order.status in ACTIVE_STATUSES or order.status == "FILLED" or order.filled_size > 0:
                     return order
@@ -609,8 +624,8 @@ class OrderManager:
             if not report.fills:
                 continue
             await asyncio.to_thread(self._apply_partial_retry, order_id, report, mode)
-            if stage == 0:
-                self._stage0_holdings.pop((mode, market.market_id), None)
+            if stage in (0, 1):
+                self._holdings(stage).pop((mode, market.market_id), None)
             self._logs.log(
                 "INFO",
                 "fill",
@@ -718,6 +733,7 @@ class OrderManager:
             token_id = order.token_id
             current_price = order.avg_fill_price
             is_sell = self._key_action(order.order_key) == "SELL"
+            order_stage = self._key_stage(order.order_key)
             order_market_id = order.market_id
 
         engine = self._executor_provider("live")
@@ -796,11 +812,11 @@ class OrderManager:
             if is_sell:
                 self._portfolio.apply_sell_report(
                     session, "live", order, report,
-                    basis=self.stage0_basis(session, "live", order.market_id, order.side),
+                    basis=self.stage0_basis(session, "live", order.market_id, order.side, order_stage),
                 )
             else:
                 self._portfolio.apply_report(session, "live", order, report)
-        self._stage0_holdings.pop(("live", order_market_id), None)  # reload what is still held
+        self._drop_holdings("live", order_market_id)  # reload what is still held
         if delta > 0:
             self._logs.log(
                 "INFO",
@@ -815,6 +831,7 @@ class OrderManager:
         self._trigger_market = None
         self._retry_after.clear()
         self._stage0_holdings.clear()  # re-read from the database on the next event
+        self._stage1_holdings.clear()
         if len(self._sell_attempts) > 500:
             self._sell_attempts.clear()
             self._last_sell_ms.clear()
@@ -823,19 +840,25 @@ class OrderManager:
     # Stage 0 take-profit: sell what stage 0 bought once the best bid reaches the sell price
     # ------------------------------------------------------------------
     @staticmethod
-    def stage0_holding_in_session(session, mode: str, market_id: str) -> Stage0Holding | None:
+    def stage0_holding_in_session(
+        session, mode: str, market_id: str, stage: int = 0
+    ) -> Stage0Holding | None:
         orders = session.execute(
             select(Order).where(Order.mode == mode, Order.market_id == market_id)
         ).scalars().all()
         buys = [
             o for o in orders
             if o.order_key and _SELL_MARK not in o.order_key
-            and OrderManager._key_stage(o.order_key) == 0 and o.filled_size > 0
+            and OrderManager._key_stage(o.order_key) == stage and o.filled_size > 0
         ]
         if not buys:
             return None
         side, token_id = buys[0].side, buys[0].token_id
-        sells = [o for o in orders if _SELL_MARK in (o.order_key or "") and o.side == side]
+        sells = [
+            o for o in orders
+            if _SELL_MARK in (o.order_key or "") and o.side == side
+            and OrderManager._key_stage(o.order_key) == stage
+        ]
         held = sum(o.filled_size for o in buys if o.side == side) - sum(o.filled_size for o in sells)
         position = session.execute(
             select(Position).where(
@@ -856,18 +879,21 @@ class OrderManager:
             else None
         )
         return Stage0Holding(
-            side=side, token_id=token_id, size=round(held, 10), sell_in_flight=in_flight, cost=cost
+            side=side, token_id=token_id, size=round(held, 10), sell_in_flight=in_flight,
+            cost=cost, stage=stage,
         )
 
     @staticmethod
-    def stage0_basis(session, mode: str, market_id: str, side: str) -> tuple[float, float] | None:
-        """(cost per share, buy fee per share) of the shares stage 0 bought in this market/side."""
+    def stage0_basis(
+        session, mode: str, market_id: str, side: str, stage: int = 0
+    ) -> tuple[float, float] | None:
+        """(cost per share, buy fee per share) of the shares `stage` bought in this market/side."""
         buys = [
             o for o in session.execute(
                 select(Order).where(Order.mode == mode, Order.market_id == market_id, Order.side == side)
             ).scalars().all()
             if o.order_key and _SELL_MARK not in o.order_key
-            and OrderManager._key_stage(o.order_key) == 0 and o.filled_size > 0
+            and OrderManager._key_stage(o.order_key) == stage and o.filled_size > 0
         ]
         shares = sum(o.filled_size for o in buys)
         if shares <= 0:
@@ -876,9 +902,9 @@ class OrderManager:
         fees = sum(o.fee or 0.0 for o in buys)
         return cost / shares, fees / shares
 
-    def load_stage0_holding(self, mode: str, market_id: str) -> Stage0Holding | None:
+    def load_stage0_holding(self, mode: str, market_id: str, stage: int = 0) -> Stage0Holding | None:
         with session_scope() as session:
-            return self.stage0_holding_in_session(session, mode, market_id)
+            return self.stage0_holding_in_session(session, mode, market_id, stage)
 
     def stage0_bought(self, mode: str, market_id: str) -> bool:
         return (mode, market_id) in self._stage0_bought
@@ -886,10 +912,17 @@ class OrderManager:
     def exit_check_needed(self, mode: str, market_id: str) -> bool:
         """False once we know nothing is held for stage 0 in this market (keeps the hot path cheap)."""
         key = (mode, market_id)
-        return key not in self._stage0_holdings or self._stage0_holdings[key] is not None
+        return any(
+            key not in holdings or holdings[key] is not None
+            for holdings in (self._stage0_holdings, self._stage1_holdings)
+        )
 
     def has_stage0_holding(self, mode: str, market_id: str) -> bool:
+        """True while a take-profit sell may still be due (stage 0 or stage 1 shares held)."""
         key = (mode, market_id)
+        stage1 = self._stage1_holdings.get(key)
+        if stage1 is not None and not stage1.sell_in_flight:
+            return True
         if key not in self._stage0_holdings:
             # not loaded yet (e.g. right after the buy): keep the retry loop awake for this market
             return key in self._stage0_bought
@@ -899,46 +932,63 @@ class OrderManager:
     async def handle_exits(
         self, market: MarketInfo, books: dict[str, OrderBook], mode: str, config
     ) -> list[OrderResult]:
-        """Sell the stage 0 shares of this market when the best bid has reached stage0_sell_price."""
+        """Take-profit sells: stage 0 shares at their tier price, stage 1 shares (bought 0.80-0.90) at 0.98."""
         if market.remaining_seconds() <= 0:
             return []
+        results: list[OrderResult] = []
+        for stage in (0, 1):
+            results.extend(await self._handle_stage_exit(market, books, mode, config, stage))
+        return results
+
+    async def _handle_stage_exit(
+        self, market: MarketInfo, books: dict[str, OrderBook], mode: str, config, stage: int
+    ) -> list[OrderResult]:
+        """Sell the shares `stage` bought in this market once the best bid reaches its sell price."""
         reg_key = (mode, market.market_id)
+        sell_key = (mode, market.market_id, stage)
+        holdings = self._holdings(stage)
         async with self._lock:
             if not self._submission_allowed(mode):
                 return []
-            if reg_key not in self._stage0_holdings:
-                self._stage0_holdings[reg_key] = await asyncio.to_thread(
-                    self.load_stage0_holding, mode, market.market_id
+            if reg_key not in holdings:
+                holdings[reg_key] = await asyncio.to_thread(
+                    self.load_stage0_holding, mode, market.market_id, stage
                 )
-            holding = self._stage0_holdings[reg_key]
+            holding = holdings[reg_key]
             if holding is None or holding.sell_in_flight:
                 return []
             sell_size = _floor_shares(holding.size)
             if sell_size < SELL_DUST:
-                self._stage0_holdings[reg_key] = None
+                holdings[reg_key] = None
                 return []
             book = books.get(holding.token_id)
             bid = book.best_bid if book is not None else None
-            sell_price = config.stage0_sell_price_for(holding.cost)
+            sell_price = (
+                config.stage0_sell_price_for(holding.cost)
+                if stage == 0
+                else config.stage1_sell_price_for(holding.cost)
+            )
+            if sell_price is None:
+                return []  # stage 1 shares bought outside the take-profit band: held to settlement
             if bid is None or bid + 1e-9 < sell_price:
                 return []
-            attempts = self._sell_attempts.get(reg_key, 0)
+            attempts = self._sell_attempts.get(sell_key, 0)
             if attempts >= MAX_SELL_ATTEMPTS:
                 return [OrderResult(None, holding.side, "BLOCKED", "max_sell_attempts")]
             now_ms = clock.now_ms()
-            if now_ms - self._last_sell_ms.get(reg_key, 0) < self._retry_gap_ms:
+            if now_ms - self._last_sell_ms.get(sell_key, 0) < self._retry_gap_ms:
                 return []
-            self._sell_attempts[reg_key] = attempts + 1
-            self._last_sell_ms[reg_key] = now_ms
+            self._sell_attempts[sell_key] = attempts + 1
+            self._last_sell_ms[sell_key] = now_ms
 
-            key = f"{mode}:{market.market_id}:{holding.side}:s0{_SELL_MARK}{uuid.uuid4().hex[:8]}"
+            key = f"{mode}:{market.market_id}:{holding.side}:s{stage}{_SELL_MARK}{uuid.uuid4().hex[:8]}"
             order_id = await asyncio.to_thread(
                 self._reserve_sell_order, mode, market, holding, key, sell_size, bid
             )
             self._logs.log(
                 "INFO",
                 "order_submit",
-                f"S0 marketable SELL {holding.side} {sell_size:.2f} shares at bid {bid:.3f}",
+                f"S{stage} marketable SELL {holding.side} {sell_size:.2f} shares at bid {bid:.3f}",
                 payload={
                     "market_id": market.market_id,
                     "side": holding.side,
@@ -981,17 +1031,17 @@ class OrderManager:
                     ),
                 )
             result = await asyncio.to_thread(
-                self._finalize_sell_order, order_id, report, holding.side, mode
+                self._finalize_sell_order, order_id, report, holding.side, mode, stage
             )
-            self._stage0_holdings[reg_key] = await asyncio.to_thread(
-                self.load_stage0_holding, mode, market.market_id
+            holdings[reg_key] = await asyncio.to_thread(
+                self.load_stage0_holding, mode, market.market_id, stage
             )
             if report.fills:
-                self._sell_attempts.pop(reg_key, None)
+                self._sell_attempts.pop(sell_key, None)
                 self._logs.log(
                     "INFO",
                     "fill",
-                    f"S0 sold {report.filled_size:.4f} shares @ {report.avg_price or 0:.4f}",
+                    f"S{stage} sold {report.filled_size:.4f} shares @ {report.avg_price or 0:.4f}",
                     payload={
                         "order_id": result.order_id,
                         "filled_size": result.filled_size,
@@ -1005,7 +1055,7 @@ class OrderManager:
                 self._logs.log(
                     "WARNING" if report.fills or report.status == "CANCELED" else "ERROR",
                     "error",
-                    f"S0 sell {report.status}: {report.error or 'rejected'}",
+                    f"S{stage} sell {report.status}: {report.error or 'rejected'}",
                     payload={
                         "order_id": result.order_id,
                         "side": holding.side,
@@ -1033,14 +1083,14 @@ class OrderManager:
                 status="PENDING",
                 requested_notional=round(size * bid, 6),
                 requested_price=bid,
-                reason="stage0_take_profit",
+                reason=f"stage{holding.stage}_take_profit",
             )
             session.add(order)
             session.flush()
             return order.id
 
     def _finalize_sell_order(
-        self, order_id: int, report: ExecutionReport, side: str, mode: str
+        self, order_id: int, report: ExecutionReport, side: str, mode: str, stage: int = 0
     ) -> OrderResult:
         with session_scope() as session:
             order = session.get(Order, order_id)
@@ -1057,13 +1107,13 @@ class OrderManager:
             order.error = report.error
             self._portfolio.apply_sell_report(
                 session, mode, order, report,
-                basis=self.stage0_basis(session, mode, order.market_id, order.side),
+                basis=self.stage0_basis(session, mode, order.market_id, order.side, stage),
             )
             result = OrderResult(
                 order.id,
                 side,
                 order.status,
-                "stage0_sell",
+                f"stage{stage}_sell",
                 order.filled_size,
                 order.avg_fill_price,
                 order.latency_ms,

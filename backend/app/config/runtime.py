@@ -46,6 +46,10 @@ OVERRIDABLE_KEYS = (
     "stage0_high_from_ask",
     "stage0_sell_price_low",
     "stage0_sell_price_mid",
+    "stage1_sell_enabled",
+    "stage1_sell_min_buy",
+    "stage1_sell_max_buy",
+    "stage1_sell_price",
 )
 
 
@@ -82,6 +86,10 @@ class RuntimeSettings(BaseModel):
     stage0_high_from_ask: float = Field(default=0.80, ge=0.01, le=0.999)
     stage0_sell_price_low: float = Field(default=0.80, ge=0.02, le=0.999)
     stage0_sell_price_mid: float = Field(default=0.90, ge=0.02, le=0.999)
+    stage1_sell_enabled: bool = False
+    stage1_sell_min_buy: float = Field(default=0.80, ge=0.01, le=0.999)
+    stage1_sell_max_buy: float = Field(default=0.90, ge=0.01, le=0.999)
+    stage1_sell_price: float = Field(default=0.98, ge=0.02, le=0.999)
     paper_fill_ratio: float = Field(gt=0.0, le=1.0)
     paper_fee_exponent: float = Field(ge=0.0, le=5.0)
     paper_starting_balance: float = Field(gt=0.0)
@@ -109,7 +117,19 @@ class RuntimeSettings(BaseModel):
             raise ValueError("stage0_sell_price_low must be above the buy prices of its tier")
         if self.stage0_sell_price_mid <= min(self.stage0_high_from_ask, self.stage0_max_ask):
             raise ValueError("stage0_sell_price_mid must be above the buy prices of its tier")
+        if self.stage1_sell_min_buy > self.stage1_sell_max_buy:
+            raise ValueError("stage1_sell_min_buy must be <= stage1_sell_max_buy")
+        if self.stage1_sell_price <= self.stage1_sell_max_buy:
+            raise ValueError("stage1_sell_price must be greater than stage1_sell_max_buy")
         return self
+
+    def stage1_sell_price_for(self, cost_per_share: float | None) -> float | None:
+        """Take-profit price for stage 1 shares bought at `cost_per_share`; None = hold (no sale)."""
+        if not self.stage1_sell_enabled or cost_per_share is None:
+            return None
+        if self.stage1_sell_min_buy - 1e-6 <= cost_per_share <= self.stage1_sell_max_buy + 1e-6:
+            return self.stage1_sell_price
+        return None
 
     def stage0_sell_price_for(self, cost_per_share: float | None) -> float:
         """Take-profit sell price for shares stage 0 bought at `cost_per_share` (unknown -> highest tier)."""

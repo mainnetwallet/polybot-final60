@@ -134,6 +134,43 @@ const FIELDS: FieldSpec[] = [
     max: "0.999",
   },
   {
+    key: "stage1_sell_enabled",
+    label: "Stage 1: take-profit sell",
+    hint: "On: stage 1 shares bought inside the buy band are sold as soon as the best bid reaches the sell price.",
+    kind: "select",
+    options: [
+      { value: "true", label: "On" },
+      { value: "false", label: "Off" },
+    ],
+  },
+  {
+    key: "stage1_sell_min_buy",
+    label: "Stage 1: sell band from (buy price)",
+    hint: "Stage 1 shares are sold only if their average buy price is at or above this (default 0.80).",
+    kind: "number",
+    step: "0.01",
+    min: "0.01",
+    max: "0.999",
+  },
+  {
+    key: "stage1_sell_max_buy",
+    label: "Stage 1: sell band to (buy price)",
+    hint: "...and at or below this (default 0.90). Shares bought higher are held to settlement.",
+    kind: "number",
+    step: "0.01",
+    min: "0.01",
+    max: "0.999",
+  },
+  {
+    key: "stage1_sell_price",
+    label: "Stage 1: sell at",
+    hint: "Stage 1 sells its shares as soon as the best bid reaches this decimal (default 0.98). Must be higher than the band's upper end.",
+    kind: "number",
+    step: "0.01",
+    min: "0.02",
+    max: "0.999",
+  },
+  {
     key: "stage2_seconds",
     label: "Stage 2: seconds left",
     hint: "From this many seconds before expiry, stage 2 may add one more buy, but only if stage 1 already bought before this mark.",
@@ -448,6 +485,14 @@ export function Settings() {
     }
     if (Number(draft.stage0_sell_price) <= Number(draft.stage0_max_ask)) {
       setError("Stage 0 sell price must be higher than the stage 0 max ask.");
+      return;
+    }
+    if (Number(draft.stage1_sell_min_buy) > Number(draft.stage1_sell_max_buy)) {
+      setError("Stage 1 sell band start must not be higher than its end.");
+      return;
+    }
+    if (Number(draft.stage1_sell_price) <= Number(draft.stage1_sell_max_buy)) {
+      setError("Stage 1 sell price must be higher than the top of the stage 1 sell band.");
       return;
     }
     if (Number(draft.stage0_mid_from_ask) > Number(draft.stage0_high_from_ask)) {

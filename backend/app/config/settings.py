@@ -98,6 +98,13 @@ class Settings(BaseSettings):
     stage0_high_from_ask: float = 0.80
     stage0_sell_price_low: float = 0.80
     stage0_sell_price_mid: float = 0.90
+    # Stage 1 take-profit: shares stage 1 bought at an average price between stage1_sell_min_buy and
+    # stage1_sell_max_buy are sold again as soon as the best bid reaches stage1_sell_price.
+    # Stage 1 shares bought outside that band (and all stage 2/3 shares) are held to settlement.
+    stage1_sell_enabled: bool = True
+    stage1_sell_min_buy: float = 0.80
+    stage1_sell_max_buy: float = 0.90
+    stage1_sell_price: float = 0.98
     duplicate_policy: str = "one_per_market"  # one_per_market | one_per_side | allow
     conflict_policy: str = "up_first"  # up_first | down_first | highest_ask | block_both
 
