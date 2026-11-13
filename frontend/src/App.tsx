@@ -4,10 +4,12 @@ import { Topbar } from "./components/Topbar";
 import { ModeSwitchModal, StartLiveModal, KillSwitchModal } from "./components/SafetyModals";
 import { ToastStack } from "./components/ToastStack";
 import { IconAlert } from "./components/Icons";
+import { AuthProvider, useAuth } from "./hooks/AuthContext";
 import { BotProvider, useBot } from "./hooks/BotContext";
 import { PAGE_META, pageFromHash, type Page } from "./lib/navigation";
 import { Analytics } from "./pages/Analytics";
 import { Logs } from "./pages/Logs";
+import { AuthSplash, Login } from "./pages/Login";
 import { Overview } from "./pages/Overview";
 import { Settings } from "./pages/Settings";
 import { Strategy } from "./pages/Strategy";
@@ -89,10 +91,26 @@ function Shell() {
   );
 }
 
-export default function App() {
+function Gate() {
+  const { phase, retry } = useAuth();
+  if (phase === "checking" || phase === "unreachable") {
+    return <AuthSplash unreachable={phase === "unreachable"} onRetry={retry} />;
+  }
+  if (phase === "login") return <Login />;
+  // BotProvider (REST + WebSocket) only starts once the browser is signed in
   return (
     <BotProvider>
-      <Shell />
+      <div className="app-enter h-full">
+        <Shell />
+      </div>
     </BotProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <Gate />
+    </AuthProvider>
   );
 }

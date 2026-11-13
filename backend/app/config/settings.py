@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     # Optional shared secret for the control API (X-API-Key / Bearer header, ``?token=`` on the
     # WebSocket). Empty = no auth, fine on 127.0.0.1; set it before binding HOST to 0.0.0.0.
     api_token: str = ""
+    # Dashboard login. One admin account; the password lives in .env only. Empty ADMIN_PASSWORD = login off.
+    admin_username: str = "admin"
+    admin_password: str = ""
+    # Optional extra signing secret for session cookies (changing it logs every browser out).
+    auth_secret: str = ""
+    # How long one login stays valid in a browser (sliding: it renews whenever the dashboard is open).
+    auth_session_days: int = 365
     log_level: str = "INFO"
 
     # --- database -------------------------------------------------------
@@ -175,7 +182,15 @@ class Settings(BaseSettings):
     @property
     def api_exposed_without_token(self) -> bool:
         loopback = {"127.0.0.1", "localhost", "::1"}
-        return self.host.strip().lower() not in loopback and not self.api_token.strip()
+        return (
+            self.host.strip().lower() not in loopback
+            and not self.api_token.strip()
+            and not self.admin_password
+        )
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.admin_password)
 
     @property
     def cors_origin_list(self) -> list[str]:

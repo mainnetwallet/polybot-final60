@@ -16,6 +16,7 @@ from app.api.schemas import (
     SettingsPatch,
     StartRequest,
 )
+from app.api.auth import AuthService
 from app.config.runtime import SettingsService
 from app.config.settings import Settings
 from app.database.models import LogEntry, utcnow
@@ -29,18 +30,28 @@ def build_router(
     runtime: SettingsService,
     settings: Settings,
     analytics,
+    auth: AuthService | None = None,
 ) -> APIRouter:
     def require_token(request: Request) -> None:
-        """Opt-in shared-secret auth (API_TOKEN). No token configured = open, as before."""
+        """Dashboard login (session cookie) and/or the optional API_TOKEN header for scripts.
+
+        Neither configured = open, as before. When either is configured, a request must present a valid
+        session cookie or the API token.
+        """
         expected = settings.api_token.strip()
-        if not expected:
+        login_on = auth is not None and auth.enabled
+        if not expected and not login_on:
             return
-        supplied = request.headers.get("x-api-key", "")
-        authorization = request.headers.get("authorization", "")
-        if not supplied and authorization.lower().startswith("bearer "):
-            supplied = authorization[7:].strip()
-        if not hmac.compare_digest(supplied.encode(), expected.encode()):
-            raise HTTPException(status_code=401, detail="invalid or missing API token")
+        if login_on and auth.request_authenticated(request.cookies):
+            return
+        if expected:
+            supplied = request.headers.get("x-api-key", "")
+            authorization = request.headers.get("authorization", "")
+            if not supplied and authorization.lower().startswith("bearer "):
+                supplied = authorization[7:].strip()
+            if supplied and hmac.compare_digest(supplied.encode(), expected.encode()):
+                return
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     # /health stays open so uptime monitors keep working; everything else needs the token.
     public = APIRouter(prefix="/api")

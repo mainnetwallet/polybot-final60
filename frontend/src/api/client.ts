@@ -18,9 +18,18 @@ export function apiToken(): string {
   }
 }
 
+export const UNAUTHORIZED_EVENT = "polybot:unauthorized";
+
+export interface AuthStatus {
+  auth_required: boolean;
+  authenticated: boolean;
+  username: string | null;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = apiToken();
   const response = await fetch(path, {
+    credentials: "same-origin",
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -28,6 +37,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
+  if (response.status === 401 && !path.startsWith("/api/auth/")) {
+    // the session expired or was revoked: send the dashboard back to the login page
+    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  }
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
     try {
@@ -43,6 +56,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  authMe: () => request<AuthStatus>("/api/auth/me"),
+  login: (username: string, password: string) =>
+    request<AuthStatus>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+  logout: () => request<AuthStatus>("/api/auth/logout", { method: "POST" }),
+
   state: () => request<Snapshot>("/api/state"),
   health: () => request<Record<string, unknown>>("/api/health"),
 

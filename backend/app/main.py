@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.auth import AuthService, build_auth_router
 from app.api.routes import build_router
 from app.api.ws import RealtimeHub, build_ws_router
 from app.config.runtime import SettingsService
@@ -47,6 +48,7 @@ def create_app() -> FastAPI:
     portfolio = Portfolio(settings)
     analytics = AnalyticsService()
     bot = TradingBot(settings, runtime, portfolio, analytics, hub)
+    auth = AuthService(settings)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -56,6 +58,10 @@ def create_app() -> FastAPI:
                 "API is bound to %s without API_TOKEN: anyone who can reach it can start/stop the bot. "
                 "Set API_TOKEN (or bind HOST=127.0.0.1).",
                 settings.host,
+            )
+        if not auth.enabled:
+            logging.getLogger(__name__).warning(
+                "Dashboard login is OFF (ADMIN_PASSWORD is empty). Set ADMIN_PASSWORD in .env to require a login."
             )
         ensure_schema()
         await bot.initialize()
@@ -77,10 +83,12 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(build_router(bot, runtime, settings, analytics))
-    app.include_router(build_ws_router(hub, bot.snapshot, settings.api_token))
+    app.include_router(build_auth_router(auth))
+    app.include_router(build_router(bot, runtime, settings, analytics, auth))
+    app.include_router(build_ws_router(hub, bot.snapshot, settings.api_token, auth))
     app.state.bot = bot
     app.state.settings = settings
+    app.state.auth = auth
     return app
 
 

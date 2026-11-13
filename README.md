@@ -427,6 +427,10 @@ Other `.env` keys (all present in `.env.example`):
 | `PORT` | `8000` | API port |
 | `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Allowed dashboard origins |
 | `API_TOKEN` | _(empty)_ | Optional shared secret for the control API (`X-API-Key` / `Authorization: Bearer`, `?token=` on the WebSocket; `/api/health` stays open). Set it before binding `HOST` to a non-loopback address. In the dashboard: `localStorage.setItem("polybot_api_token", "<token>")` |
+| `ADMIN_USERNAME` | `admin` | Dashboard login username. |
+| `ADMIN_PASSWORD` | _(empty)_ | Dashboard login password (set it in `.env`). Empty = login disabled. Changing it logs every browser out. |
+| `AUTH_SECRET` | _(empty)_ | Optional extra secret mixed into the session-cookie signature. |
+| `AUTH_SESSION_DAYS` | `365` | How long one login stays valid in a browser (renews while the dashboard is open; survives restarts). |
 | `LOG_LEVEL` | `INFO` | Log verbosity |
 | `DATABASE_URL` | `sqlite:///data/polymarket_bot.db` | Database location (relative paths resolve against the repo root) |
 | `LIVE_CONFIRMATION_PHRASE` | `GO LIVE` | Phrase required in the dashboard to enable live mode |

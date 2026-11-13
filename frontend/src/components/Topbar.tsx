@@ -1,8 +1,9 @@
 import type { Page } from "../lib/navigation";
 import { NAV, PAGE_META } from "../lib/navigation";
+import { useAuth } from "../hooks/AuthContext";
 import { useBot } from "../hooks/BotContext";
 import { cx } from "../lib/format";
-import { IconAlert, IconPause, IconPlay, IconShield, IconWifi, IconWifiOff, IconZap } from "./Icons";
+import { IconAlert, IconLogout, IconPause, IconPlay, IconShield, IconWifi, IconWifiOff, IconZap } from "./Icons";
 import { StatusPill } from "./Badges";
 
 interface TopbarProps {
@@ -15,6 +16,7 @@ interface TopbarProps {
 
 export function Topbar({ page, onNavigate, onOpenMode, onStartLive, onOpenKill }: TopbarProps) {
   const { snapshot, feedState, start, stop, killSwitch: setKillSwitch } = useBot();
+  const { authRequired, username, logout } = useAuth();
   const meta = PAGE_META[page];
   const bot = snapshot?.bot;
   const running = bot ? bot.status === "RUNNING" : null;
@@ -130,6 +132,18 @@ export function Topbar({ page, onNavigate, onOpenMode, onStartLive, onOpenKill }
             <IconShield size={14} />
             <span className="hidden xl:inline">{killActive ? "Clear kill" : "Kill switch"}</span>
           </button>
+
+          {authRequired ? (
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="btn btn-ghost h-9 px-2.5 hover:text-slate-200"
+              title={`Sign out${username ? ` (${username})` : ""}`}
+              aria-label="Sign out"
+            >
+              <IconLogout size={15} />
+            </button>
+          ) : null}
         </div>
       </div>
 
