@@ -1,531 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { SettingsState } from "../api/types";
-import { ModeBadge } from "../components/Badges";
-import { IconAlert, IconCheck, IconClose, IconRefresh, IconSettings, IconShield, IconWallet } from "../components/Icons";
+import { ModeBadge, StatusPill } from "../components/Badges";
+import { IconAlert, IconRefresh, IconSearch, IconSettings, IconShield, IconWallet } from "../components/Icons";
 import { Modal } from "../components/Modal";
 import { useBot } from "../hooks/BotContext";
 import { cx, fmtUsd } from "../lib/format";
-
-type FieldKind = "number" | "select";
-
-interface FieldSpec {
-  key: string;
-  label: string;
-  hint: string;
-  kind: FieldKind;
-  step?: string;
-  min?: string;
-  max?: string;
-  options?: Array<{ value: string; label: string }>;
-  suffix?: string;
-}
-
-const FIELDS: FieldSpec[] = [
-  {
-    key: "trigger_threshold",
-    label: "Trigger threshold",
-    hint: "Ask at or above this decimal fires a marketable BUY. It is never used as a limit price.",
-    kind: "number",
-    step: "0.01",
-    min: "0.01",
-    max: "0.999",
-  },
-  {
-    key: "final_window_seconds",
-    label: "Final window",
-    hint: "Seconds before expiry in which trading is enabled.",
-    kind: "number",
-    step: "1",
-    min: "1",
-    max: "300",
-    suffix: "s",
-  },
-  {
-    key: "stage0_enabled",
-    label: "Stage 0: early buy + sell",
-    hint: "On: before the final window, buy when the ask is low enough and BTC is far enough beyond the price to beat, then sell at the sell price.",
-    kind: "select",
-    options: [
-      { value: "true", label: "On" },
-      { value: "false", label: "Off" },
-    ],
-  },
-  {
-    key: "stage0_start_seconds",
-    label: "Stage 0: starts at (seconds left)",
-    hint: "Stage 0 may buy from this many seconds before expiry until the final window starts.",
-    kind: "number",
-    step: "1",
-    min: "1",
-    max: "300",
-    suffix: "s",
-  },
-  {
-    key: "stage0_min_ask",
-    label: "Stage 0: min ask",
-    hint: "Stage 0 buys only while the best ask is at or above this decimal (e.g. 0.60).",
-    kind: "number",
-    step: "0.01",
-    min: "0.01",
-    max: "0.999",
-  },
-  {
-    key: "stage0_max_ask",
-    label: "Stage 0: max ask",
-    hint: "Stage 0 buys only while the best ask is at or below this decimal. It is also the highest price it will pay.",
-    kind: "number",
-    step: "0.01",
-    min: "0.01",
-    max: "0.999",
-  },
-  {
-    key: "stage0_min_price_gap_usd",
-    label: "Stage 0: min price gap",
-    hint: "BTC must be at least this far beyond the price to beat in the bought direction (UP above, DOWN below). 0 = off. Missing BTC data blocks the buy.",
-    kind: "number",
-    step: "1",
-    min: "0",
-    suffix: "USD",
-  },
-  {
-    key: "stage0_mid_from_ask",
-    label: "Stage 0: mid tier from (buy price)",
-    hint: "Shares bought below this price use the low take-profit %; at or above it, the mid % (default 0.70).",
-    kind: "number",
-    step: "0.01",
-    min: "0.01",
-    max: "0.999",
-  },
-  {
-    key: "stage0_high_from_ask",
-    label: "Stage 0: high tier from (buy price)",
-    hint: "Shares bought at or above this price use the high take-profit % (default 0.80).",
-    kind: "number",
-    step: "0.01",
-    min: "0.01",
-    max: "0.999",
-  },
-  {
-    key: "stage0_take_profit_pct_low",
-    label: "Stage 0: take-profit (low tier)",
-    hint: "Percent above the buy price at which shares bought below the mid-tier border are sold (default 15, i.e. 0.60-0.70 buy). 0 = held to settlement.",
-    kind: "number",
-    step: "1",
-    min: "0",
-    max: "500",
-    suffix: "%",
-  },
-  {
-    key: "stage0_take_profit_pct_mid",
-    label: "Stage 0: take-profit (mid tier)",
-    hint: "Percent above the buy price for shares bought between the mid and high borders (default 10, i.e. 0.70-0.80 buy). 0 = held to settlement.",
-    kind: "number",
-    step: "1",
-    min: "0",
-    max: "500",
-    suffix: "%",
-  },
-  {
-    key: "stage0_take_profit_pct_high",
-    label: "Stage 0: take-profit (high tier)",
-    hint: "Percent above the buy price for shares bought at the high border or above (default 5, i.e. 0.80-0.85 buy). The sell price is capped at 0.99. 0 = held to settlement.",
-    kind: "number",
-    step: "1",
-    min: "0",
-    max: "500",
-    suffix: "%",
-  },
-  {
-    key: "stage1_sell_enabled",
-    label: "Stage 1: take-profit sell",
-    hint: "On: stage 1 shares are sold as soon as the best bid reaches their sell price.",
-    kind: "select",
-    options: [
-      { value: "true", label: "On" },
-      { value: "false", label: "Off" },
-    ],
-  },
-  {
-    key: "stage1_sell_max_buy",
-    label: "Stage 1: cheap buy up to",
-    hint: "Stage 1 shares that cost up to this per share use the first sell price, dearer ones the high sell price (default 0.90).",
-    kind: "number",
-    step: "0.01",
-    min: "0.01",
-    max: "0.999",
-  },
-  {
-    key: "stage1_sell_price",
-    label: "Stage 1: sell at (cheap buy)",
-    hint: "Sell price for stage 1 shares bought up to the limit above (default 0.95). Must be higher than that limit.",
-    kind: "number",
-    step: "0.01",
-    min: "0.02",
-    max: "0.999",
-  },
-  {
-    key: "stage1_sell_price_high",
-    label: "Stage 1: sell at (dearer buy)",
-    hint: "Sell price for stage 1 shares bought above the limit (default 0.99).",
-    kind: "number",
-    step: "0.01",
-    min: "0.02",
-    max: "0.999",
-  },
-  {
-    key: "stage2_sell_enabled",
-    label: "Stage 2: take-profit sell",
-    hint: "On: stage 2 shares are sold as soon as the best bid reaches the stage 2 sell price.",
-    kind: "select",
-    options: [
-      { value: "true", label: "On" },
-      { value: "false", label: "Off" },
-    ],
-  },
-  {
-    key: "stage2_sell_price",
-    label: "Stage 2: sell at",
-    hint: "Stage 2 sells its shares as soon as the best bid reaches this decimal (default 0.99). Must be higher than the stage 2 threshold.",
-    kind: "number",
-    step: "0.01",
-    min: "0.02",
-    max: "0.999",
-  },
-  {
-    key: "stage0_stop_loss_pct",
-    label: "Stage 0: stop-loss",
-    hint: "Stage 0 shares are sold at the market once the best bid is this many percent below the average buy price (default 20). 0 = off.",
-    kind: "number",
-    step: "1",
-    min: "0",
-    max: "99",
-    suffix: "%",
-  },
-  {
-    key: "stage1_stop_loss_pct",
-    label: "Stage 1: stop-loss",
-    hint: "Stage 1 shares are sold at the market once the best bid is this many percent below the average buy price (default 15). 0 = off.",
-    kind: "number",
-    step: "1",
-    min: "0",
-    max: "99",
-    suffix: "%",
-  },
-  {
-    key: "stage2_stop_loss_pct",
-    label: "Stage 2: stop-loss",
-    hint: "Stage 2 shares are sold at the market once the best bid is this many percent below the average buy price (default 15). 0 = off.",
-    kind: "number",
-    step: "1",
-    min: "0",
-    max: "99",
-    suffix: "%",
-  },
-  {
-    key: "stage3_stop_loss_pct",
-    label: "Stage 3: stop-loss",
-    hint: "Stage 3 shares are sold at the market once the best bid is this many percent below the average buy price (default 15). 0 = off. Stage 3 has no take-profit.",
-    kind: "number",
-    step: "1",
-    min: "0",
-    max: "99",
-    suffix: "%",
-  },
-  {
-    key: "stage2_seconds",
-    label: "Stage 2: seconds left",
-    hint: "From this many seconds before expiry, stage 2 may add one more buy, but only if stage 1 already bought before this mark.",
-    kind: "number",
-    step: "1",
-    min: "1",
-    max: "300",
-    suffix: "s",
-  },
-  {
-    key: "stage2_threshold",
-    label: "Stage 2: ask trigger",
-    hint: "Stage 2 buys when a best ask is at or above this decimal.",
-    kind: "number",
-    step: "0.01",
-    min: "0.01",
-    max: "0.999",
-  },
-  {
-    key: "stage3_seconds",
-    label: "Stage 3: seconds left",
-    hint: "From this many seconds before expiry, stage 3 may buy on its own rules. Stage 1 stops buying at this mark; if it has not bought by then, stages 1 and 2 stay off.",
-    kind: "number",
-    step: "1",
-    min: "1",
-    max: "300",
-    suffix: "s",
-  },
-  {
-    key: "stage3_threshold",
-    label: "Stage 3: ask trigger",
-    hint: "Stage 3 buys when a best ask is at or above this decimal.",
-    kind: "number",
-    step: "0.01",
-    min: "0.01",
-    max: "0.999",
-  },
-  {
-    key: "duplicate_policy",
-    label: "Duplicate policy",
-    hint: "Controls repeat entries for the same market or side.",
-    kind: "select",
-    options: [
-      { value: "one_per_market", label: "One order per market" },
-      { value: "one_per_side", label: "One per side" },
-      { value: "allow", label: "Allow duplicates" },
-    ],
-  },
-  {
-    key: "conflict_policy",
-    label: "Conflict policy",
-    hint: "Deterministic decision when UP and DOWN both qualify.",
-    kind: "select",
-    options: [
-      { value: "up_first", label: "UP first" },
-      { value: "down_first", label: "DOWN first" },
-      { value: "highest_ask", label: "Highest ask" },
-      { value: "block_both", label: "Block both" },
-    ],
-  },
-  {
-    key: "trade_amount_usdc",
-    label: "Order notional",
-    hint: "USDC spent per marketable buy.",
-    kind: "number",
-    step: "0.5",
-    min: "0.01",
-    suffix: "USDC",
-  },
-  {
-    key: "max_execution_price",
-    label: "Max execution price",
-    hint: "Hard ceiling for the live ask. Must be at least the trigger.",
-    kind: "number",
-    step: "0.001",
-    min: "0.01",
-    max: "1",
-  },
-  {
-    key: "max_daily_loss",
-    label: "Daily loss stop",
-    hint: "Risk halt once the day's PnL falls to this loss.",
-    kind: "number",
-    step: "0.5",
-    min: "0",
-    suffix: "USDC",
-  },
-  {
-    key: "daily_profit_target",
-    label: "Daily profit target",
-    hint: "Risk halt once the day's PnL reaches this profit.",
-    kind: "number",
-    step: "0.5",
-    min: "0",
-    suffix: "USDC",
-  },
-  {
-    key: "max_trades_per_day",
-    label: "Max trades / day",
-    hint: "Hard cap on submitted entries per day.",
-    kind: "number",
-    step: "1",
-    min: "1",
-  },
-  {
-    key: "max_open_positions",
-    label: "Max open positions",
-    hint: "Maximum concurrent open positions in the active mode.",
-    kind: "number",
-    step: "1",
-    min: "0",
-  },
-  {
-    key: "min_price_gap_usd",
-    label: "Stage 1: min price gap",
-    hint: "Buy only if BTC is at least this far beyond the price to beat in the bought direction (UP above, DOWN below). 0 = off. Missing BTC data blocks buys.",
-    kind: "number",
-    step: "1",
-    min: "0",
-    suffix: "USD",
-  },
-  {
-    key: "stage2_min_price_gap_usd",
-    label: "Stage 2: min price gap",
-    hint: "Same price-to-beat rule, applied to stage 2 buys. 0 = off.",
-    kind: "number",
-    step: "1",
-    min: "0",
-    suffix: "USD",
-  },
-  {
-    key: "stage3_min_price_gap_usd",
-    label: "Stage 3: min price gap",
-    hint: "Same price-to-beat rule, applied to stage 3 buys. 0 = off.",
-    kind: "number",
-    step: "1",
-    min: "0",
-    suffix: "USD",
-  },
-  {
-    key: "stale_data_max_age_ms",
-    label: "Stale data cap",
-    hint: "Quotes older than this are rejected before order construction.",
-    kind: "number",
-    step: "100",
-    min: "100",
-    max: "60000",
-    suffix: "ms",
-  },
-  {
-    key: "paper_slippage_bps",
-    label: "Paper slippage",
-    hint: "Simulated adverse slippage applied to walked ask levels.",
-    kind: "number",
-    step: "1",
-    min: "0",
-    suffix: "bps",
-  },
-  {
-    key: "paper_fee_rate",
-    label: "Paper fee rate",
-    hint: "Fee rate applied with the configured exponent in paper mode.",
-    kind: "number",
-    step: "0.001",
-    min: "0",
-    max: "1",
-  },
-];
-
-// Sections are grouped by key (not by array position), so adding a field never lands in the wrong card.
-const STRATEGY_KEYS = [
-  "trigger_threshold",
-  "final_window_seconds",
-  "stage2_seconds",
-  "stage2_threshold",
-  "stage3_seconds",
-  "stage3_threshold",
-  "min_price_gap_usd",
-  "stage2_min_price_gap_usd",
-  "stage3_min_price_gap_usd",
-  "duplicate_policy",
-  "conflict_policy",
-];
-const STAGE0_KEYS = [
-  "stage0_enabled",
-  "stage0_start_seconds",
-  "stage0_min_ask",
-  "stage0_max_ask",
-  "stage0_min_price_gap_usd",
-  "stage0_mid_from_ask",
-  "stage0_high_from_ask",
-  "stage0_take_profit_pct_low",
-  "stage0_take_profit_pct_mid",
-  "stage0_take_profit_pct_high",
-];
-const EXIT_KEYS = [
-  "stage1_sell_enabled",
-  "stage1_sell_max_buy",
-  "stage1_sell_price",
-  "stage1_sell_price_high",
-  "stage2_sell_enabled",
-  "stage2_sell_price",
-  "stage0_stop_loss_pct",
-  "stage1_stop_loss_pct",
-  "stage2_stop_loss_pct",
-  "stage3_stop_loss_pct",
-];
-const RISK_KEYS = [
-  "trade_amount_usdc",
-  "max_execution_price",
-  "max_daily_loss",
-  "daily_profit_target",
-  "max_trades_per_day",
-  "max_open_positions",
-  "stale_data_max_age_ms",
-];
-const PAPER_KEYS = ["paper_slippage_bps", "paper_fee_rate"];
-
-function draftFrom(settings: SettingsState): Record<string, string> {
-  const draft: Record<string, string> = {};
-  for (const field of FIELDS) {
-    draft[field.key] = String(settings[field.key as keyof SettingsState] ?? "");
-  }
-  return draft;
-}
-
-function Field({
-  spec,
-  value,
-  onChange,
-}: {
-  spec: FieldSpec;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="block">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-[11.5px] font-medium text-slate-300">{spec.label}</span>
-        {spec.suffix ? <span className="mono text-[9px] uppercase tracking-[0.12em] text-slate-600">{spec.suffix}</span> : null}
-      </div>
-      {spec.kind === "select" ? (
-        <select
-          className="input mt-1.5 appearance-none pr-8"
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-        >
-          {spec.options?.map((option) => (
-            <option key={option.value} value={option.value} className="bg-ink-900">
-              {option.label}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <input
-          className="input mono mt-1.5"
-          type="number"
-          value={value}
-          step={spec.step}
-          min={spec.min}
-          max={spec.max}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      )}
-      <div className="mt-1.5 text-[10px] leading-relaxed text-slate-600">{spec.hint}</div>
-    </label>
-  );
-}
-
-function CheckRow({ ok, label, detail }: { ok: boolean; label: string; detail?: string }) {
-  return (
-    <div className="flex items-center gap-2 py-1.5">
-      <span
-        className={cx(
-          "flex h-4 w-4 items-center justify-center rounded-full",
-          ok ? "bg-up/15 text-up" : "bg-down/15 text-down",
-        )}
-      >
-        {ok ? <IconCheck size={10} /> : <IconClose size={10} />}
-      </span>
-      <span className={cx("text-[11.5px]", ok ? "text-slate-300" : "text-slate-500")}>{label}</span>
-      {detail ? <span className="mono ml-auto text-[10px] text-slate-600">{detail}</span> : null}
-    </div>
-  );
-}
+import { ActionRow, CheckRow, GroupCard, SaveBar, SettingRow, TabBar } from "./settings/components";
+import { FIELDS } from "./settings/fields";
+import { fieldsOf, TABS, tabOfField, type TabId } from "./settings/layout";
+import { buildDiff, dirtyKeys, draftFrom, savedValue, validateDraft, type Draft } from "./settings/validate";
 
 export function Settings() {
   const { snapshot, notify, resetPaper, resetDaily, resetServer } = useBot();
   const [settings, setSettings] = useState<SettingsState | null>(null);
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Draft>({});
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [validating, setValidating] = useState(false);
+  const [tab, setTab] = useState<TabId>("entry");
+  const [query, setQuery] = useState("");
+
   const [resetOpen, setResetOpen] = useState(false);
   const [resetValue, setResetValue] = useState("");
   const [resetBusy, setResetBusy] = useState(false);
@@ -537,18 +33,21 @@ export function Settings() {
   const [defaultsOpen, setDefaultsOpen] = useState(false);
   const [defaultsBusy, setDefaultsBusy] = useState(false);
 
+  const applyLoaded = (data: SettingsState) => {
+    setSettings(data);
+    setDraft(draftFrom(data));
+    setResetValue(String(data.paper_starting_balance));
+  };
+
   useEffect(() => {
     let alive = true;
     api
       .settings()
       .then((data) => {
-        if (!alive) return;
-        setSettings(data);
-        setDraft(draftFrom(data));
-        setResetValue(String(data.paper_starting_balance));
+        if (alive) applyLoaded(data);
       })
       .catch((caught: unknown) => {
-        if (alive) setError(caught instanceof Error ? caught.message : "Could not load settings");
+        if (alive) setLoadError(caught instanceof Error ? caught.message : "Could not load settings");
       });
     return () => {
       alive = false;
@@ -556,81 +55,69 @@ export function Settings() {
   }, []);
 
   const running = snapshot?.bot.status === "RUNNING";
+  const isLive = snapshot?.bot.mode === "live";
   const readiness = snapshot?.live;
 
-  const dirty =
-    settings !== null &&
-    FIELDS.some((field) => {
-      const raw = draft[field.key] ?? "";
-      if (field.kind === "select") return raw !== String(settings[field.key as keyof SettingsState]);
-      return Number(raw) !== Number(settings[field.key as keyof SettingsState]);
-    });
+  const dirty = useMemo(() => (settings ? new Set(dirtyKeys(draft, settings)) : new Set<string>()), [draft, settings]);
+  const errors = useMemo(() => (settings ? validateDraft(draft, settings) : {}), [draft, settings]);
+  const errorCount = Object.keys(errors).length;
+
+  const countIn = (id: TabId, keys: Iterable<string>) => {
+    let total = 0;
+    for (const key of keys) if (tabOfField(key) === id) total += 1;
+    return total;
+  };
 
   const save = async () => {
-    if (!settings) return;
-    setError(null);
-    const diff: Record<string, string | number> = {};
-    for (const field of FIELDS) {
-      const raw = draft[field.key] ?? "";
-      if (field.kind === "select") {
-        if (raw !== String(settings[field.key as keyof SettingsState])) diff[field.key] = raw;
-        continue;
-      }
-      if (raw.trim() === "" || !Number.isFinite(Number(raw))) {
-        setError(`${field.label} must be a number.`);
-        return;
-      }
-      const value = Number(raw);
-      if (value !== Number(settings[field.key as keyof SettingsState])) diff[field.key] = value;
-    }
-    if (!Object.keys(diff).length) {
-      notify("info", "No changes", "Every field already matches the persisted runtime settings.");
+    if (!settings || saving || dirty.size === 0) return;
+    if (errorCount > 0) {
+      setSaveError("Fix the highlighted fields before saving.");
+      const firstTab = tabOfField(Object.keys(errors)[0]);
+      if (firstTab) setTab(firstTab);
       return;
     }
-    const highestTrigger = Math.max(
-      Number(draft.trigger_threshold),
-      Number(draft.stage2_threshold),
-      Number(draft.stage3_threshold),
-    );
-    if (Number(draft.stage0_min_ask) > Number(draft.stage0_max_ask)) {
-      setError("Stage 0 min ask must not be higher than the stage 0 max ask.");
-      return;
-    }
-    if (Number(draft.stage0_mid_from_ask) > Number(draft.stage0_high_from_ask)) {
-      setError("Stage 0 mid tier border must not be higher than the high tier border.");
-      return;
-    }
-    if (Number(draft.stage1_sell_price) <= Number(draft.stage1_sell_max_buy)) {
-      setError("Stage 1 sell price must be higher than the stage 1 cheap-buy limit.");
-      return;
-    }
-    if (Number(draft.stage1_sell_price_high) < Number(draft.stage1_sell_price)) {
-      setError("Stage 1 high sell price must not be lower than the stage 1 sell price.");
-      return;
-    }
-    if (Number(draft.stage2_sell_price) <= Number(draft.stage2_threshold)) {
-      setError("Stage 2 sell price must be higher than the stage 2 threshold.");
-      return;
-    }
-    if (Number(draft.max_execution_price) < highestTrigger) {
-      setError("Max execution price must be greater than or equal to the trigger and stage 2/3 thresholds.");
-      return;
-    }
-
+    setSaveError(null);
     setSaving(true);
     try {
-      const updated = await api.patchSettings(diff as Partial<SettingsState>);
-      setSettings(updated);
-      setDraft(draftFrom(updated));
+      const updated = await api.patchSettings(buildDiff(draft, settings) as Partial<SettingsState>);
+      applyLoaded(updated);
       notify("success", "Settings saved", "Runtime overrides persisted to the local database.");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Settings update failed";
-      setError(message);
+      setSaveError(message);
       notify("error", "Settings rejected", message);
     } finally {
       setSaving(false);
     }
   };
+
+  const revertAll = () => {
+    if (!settings) return;
+    setDraft(draftFrom(settings));
+    setSaveError(null);
+  };
+
+  // Ctrl/⌘ + S saves; leaving the page with unsaved edits asks for confirmation.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void save();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  useEffect(() => {
+    if (dirty.size === 0) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [dirty.size]);
 
   const validateLive = async () => {
     setValidating(true);
@@ -650,17 +137,14 @@ export function Settings() {
 
   const confirmDefaultsReset = async () => {
     setDefaultsBusy(true);
-    setError(null);
+    setSaveError(null);
     try {
-      const restored = await api.resetSettings();
-      setSettings(restored);
-      setDraft(draftFrom(restored));
-      setResetValue(String(restored.paper_starting_balance));
+      applyLoaded(await api.resetSettings());
       setDefaultsOpen(false);
       notify("success", "Settings reset", "All overrides removed. The .env defaults are active now (paper and live).");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Settings reset failed";
-      setError(message);
+      setSaveError(message);
       notify("error", "Reset failed", message);
     } finally {
       setDefaultsBusy(false);
@@ -691,10 +175,7 @@ export function Settings() {
       setServerOpen(false);
       setServerPhrase("");
       try {
-        const fresh = await api.settings();
-        setSettings(fresh);
-        setDraft(draftFrom(fresh));
-        setResetValue(String(fresh.paper_starting_balance));
+        applyLoaded(await api.settings());
       } catch {
         /* settings reload is best effort */
       }
@@ -704,8 +185,8 @@ export function Settings() {
   if (!settings) {
     return (
       <div className="panel p-10 text-center">
-        {error ? (
-          <div className="text-[12px] text-down">{error}</div>
+        {loadError ? (
+          <div className="text-[12px] text-down">{loadError}</div>
         ) : (
           <div className="text-[12px] text-slate-500">Loading runtime settings…</div>
         )}
@@ -713,320 +194,319 @@ export function Settings() {
     );
   }
 
-  const isLive = snapshot?.bot.mode === "live";
-  const pick = (keys: string[]) =>
-    keys.map((key) => FIELDS.find((field) => field.key === key)).filter((field): field is FieldSpec => !!field);
-  const strategyFields = pick(STRATEGY_KEYS);
-  const stage0Fields = pick(STAGE0_KEYS);
-  const exitFields = pick(EXIT_KEYS);
-  const riskFields = pick(RISK_KEYS);
-  const paperFields = pick(PAPER_KEYS);
+  const renderRows = (keys: string[]) =>
+    fieldsOf(keys).map((field) => (
+      <SettingRow
+        key={field.key}
+        spec={field}
+        value={draft[field.key] ?? ""}
+        savedValue={savedValue(settings, field.key)}
+        dirty={dirty.has(field.key)}
+        error={errors[field.key]}
+        onChange={(value) => setDraft((prev) => ({ ...prev, [field.key]: value }))}
+      />
+    ));
 
-  return (
+  const groupBadge = (keys: string[]) => {
+    const edited = keys.filter((key) => dirty.has(key)).length;
+    return edited ? (
+      <span className="chip border-amber/30 bg-amber/10 text-amber">{edited} edited</span>
+    ) : null;
+  };
+
+  const activeTab = TABS.find((item) => item.id === tab) ?? TABS[0];
+  const needle = query.trim().toLowerCase();
+  const searching = needle.length > 0;
+  const matches = searching
+    ? FIELDS.filter((field) => `${field.label} ${field.hint} ${field.key}`.toLowerCase().includes(needle))
+    : [];
+
+  const executionSection = (
     <div className="space-y-4">
-      <section className="panel flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/8 bg-white/[0.03] text-slate-400">
-            <IconSettings size={17} />
-          </div>
-          <div>
-            <div className="text-[13px] font-semibold text-slate-100">Runtime configuration</div>
-            <div className="mt-0.5 text-[11px] text-slate-500">
-              Saved changes apply immediately to the running bot in both paper and live mode. Secrets and live enablement remain environment-only.
+      {!isLive ? (
+        <GroupCard
+          title="Paper fill model"
+          description="Simulated fills used while the bot runs in paper mode."
+          badge={<span className="chip border-sky/25 bg-sky/10 text-sky">Paper only</span>}
+        >
+          {renderRows(["paper_slippage_bps", "paper_fee_rate"])}
+          <div className="grid gap-3 px-5 py-4 sm:grid-cols-2">
+            <div className="rounded-lg border hairline bg-black/20 p-3">
+              <div className="label">Fill ratio</div>
+              <div className="mono mt-1 text-[13px] text-slate-300">{settings.paper_fill_ratio}</div>
+              <div className="mt-1 text-[10px] text-slate-600">Environment-only</div>
+            </div>
+            <div className="rounded-lg border hairline bg-black/20 p-3">
+              <div className="label">Fee exponent</div>
+              <div className="mono mt-1 text-[13px] text-slate-300">{settings.paper_fee_exponent}</div>
+              <div className="mt-1 text-[10px] text-slate-600">Environment-only</div>
             </div>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {dirty ? <span className="chip border-amber/30 bg-amber/10 text-amber">Unsaved changes</span> : null}
-          <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => setDefaultsOpen(true)}>
-            <IconRefresh size={13} />
-            Reset to .env defaults
-          </button>
+          <div className="px-5 py-3 text-[10.5px] leading-relaxed text-slate-500">
+            Paper fees use <span className="mono">shares × rate × (price × (1 − price))^exponent</span>. The formula is
+            an approximation of Polymarket fees, not an exchange quote.
+          </div>
+        </GroupCard>
+      ) : (
+        <GroupCard
+          title="Live execution"
+          description="Real fills on Polymarket."
+          badge={<span className="chip border-down/25 bg-down/10 text-down">Live mode</span>}
+        >
+          <div className="px-5 py-4 text-[11px] leading-relaxed text-slate-500">
+            Live orders are filled by Polymarket, so the paper slippage and fee simulation do not apply. Fees come from
+            the market&apos;s own CLOB parameters. Strategy, exit and risk settings apply to live orders exactly as they
+            do in paper mode. Switch to paper mode to edit the paper fill model.
+          </div>
+        </GroupCard>
+      )}
+
+      <GroupCard
+        title="Live safety gates"
+        description="Environment-controlled checks that must pass before live trading can start."
+        badge={snapshot ? <ModeBadge mode={snapshot.bot.mode} /> : null}
+      >
+        <CheckRow ok={readiness?.live_enabled ?? false} label="LIVE_TRADING_ENABLED" detail=".env" />
+        <CheckRow ok={readiness?.geo_verified ?? false} label="POLYMARKET_GEO_VERIFIED" detail=".env" />
+        <CheckRow ok={readiness?.credentials_present ?? false} label="Signing key present" detail="backend only" />
+        <CheckRow ok={readiness?.funder_configured ?? false} label="Funded wallet configured" detail=".env" />
+        <div className="flex items-center justify-between gap-3 px-5 py-3.5">
+          <span className="text-[11px] text-slate-500">
+            {readiness?.balance != null ? `Collateral ${fmtUsd(readiness.balance)}` : "No live balance loaded"}
+          </span>
           <button
             type="button"
-            className="btn btn-ghost"
-            disabled={!dirty || saving}
-            onClick={() => {
-              setDraft(draftFrom(settings));
-              setError(null);
-            }}
+            className="btn h-8 text-[11px]"
+            disabled={!readiness?.ready || validating}
+            onClick={() => void validateLive()}
           >
-            <IconRefresh size={13} />
-            Revert
-          </button>
-          <button type="button" className="btn btn-primary" disabled={!dirty || saving} onClick={() => void save()}>
-            {saving ? "Saving…" : "Save changes"}
+            <IconShield size={12} />
+            {validating ? "Checking…" : "Validate live connection"}
           </button>
         </div>
-      </section>
-
-      {error ? (
-        <div className="flex items-center gap-2 rounded-xl border border-down/25 bg-down/[0.07] px-4 py-3 text-[12px] text-down">
-          <IconAlert size={14} />
-          {error}
-        </div>
-      ) : null}
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
-        <section className="panel p-5 xl:col-span-6">
-          <div className="label">Strategy</div>
-          <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Entry logic</div>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            {strategyFields.map((field) => (
-              <Field
-                key={field.key}
-                spec={field}
-                value={draft[field.key] ?? ""}
-                onChange={(value) => setDraft((prev) => ({ ...prev, [field.key]: value }))}
-              />
-            ))}
-          </div>
-          <div className="mt-4 rounded-lg border border-sky/15 bg-sky/[0.04] px-3 py-2.5 text-[10.5px] leading-relaxed text-sky/80">
-            The trigger is an activation threshold. The submitted price is always the live ask, capped by the max
-            execution price. {snapshot ? `$${snapshot.strategy.trigger_threshold.toFixed(2)}` : "The trigger"} is never
-            placed as a limit.
-          </div>
-        </section>
-
-        <section className="panel p-5 xl:col-span-6">
-          <div className="label">Stage 0</div>
-          <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Early buy + take-profit</div>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            {stage0Fields.map((field) => (
-              <Field
-                key={field.key}
-                spec={field}
-                value={draft[field.key] ?? ""}
-                onChange={(value) => setDraft((prev) => ({ ...prev, [field.key]: value }))}
-              />
-            ))}
-          </div>
-        </section>
-
-        <section className="panel p-5 xl:col-span-6">
-          <div className="label">Exits</div>
-          <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Take-profit &amp; stop-loss</div>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            {exitFields.map((field) => (
-              <Field
-                key={field.key}
-                spec={field}
-                value={draft[field.key] ?? ""}
-                onChange={(value) => setDraft((prev) => ({ ...prev, [field.key]: value }))}
-              />
-            ))}
-          </div>
-        </section>
-
-        <section className="panel p-5 xl:col-span-6">
-          <div className="label">Risk &amp; execution</div>
-          <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Guardrails</div>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            {riskFields.map((field) => (
-              <Field
-                key={field.key}
-                spec={field}
-                value={draft[field.key] ?? ""}
-                onChange={(value) => setDraft((prev) => ({ ...prev, [field.key]: value }))}
-              />
-            ))}
-          </div>
-        </section>
-
-        {!isLive ? (
-          <section className="panel p-5 xl:col-span-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="label">Paper simulation</div>
-                <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Fill model</div>
-              </div>
-              <span className="chip border-sky/25 bg-sky/10 text-sky">Paper only</span>
+        {!readiness?.ready ? (
+          <div className="bg-amber/[0.04] px-5 py-3.5 text-[10.5px] leading-relaxed text-amber/85">
+            <div className="flex items-center gap-1.5 font-semibold">
+              <IconAlert size={11} />
+              Live gate blocked
             </div>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            {paperFields.map((field) => (
-              <Field
-                key={field.key}
-                spec={field}
-                value={draft[field.key] ?? ""}
-                onChange={(value) => setDraft((prev) => ({ ...prev, [field.key]: value }))}
-              />
-            ))}
+            <ul className="mt-1 list-disc space-y-0.5 pl-4">
+              {(readiness?.reasons.length ? readiness.reasons : ["Live readiness unavailable."]).map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
           </div>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <div className="rounded-lg border hairline bg-black/20 p-3">
-                <div className="label">Fill ratio</div>
-                <div className="mono mt-1 text-[13px] text-slate-300">{settings.paper_fill_ratio}</div>
-                <div className="mt-1 text-[10px] text-slate-600">Environment-only</div>
-              </div>
-              <div className="rounded-lg border hairline bg-black/20 p-3">
-                <div className="label">Fee exponent</div>
-                <div className="mono mt-1 text-[13px] text-slate-300">{settings.paper_fee_exponent}</div>
-                <div className="mt-1 text-[10px] text-slate-600">Environment-only</div>
-              </div>
-            </div>
-            <div className="mt-4 text-[10.5px] leading-relaxed text-slate-500">
-              Paper fees use <span className="mono">shares × rate × (price × (1 − price))^exponent</span>. The fee
-              formula is an approximation of Polymarket fees, not an exchange quote.
-            </div>
-          </section>
-        ) : (
-          <section className="panel p-5 xl:col-span-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="label">Live execution</div>
-                <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Real fills</div>
-              </div>
-              <span className="chip border-down/25 bg-down/10 text-down">Live mode</span>
-            </div>
-            <div className="mt-4 text-[11px] leading-relaxed text-slate-500">
-              Live orders are filled by Polymarket, so the paper slippage and fee simulation do not apply here.
-              Fees come from the market&apos;s own CLOB parameters. The strategy, exit and risk settings on this
-              page apply to live orders exactly as they do in paper mode.
-            </div>
-          </section>
-        )}
-
-        <section className="panel p-5 xl:col-span-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="label">Live safety</div>
-              <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Environment gates</div>
-            </div>
-            {snapshot ? <ModeBadge mode={snapshot.bot.mode} /> : null}
-          </div>
-          <div className="mt-3 divide-y divide-white/[0.04]">
-            <CheckRow ok={readiness?.live_enabled ?? false} label="LIVE_TRADING_ENABLED" detail=".env" />
-            <CheckRow ok={readiness?.geo_verified ?? false} label="POLYMARKET_GEO_VERIFIED" detail=".env" />
-            <CheckRow ok={readiness?.credentials_present ?? false} label="Signing key present" detail="backend only" />
-            <CheckRow ok={readiness?.funder_configured ?? false} label="Funded wallet configured" detail=".env" />
-          </div>
-          <div className="mt-3 flex items-center justify-between">
-            <span className="text-[10.5px] text-slate-500">
-              {readiness?.balance != null ? `Collateral ${fmtUsd(readiness.balance)}` : "No live balance loaded"}
-            </span>
-            <button
-              type="button"
-              className="btn h-8 text-[11px]"
-              disabled={!readiness?.ready || validating}
-              onClick={() => void validateLive()}
-            >
-              <IconShield size={12} />
-              {validating ? "Checking…" : "Validate live"}
-            </button>
-          </div>
-          {!readiness?.ready ? (
-            <div className="mt-3 rounded-lg border border-amber/20 bg-amber/[0.05] px-3 py-2 text-[10.5px] leading-relaxed text-amber/80">
-              <div className="flex items-center gap-1.5 font-semibold">
-                <IconAlert size={11} />
-                Live gate blocked
-              </div>
-              <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                {(readiness?.reasons.length ? readiness.reasons : ["Live readiness unavailable."]).map((reason) => (
-                  <li key={reason}>{reason}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          <div className="mt-3 flex items-center gap-1.5 text-[10px] text-slate-600">
-            <IconAlert size={10} />
-            Private keys are read by the backend only and never serialized to this dashboard.
-          </div>
-        </section>
-
-        {!isLive ? (
-        <section className="panel border-down/20 p-5 xl:col-span-12">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-down/20 bg-down/[0.07] text-down">
-                <IconWallet size={16} />
-              </div>
-              <div>
-                <div className="text-[13px] font-semibold text-slate-100">Reset paper account</div>
-                <div className="mt-0.5 text-[11px] text-slate-500">
-                  Clears paper orders, fills, positions and PnL, then recreates the paper balance. Live data is
-                  untouched.
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-28">
-                <input
-                  className="input mono"
-                  type="number"
-                  step="0.5"
-                  min="0.01"
-                  value={resetValue}
-                  onChange={(event) => setResetValue(event.target.value)}
-                />
-              </div>
-              <button
-                type="button"
-                className="btn btn-danger"
-                disabled={running}
-                title={running ? "Stop the bot before resetting" : "Reset paper ledger"}
-                onClick={() => setResetOpen(true)}
-              >
-                Reset paper
-              </button>
-            </div>
-          </div>
-          {running ? (
-            <div className="mt-3 text-[10.5px] text-amber/80">Stop the bot before resetting the paper account.</div>
-          ) : null}
-        </section>
         ) : null}
+        <div className="flex items-center gap-1.5 px-5 py-3 text-[10px] text-slate-600">
+          <IconAlert size={10} />
+          Private keys are read by the backend only and never serialized to this dashboard.
+        </div>
+      </GroupCard>
+    </div>
+  );
 
-        <section className="panel border-amber/20 p-5 xl:col-span-12">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-amber/20 bg-amber/[0.07] text-amber">
-                <IconAlert size={16} />
-              </div>
-              <div>
-                <div className="text-[13px] font-semibold text-slate-100">Reset daily trades &amp; profit/loss</div>
-                <div className="mt-0.5 text-[11px] text-slate-500">
-                  Sets today&apos;s trade count and daily profit/loss back to zero for the current mode, so the
-                  daily loss stop, profit target and max-trades limits start fresh. Order history, positions and
-                  balance are kept.
-                </div>
-              </div>
-            </div>
-            <button type="button" className="btn btn-danger" onClick={() => setDailyOpen(true)}>
-              Reset daily
-            </button>
-          </div>
-        </section>
+  const maintenanceSection = (
+    <div className="space-y-4">
+      <GroupCard title="Daily counters" description="Safe to use while the bot is running.">
+        <ActionRow
+          tone="amber"
+          icon={<IconAlert size={16} />}
+          title="Reset daily trades & profit/loss"
+          description="Sets today's trade count and daily profit/loss back to zero for the current mode, so the daily loss stop, profit target and max-trades limits start fresh. Order history, positions and balance are kept."
+        >
+          <button type="button" className="btn btn-danger" onClick={() => setDailyOpen(true)}>
+            Reset daily
+          </button>
+        </ActionRow>
+      </GroupCard>
 
-        <section className="panel border-down/30 p-5 xl:col-span-12">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-down/30 bg-down/[0.09] text-down">
-                <IconAlert size={16} />
-              </div>
-              <div>
-                <div className="text-[13px] font-semibold text-slate-100">Full server reset</div>
-                <div className="mt-0.5 text-[11px] text-slate-500">
-                  Wipes the whole database: orders, fills, positions, markets, price history, triggers, logs and
-                  dashboard setting overrides. Mode returns to paper, the bot stays stopped and settings go back to
-                  the <span className="mono">.env</span> defaults.
-                </div>
-              </div>
+      {!isLive ? (
+        <GroupCard title="Paper account" description="Only affects the simulated ledger.">
+          <ActionRow
+            tone="down"
+            icon={<IconWallet size={16} />}
+            title="Reset paper account"
+            description="Clears paper orders, fills, positions and PnL, then recreates the paper balance. Live data is untouched."
+            note={running ? "Stop the bot before resetting the paper account." : undefined}
+          >
+            <div className="w-28">
+              <input
+                className="input mono"
+                type="number"
+                step="0.5"
+                min="0.01"
+                aria-label="Paper starting balance"
+                value={resetValue}
+                onChange={(event) => setResetValue(event.target.value)}
+              />
             </div>
             <button
               type="button"
               className="btn btn-danger"
               disabled={running}
-              title={running ? "Stop the bot before resetting" : "Wipe all data"}
-              onClick={() => setServerOpen(true)}
+              title={running ? "Stop the bot before resetting" : "Reset paper ledger"}
+              onClick={() => setResetOpen(true)}
             >
-              Reset everything
+              Reset paper
             </button>
+          </ActionRow>
+        </GroupCard>
+      ) : null}
+
+      <GroupCard title="Settings defaults" description="Discard every saved dashboard override.">
+        <ActionRow
+          tone="amber"
+          icon={<IconRefresh size={16} />}
+          title="Reset settings to .env defaults"
+          description="Deletes the saved overrides so the values from .env take over immediately, even while the bot is running. Orders, positions, balance and history are not touched."
+        >
+          <button type="button" className="btn btn-danger" disabled={saving} onClick={() => setDefaultsOpen(true)}>
+            Reset to defaults
+          </button>
+        </ActionRow>
+      </GroupCard>
+
+      <section className="panel overflow-hidden border-down/30">
+        <header className="border-b border-down/20 bg-down/[0.05] px-5 py-3">
+          <h3 className="text-[13px] font-semibold tracking-tight text-down">Danger zone</h3>
+        </header>
+        <ActionRow
+          tone="down"
+          icon={<IconAlert size={16} />}
+          title="Full server reset"
+          description={
+            <>
+              Wipes the whole database: orders, fills, positions, markets, price history, triggers, logs and dashboard
+              setting overrides. Mode returns to paper, the bot stays stopped and settings go back to the{" "}
+              <span className="mono">.env</span> defaults.
+            </>
+          }
+          note={running ? "Stop the bot before resetting the server." : undefined}
+        >
+          <button
+            type="button"
+            className="btn btn-danger"
+            disabled={running}
+            title={running ? "Stop the bot before resetting" : "Wipe all data"}
+            onClick={() => setServerOpen(true)}
+          >
+            Reset everything
+          </button>
+        </ActionRow>
+      </section>
+    </div>
+  );
+
+  return (
+    <div className="mx-auto max-w-[1100px]">
+      <section className="panel p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/8 bg-white/[0.03] text-slate-400">
+              <IconSettings size={18} />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-[15px] font-semibold tracking-tight text-slate-100">Runtime configuration</h2>
+                {snapshot ? <ModeBadge mode={snapshot.bot.mode} size="sm" /> : null}
+                <StatusPill running={snapshot ? running : null} killSwitch={snapshot?.bot.kill_switch ?? null} />
+              </div>
+              <p className="mt-1 max-w-[62ch] text-[11px] leading-relaxed text-slate-500">
+                Saved changes apply immediately to the running bot in both paper and live mode. Secrets and live
+                enablement remain environment-only.
+              </p>
+            </div>
           </div>
-          {running ? (
-            <div className="mt-3 text-[10.5px] text-amber/80">Stop the bot before resetting the server.</div>
-          ) : null}
-        </section>
+
+          <div className="relative w-full lg:w-72">
+            <IconSearch size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
+            <input
+              className="input !pl-9"
+              type="search"
+              placeholder="Search settings…"
+              aria-label="Search settings"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </div>
+        </div>
+
+        {running && !searching ? (
+          <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber/20 bg-amber/[0.05] px-3 py-2 text-[11px] text-amber/90">
+            <IconAlert size={12} />
+            The bot is running. Saved strategy and risk changes take effect on the next evaluation.
+          </div>
+        ) : null}
+      </section>
+
+      {saveError ? (
+        <div className="mt-4 flex items-center gap-2 rounded-xl border border-down/25 bg-down/[0.07] px-4 py-3 text-[12px] text-down">
+          <IconAlert size={14} />
+          {saveError}
+        </div>
+      ) : null}
+
+      {!searching ? (
+        <div className="mt-4">
+          <TabBar
+            tabs={TABS}
+            active={tab}
+            onChange={setTab}
+            editedCount={(id) => countIn(id, dirty)}
+            errorCount={(id) => countIn(id, Object.keys(errors))}
+          />
+        </div>
+      ) : null}
+
+      <div className="mt-4 space-y-4">
+        {searching ? (
+          <>
+            <div className="px-1 text-[11px] text-slate-500">
+              {matches.length} {matches.length === 1 ? "setting matches" : "settings match"}{" "}
+              <span className="mono text-slate-300">&ldquo;{query.trim()}&rdquo;</span>
+            </div>
+            {matches.length === 0 ? (
+              <div className="panel p-10 text-center text-[12px] text-slate-500">No settings found.</div>
+            ) : (
+              TABS.map((item) => {
+                const keys = item.groups.flatMap((group) => group.keys).filter((key) => matches.some((m) => m.key === key));
+                if (!keys.length) return null;
+                return (
+                  <GroupCard key={item.id} title={item.title} description={item.description} badge={groupBadge(keys)}>
+                    {renderRows(keys)}
+                  </GroupCard>
+                );
+              })
+            )}
+          </>
+        ) : activeTab.id === "execution" ? (
+          executionSection
+        ) : activeTab.id === "maintenance" ? (
+          maintenanceSection
+        ) : (
+          <>
+            <div className="px-1">
+              <h2 className="text-[14px] font-semibold tracking-tight text-slate-100">{activeTab.title}</h2>
+              <p className="mt-0.5 text-[11.5px] text-slate-500">{activeTab.description}</p>
+            </div>
+            {activeTab.groups.map((group) => (
+              <GroupCard key={group.title} title={group.title} description={group.description} badge={groupBadge(group.keys)}>
+                {renderRows(group.keys)}
+              </GroupCard>
+            ))}
+            {activeTab.id === "entry" ? (
+              <div className="rounded-xl border border-sky/15 bg-sky/[0.04] px-4 py-3 text-[11px] leading-relaxed text-sky/80">
+                The trigger is an activation threshold. The submitted price is always the live ask, capped by the max
+                execution price
+                {snapshot ? ` (trigger currently $${snapshot.strategy.trigger_threshold.toFixed(2)})` : ""}. It is never
+                placed as a limit.
+              </div>
+            ) : null}
+          </>
+        )}
       </div>
+
+      <SaveBar count={dirty.size} errors={errorCount} saving={saving} onSave={() => void save()} onRevert={revertAll} />
 
       <Modal
         open={defaultsOpen}
@@ -1039,12 +519,7 @@ export function Settings() {
             <button type="button" className="btn" onClick={() => setDefaultsOpen(false)}>
               Cancel
             </button>
-            <button
-              type="button"
-              className="btn btn-danger"
-              disabled={defaultsBusy}
-              onClick={() => void confirmDefaultsReset()}
-            >
+            <button type="button" className="btn btn-danger" disabled={defaultsBusy} onClick={() => void confirmDefaultsReset()}>
               {defaultsBusy ? "Resetting…" : "Reset to defaults"}
             </button>
           </>
@@ -1052,8 +527,8 @@ export function Settings() {
       >
         <div className="space-y-3 text-[12px] leading-relaxed text-slate-400">
           <p>
-            The saved overrides are deleted and the values from <span className="mono">.env</span> take over
-            right away, even while the bot is running. Orders, positions, balance and history are not touched.
+            The saved overrides are deleted and the values from <span className="mono">.env</span> take over right away,
+            even while the bot is running. Orders, positions, balance and history are not touched.
           </p>
           <div className="flex items-center gap-2 rounded-lg border border-amber/20 bg-amber/[0.06] px-3 py-2 text-[11px] text-amber/90">
             <IconAlert size={13} />
@@ -1073,12 +548,7 @@ export function Settings() {
             <button type="button" className="btn" onClick={() => setDailyOpen(false)}>
               Cancel
             </button>
-            <button
-              type="button"
-              className="btn btn-danger"
-              disabled={dailyBusy}
-              onClick={() => void confirmDailyReset()}
-            >
+            <button type="button" className="btn btn-danger" disabled={dailyBusy} onClick={() => void confirmDailyReset()}>
               {dailyBusy ? "Resetting…" : "Reset daily"}
             </button>
           </>
@@ -1132,9 +602,9 @@ export function Settings() {
       >
         <div className="space-y-3 text-[12px] leading-relaxed text-slate-400">
           <p>
-            Paper and live records, logs, price history and setting overrides are deleted. The bot returns to
-            paper mode, stopped, with settings from <span className="mono">.env</span>. Real exchange balances are
-            never touched, and the reset is refused while live positions or orders are still open.
+            Paper and live records, logs, price history and setting overrides are deleted. The bot returns to paper
+            mode, stopped, with settings from <span className="mono">.env</span>. Real exchange balances are never
+            touched, and the reset is refused while live positions or orders are still open.
           </p>
           <div>
             <label className="mb-1 block text-[11px] text-slate-500">
@@ -1169,7 +639,7 @@ export function Settings() {
             </button>
             <button
               type="button"
-              className="btn btn-danger"
+              className={cx("btn btn-danger")}
               disabled={resetBusy || Number(resetValue) <= 0}
               onClick={() => void confirmReset()}
             >
@@ -1181,8 +651,8 @@ export function Settings() {
         <div className="space-y-3 text-[12px] leading-relaxed text-slate-400">
           <p>
             The paper account will be recreated with{" "}
-            <span className="mono text-slate-200">{fmtUsd(Number(resetValue))}</span> of virtual USDC. The bot must
-            be stopped; live positions and balances are never touched.
+            <span className="mono text-slate-200">{fmtUsd(Number(resetValue))}</span> of virtual USDC. The bot must be
+            stopped; live positions and balances are never touched.
           </p>
           <div className="flex items-center gap-2 rounded-lg border border-down/20 bg-down/[0.06] px-3 py-2 text-[11px] text-down/90">
             <IconAlert size={13} />
