@@ -18,8 +18,8 @@ from .test_stage0 import STAGE0, _event, _running_bot, _stage0_buy, _stage_buy
 STOPS = dict(
     stage0_stop_loss_pct=20.0,
     stage1_stop_loss_pct=15.0,
-    stage2_stop_loss_pct=15.0,
-    stage3_stop_loss_pct=15.0,
+    stage2_stop_loss_pct=5.0,
+    stage3_stop_loss_pct=5.0,
 )
 
 
@@ -28,8 +28,8 @@ def test_stop_loss_price_is_a_percentage_below_the_average_buy_price():
     config = make_config(**STOPS)
     assert config.stop_loss_price_for(0, 0.70) == pytest.approx(0.56)
     assert config.stop_loss_price_for(1, 0.85) == pytest.approx(0.7225)
-    assert config.stop_loss_price_for(2, 0.92) == pytest.approx(0.782)
-    assert config.stop_loss_price_for(3, 0.90) == pytest.approx(0.765)
+    assert config.stop_loss_price_for(2, 0.92) == pytest.approx(0.874)
+    assert config.stop_loss_price_for(3, 0.90) == pytest.approx(0.855)
     assert config.stop_loss_price_for(0, None) is None  # no reference price, no stop
     assert config.stop_loss_price_for(4, 0.90) is None  # not an entry stage
 
@@ -41,10 +41,11 @@ def test_stop_loss_is_off_at_zero_and_when_settings_are_built_directly():
     assert only_stage1.stop_loss_price_for(1, 0.85) == pytest.approx(0.7225)
 
 
-def test_app_defaults_are_20_percent_for_stage0_and_15_for_stages_1_to_3():
+def test_app_defaults_are_20_percent_for_stage0_15_for_stage1_and_5_for_stages_2_and_3():
     fields = Settings.model_fields
     assert fields["stage0_stop_loss_pct"].default == 20.0
-    assert all(fields[f"stage{n}_stop_loss_pct"].default == 15.0 for n in (1, 2, 3))
+    assert fields["stage1_stop_loss_pct"].default == 15.0
+    assert all(fields[f"stage{n}_stop_loss_pct"].default == 5.0 for n in (2, 3))
 
 
 def test_stop_loss_percent_is_validated():
@@ -156,11 +157,11 @@ async def test_stop_loss_compares_the_best_bid_with_the_buy_price():
     "stage, remaining, buy_ask, ctx, above_stop_bid, stop_bid",
     [
         (1, 55, 0.85, {}, 0.73, 0.72),  # stop = 0.85 * 0.85 = 0.7225
-        (2, 40, 0.92, dict(stage1_bought=True, stage1_remaining=70.0), 0.79, 0.78),  # stop = 0.782
-        (3, 25, 0.92, {}, 0.79, 0.78),  # stop = 0.782
+        (2, 40, 0.92, dict(stage1_bought=True, stage1_remaining=70.0), 0.88, 0.87),  # stop = 0.92 * 0.95 = 0.874
+        (3, 25, 0.92, {}, 0.88, 0.87),  # stop = 0.874
     ],
 )
-async def test_stage_1_2_3_stop_loss_sells_at_15_percent_under_the_buy_price(
+async def test_stage_1_2_3_stop_loss_sells_at_its_percent_under_the_buy_price(
     stage, remaining, buy_ask, ctx, above_stop_bid, stop_bid
 ):
     stack = build_stack(make_config(**STAGE0, **STOPS, trade_amount_usdc=4.0))
@@ -170,10 +171,10 @@ async def test_stage_1_2_3_stop_loss_sells_at_15_percent_under_the_buy_price(
     manager = stack["manager"]
     up = books[market.up_token_id]
 
-    up.bids = {above_stop_bid: 100.0}  # less than 15 % under the buy price
+    up.bids = {above_stop_bid: 100.0}  # less than the stop-loss percent under the buy price
     assert await manager.handle_exits(market, books, "paper", stack["config"]) == []
 
-    up.bids = {stop_bid: 100.0}  # more than 15 % under it
+    up.bids = {stop_bid: 100.0}  # more than the stop-loss percent under it
     results = await manager.handle_exits(market, books, "paper", stack["config"])
     assert [(r.status, r.reason) for r in results] == [("FILLED", f"stage{stage}_stop_loss")]
     with session_scope() as session:
@@ -264,7 +265,7 @@ async def test_stage_1_2_3_in_one_market_each_stops_out_alone():
     stack = build_stack(make_config(**STAGE0, **STOPS, trade_amount_usdc=4.0, paper_starting_balance=30.0))
     manager = stack["manager"]
     m1, m2, m3 = make_market(remaining=55), make_market(remaining=40), make_market(remaining=25)
-    # stage 1 bought at 0.90 (stop 0.765), stage 2 at 0.95 (stop 0.8075), stage 3 at 0.92 (stop 0.782)
+    # stage 1 bought at 0.90 (stop 0.765), stage 2 at 0.95 (stop 0.9025), stage 3 at 0.92 (stop 0.874)
     for market, stage, ask, ctx in (
         (m1, 1, 0.90, {}),
         (m2, 2, 0.95, dict(stage1_bought=True, stage1_remaining=55.0)),
@@ -278,10 +279,10 @@ async def test_stage_1_2_3_in_one_market_each_stops_out_alone():
         books[m3.up_token_id].bids = {price: 100.0}
         return manager.handle_exits(m3, books, "paper", stack["config"])
 
-    assert await bid(0.85) == []  # above every stop
-    assert [r.reason for r in await bid(0.80)] == ["stage2_stop_loss"]  # only stage 2 (stop 0.8075)
-    assert await bid(0.80) == []  # stage 1 (0.765) and stage 3 (0.782) keep their shares
-    assert [r.reason for r in await bid(0.78)] == ["stage3_stop_loss"]
+    assert await bid(0.91) == []  # above every stop
+    assert [r.reason for r in await bid(0.90)] == ["stage2_stop_loss"]  # only stage 2 (stop 0.9025)
+    assert await bid(0.90) == []  # stage 1 (0.765) and stage 3 (0.874) keep their shares
+    assert [r.reason for r in await bid(0.87)] == ["stage3_stop_loss"]
     assert [r.reason for r in await bid(0.70)] == ["stage1_stop_loss"]
     with session_scope() as session:
         position = session.execute(select(Position)).scalar_one()
