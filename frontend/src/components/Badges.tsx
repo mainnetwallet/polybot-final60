@@ -107,6 +107,24 @@ export function StatusChip({ status }: { status: string }) {
   return <span className={cx("chip", statusTone(status))}>{label}</span>;
 }
 
+export function ResultChip({ result, pnl }: { result?: string | null; pnl?: number | null }) {
+  if (!result) return <span className="text-slate-600">—</span>;
+  const tone =
+    result === "WIN"
+      ? "border-up/30 bg-up/10 text-up"
+      : result === "LOSS"
+        ? "border-down/30 bg-down/10 text-down"
+        : "border-amber/30 bg-amber/10 text-amber";
+  const label = result === "OPEN" ? "PENDING" : result;
+  const sign = pnl != null && pnl > 0 ? "+" : "";
+  return (
+    <span className={cx("chip", tone)} title={pnl != null ? `Realized P&L ${sign}$${pnl.toFixed(2)}` : "Waiting for market settlement"}>
+      {label}
+      {pnl != null ? ` ${sign}$${pnl.toFixed(2)}` : ""}
+    </span>
+  );
+}
+
 export function LevelChip({ level }: { level: string }) {
   const tone =
     level === "ERROR" || level === "CRITICAL"

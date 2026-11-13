@@ -85,6 +85,8 @@ export interface OrderRow {
   exchange_order_id: string | null;
   error?: string | null;
   reason?: string;
+  result?: "WIN" | "LOSS" | "OPEN" | null;
+  result_pnl?: number | null;
   created_at: string;
 }
 

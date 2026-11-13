@@ -1,6 +1,6 @@
 import type { OrderRow, PositionRow } from "../api/types";
 import { cx, fmtCents, fmtDateTime, fmtNum, fmtSignedUsd, fmtTime, fmtUsd, pnlClass, shortId } from "../lib/format";
-import { SideBadge, StatusChip } from "./Badges";
+import { ResultChip, SideBadge, StatusChip } from "./Badges";
 import { EmptyState } from "./EmptyState";
 import { IconLayers } from "./Icons";
 
@@ -32,6 +32,7 @@ export function OrdersTable({
             <th>Market</th>
             <th>Side</th>
             <th>Status</th>
+            <th>Result</th>
             <th className="text-right">Notional</th>
             <th className="text-right">Price</th>
             <th className="text-right">Filled</th>
@@ -53,6 +54,9 @@ export function OrdersTable({
                 </td>
                 <td>
                   <StatusChip status={order.status} />
+                </td>
+                <td>
+                  <ResultChip result={order.result} pnl={order.result_pnl} />
                 </td>
                 <td className="mono text-right text-slate-300">{fmtUsd(order.requested_notional)}</td>
                 <td className="mono text-right text-slate-300">{fmtCents(price)}</td>

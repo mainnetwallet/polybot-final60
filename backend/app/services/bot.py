@@ -1361,8 +1361,28 @@ class TradingBot:
             rows = session.execute(
                 select(Order).where(Order.mode == mode).order_by(Order.id.desc()).limit(limit)
             ).scalars().all()
+            positions = {
+                (p.market_id, p.side): p
+                for p in session.execute(
+                    select(Position).where(Position.mode == mode)
+                ).scalars().all()
+            }
+
+            def outcome(o: Order) -> tuple[str | None, float | None]:
+                # No fill -> nothing to win or lose.
+                if (o.filled_size or 0) <= 0:
+                    return None, None
+                pos = positions.get((o.market_id, o.side))
+                if pos is None:
+                    return None, None
+                if pos.status != "closed":
+                    return "OPEN", None
+                return ("WIN" if pos.resolution == o.side else "LOSS"), pos.realized_pnl
+
             return [
                 {
+                    "result": outcome(o)[0],
+                    "result_pnl": outcome(o)[1],
                     "id": o.id,
                     "market_id": o.market_id,
                     "side": o.side,
