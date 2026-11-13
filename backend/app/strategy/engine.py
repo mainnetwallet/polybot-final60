@@ -8,7 +8,7 @@ Entries are staged. Each stage may place ONE buy per market:
 * stage 0 (optional, independent): while stage0_start_seconds (default 200) or fewer remain and the
   final window has NOT started yet, stage0_min_ask (default 0.60) <= best_ask <= stage0_max_ask (default 0.95). The risk manager also
   demands the BTC price gap (default $100) and the order manager sells the shares again once the
-  best bid reaches stage0_sell_price (default 0.98).
+  best bid is stage0_take_profit_pct (default 20 %) above the buy price (capped at 0.99).
 
 * stage 1: inside the final window, best_ask >= trigger_threshold (default 0.80).
   If the ask is not there yet the strategy keeps watching and fires the moment it

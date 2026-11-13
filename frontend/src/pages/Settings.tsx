@@ -91,57 +91,12 @@ const FIELDS: FieldSpec[] = [
   {
     key: "stage0_take_profit_pct",
     label: "Stage 0: take-profit",
-    hint: "Stage 0 shares are sold once the best bid is this many percent above the average buy price (default 20), capped at bid 0.99. 0 = off: the tiered sell prices below are used.",
+    hint: "Stage 0 shares are sold once the best bid is this many percent above the average buy price (default 20), capped at bid 0.99. 0 = off: stage 0 shares are held to settlement.",
     kind: "number",
     step: "1",
     min: "0",
     max: "500",
     suffix: "%",
-  },
-  {
-    key: "stage0_sell_price",
-    label: "Stage 0: sell at (high tier)",
-    hint: "Sell price for shares bought at the high-tier border or above (default 0.80+ buy → 0.98). Must be higher than the max ask.",
-    kind: "number",
-    step: "0.01",
-    min: "0.02",
-    max: "0.999",
-  },
-  {
-    key: "stage0_mid_from_ask",
-    label: "Stage 0: mid tier from (buy price)",
-    hint: "Shares bought below this price use the low sell price; at or above it, the mid sell price (default 0.70).",
-    kind: "number",
-    step: "0.01",
-    min: "0.01",
-    max: "0.999",
-  },
-  {
-    key: "stage0_high_from_ask",
-    label: "Stage 0: high tier from (buy price)",
-    hint: "Shares bought at or above this price use the high sell price (default 0.80).",
-    kind: "number",
-    step: "0.01",
-    min: "0.01",
-    max: "0.999",
-  },
-  {
-    key: "stage0_sell_price_low",
-    label: "Stage 0: sell at (low tier)",
-    hint: "Sell price for shares bought below the mid-tier border (default 0.60-0.70 buy → 0.80).",
-    kind: "number",
-    step: "0.01",
-    min: "0.02",
-    max: "0.999",
-  },
-  {
-    key: "stage0_sell_price_mid",
-    label: "Stage 0: sell at (mid tier)",
-    hint: "Sell price for shares bought between the mid and high borders (default 0.70-0.80 buy → 0.90).",
-    kind: "number",
-    step: "0.01",
-    min: "0.02",
-    max: "0.999",
   },
   {
     key: "stage1_sell_enabled",
@@ -552,10 +507,6 @@ export function Settings() {
       setError("Stage 0 min ask must not be higher than the stage 0 max ask.");
       return;
     }
-    if (Number(draft.stage0_sell_price) <= Number(draft.stage0_max_ask)) {
-      setError("Stage 0 sell price must be higher than the stage 0 max ask.");
-      return;
-    }
     if (Number(draft.stage1_sell_price) <= Number(draft.stage1_sell_max_buy)) {
       setError("Stage 1 sell price must be higher than the stage 1 cheap-buy limit.");
       return;
@@ -566,17 +517,6 @@ export function Settings() {
     }
     if (Number(draft.stage2_sell_price) <= Number(draft.stage2_threshold)) {
       setError("Stage 2 sell price must be higher than the stage 2 threshold.");
-      return;
-    }
-    if (Number(draft.stage0_mid_from_ask) > Number(draft.stage0_high_from_ask)) {
-      setError("Stage 0 mid tier border must not be higher than the high tier border.");
-      return;
-    }
-    if (
-      Number(draft.stage0_sell_price_low) <= Math.min(Number(draft.stage0_mid_from_ask), Number(draft.stage0_max_ask)) ||
-      Number(draft.stage0_sell_price_mid) <= Math.min(Number(draft.stage0_high_from_ask), Number(draft.stage0_max_ask))
-    ) {
-      setError("Each stage 0 sell price must be higher than the buy prices of its tier.");
       return;
     }
     if (Number(draft.max_execution_price) < highestTrigger) {

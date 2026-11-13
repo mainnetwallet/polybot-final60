@@ -107,11 +107,11 @@ async def test_stop_loss_is_a_market_sell_even_when_the_bid_is_far_below_the_sto
 async def test_take_profit_still_sells_at_its_price_with_the_stop_loss_on():
     stack = build_stack(make_config(**STAGE0, **STOPS, trade_amount_usdc=4.0))
     market = make_market(remaining=150)
-    books = books_for(market, up_ask=0.80, down_ask=0.10)  # bought at 0.80 -> take-profit 0.98
+    books = books_for(market, up_ask=0.80, down_ask=0.10)  # bought at 0.80 -> take-profit at +20 % = 0.96
     await _stage0_buy(stack, market, books)
-    books[market.up_token_id].bids = {0.97: 100.0}  # between the stop (0.64) and the take-profit
+    books[market.up_token_id].bids = {0.95: 100.0}  # between the stop (0.64) and the take-profit
     assert await stack["manager"].handle_exits(market, books, "paper", stack["config"]) == []
-    books[market.up_token_id].bids = {0.98: 100.0}
+    books[market.up_token_id].bids = {0.96: 100.0}
     results = await stack["manager"].handle_exits(market, books, "paper", stack["config"])
     assert [(r.status, r.reason) for r in results] == [("FILLED", "stage0_sell")]
 

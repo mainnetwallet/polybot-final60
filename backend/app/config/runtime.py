@@ -41,12 +41,7 @@ OVERRIDABLE_KEYS = (
     "stage0_min_ask",
     "stage0_max_ask",
     "stage0_min_price_gap_usd",
-    "stage0_sell_price",
     "stage0_take_profit_pct",
-    "stage0_mid_from_ask",
-    "stage0_high_from_ask",
-    "stage0_sell_price_low",
-    "stage0_sell_price_mid",
     "stage1_sell_enabled",
     "stage1_sell_max_buy",
     "stage1_sell_price",
@@ -92,14 +87,8 @@ class RuntimeSettings(BaseModel):
     stage0_min_ask: float = Field(default=0.60, ge=0.01, le=0.999)
     stage0_max_ask: float = Field(default=0.95, ge=0.01, le=0.999)
     stage0_min_price_gap_usd: float = Field(default=50.0, ge=0.0, le=1_000_000.0)
-    stage0_sell_price: float = Field(default=0.98, ge=0.02, le=0.999)
-    # Stage 0 take-profit in percent above the average buy price (0 = off, tiered prices are used).
-    # Off when a RuntimeSettings is built directly; the app's Settings (.env) sets 20.
-    stage0_take_profit_pct: float = Field(default=0.0, ge=0.0, le=500.0)
-    stage0_mid_from_ask: float = Field(default=0.70, ge=0.01, le=0.999)
-    stage0_high_from_ask: float = Field(default=0.80, ge=0.01, le=0.999)
-    stage0_sell_price_low: float = Field(default=0.80, ge=0.02, le=0.999)
-    stage0_sell_price_mid: float = Field(default=0.90, ge=0.02, le=0.999)
+    # Stage 0 take-profit in percent above the average buy price (20 = sell at +20 %, 0 = off: held to settlement).
+    stage0_take_profit_pct: float = Field(default=20.0, ge=0.0, le=500.0)
     stage1_sell_enabled: bool = False
     stage1_sell_max_buy: float = Field(default=0.90, ge=0.01, le=0.999)
     stage1_sell_price: float = Field(default=0.95, ge=0.02, le=0.999)
@@ -131,14 +120,6 @@ class RuntimeSettings(BaseModel):
             raise ValueError("max_execution_price must be >= the stage 2/3 thresholds")
         if self.stage0_min_ask > self.stage0_max_ask:
             raise ValueError("stage0_min_ask must be <= stage0_max_ask")
-        if self.stage0_sell_price <= self.stage0_max_ask:
-            raise ValueError("stage0_sell_price must be greater than stage0_max_ask")
-        if self.stage0_mid_from_ask > self.stage0_high_from_ask:
-            raise ValueError("stage0_mid_from_ask must be <= stage0_high_from_ask")
-        if self.stage0_sell_price_low <= min(self.stage0_mid_from_ask, self.stage0_max_ask):
-            raise ValueError("stage0_sell_price_low must be above the buy prices of its tier")
-        if self.stage0_sell_price_mid <= min(self.stage0_high_from_ask, self.stage0_max_ask):
-            raise ValueError("stage0_sell_price_mid must be above the buy prices of its tier")
         if self.stage1_sell_price <= self.stage1_sell_max_buy:
             raise ValueError("stage1_sell_price must be greater than stage1_sell_max_buy")
         if self.stage1_sell_price_high < self.stage1_sell_price:
@@ -185,21 +166,16 @@ class RuntimeSettings(BaseModel):
             return None
         return cost_per_share * (1.0 - pct / 100.0)
 
-    def stage0_sell_price_for(self, cost_per_share: float | None) -> float:
-        """Take-profit sell price for shares stage 0 bought at `cost_per_share` (unknown -> highest tier).
+    def stage0_sell_price_for(self, cost_per_share: float | None) -> float | None:
+        """Take-profit sell price for shares stage 0 bought at `cost_per_share`; None = no take-profit.
 
-        With `stage0_take_profit_pct` > 0 it is cost * (1 + pct / 100), capped at STAGE0_MAX_TAKE_PROFIT_PRICE
-        (a share cannot be sold above 1.00). Otherwise the three price tiers apply.
+        cost * (1 + stage0_take_profit_pct / 100), capped at STAGE0_MAX_TAKE_PROFIT_PRICE (a share cannot be
+        sold above 1.00). With the percentage at 0, or an unknown cost (no reference price), there is no
+        take-profit and the shares are held to settlement.
         """
-        if cost_per_share is None:
-            return self.stage0_sell_price
-        if self.stage0_take_profit_pct > 0 and cost_per_share > 0:
-            return min(cost_per_share * (1.0 + self.stage0_take_profit_pct / 100.0), STAGE0_MAX_TAKE_PROFIT_PRICE)
-        if cost_per_share + 1e-9 < self.stage0_mid_from_ask:
-            return self.stage0_sell_price_low
-        if cost_per_share + 1e-9 < self.stage0_high_from_ask:
-            return self.stage0_sell_price_mid
-        return self.stage0_sell_price
+        if self.stage0_take_profit_pct <= 0 or cost_per_share is None or cost_per_share <= 0:
+            return None
+        return min(cost_per_share * (1.0 + self.stage0_take_profit_pct / 100.0), STAGE0_MAX_TAKE_PROFIT_PRICE)
 
     def to_public_dict(self) -> dict[str, Any]:
         data = self.model_dump()

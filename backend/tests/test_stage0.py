@@ -1,4 +1,4 @@
-"""Stage 0: early entry (200s -> final window, ask <= 0.95, BTC gap >= $50) + take-profit sell at 0.98."""
+"""Stage 0: early entry (200s -> final window, ask <= 0.95, BTC gap >= $50) + take-profit sell at +20 % of the buy price."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from .helpers import (
     stage_books,
 )
 
-STAGE0 = dict(stage0_enabled=True)  # window 200s -> 60s (the test final window), ask <= .95, gap $50, sell .98
+STAGE0 = dict(stage0_enabled=True)  # window 200s -> 60s (the test final window), ask <= .95, gap $50, take-profit +20 %
 
 
 def evaluate(remaining: float, up: float, down: float, **config):
@@ -200,7 +200,7 @@ async def _stage0_buy(stack, market, books):
     return await stack["manager"].handle_event(market, evaluation, books, "paper", ctx)
 
 
-async def test_stage0_buy_then_sell_at_98_closes_position():
+async def test_stage0_buy_then_sell_at_cap_closes_position():
     stack = build_stack(make_config(**STAGE0, trade_amount_usdc=4.0))
     market = make_market(remaining=150)
     books = books_for(market, up_ask=0.90, down_ask=0.10)
@@ -212,12 +212,12 @@ async def test_stage0_buy_then_sell_at_98_closes_position():
     assert order.order_key.endswith(":s0") and order.requested_price == 0.90
     assert stack["manager"]._key_stage(order.order_key) == 0
 
-    # bid still below 0.98 -> nothing is sold
-    books[market.up_token_id].bids = {0.97: 100.0}
+    # bought at 0.90: +20 % would be 1.08, so the sell is capped at 0.99. Bid 0.98 -> nothing is sold
+    books[market.up_token_id].bids = {0.98: 100.0}
     assert await stack["manager"].handle_exits(market, books, "paper", stack["config"]) == []
 
-    # bid reaches 0.98 -> everything stage 0 holds is sold
-    books[market.up_token_id].bids = {0.98: 100.0}
+    # bid reaches 0.99 -> everything stage 0 holds is sold
+    books[market.up_token_id].bids = {0.99: 100.0}
     results = await stack["manager"].handle_exits(market, books, "paper", stack["config"])
     assert [r.status for r in results] == ["FILLED"]
     with session_scope() as session:
@@ -235,7 +235,7 @@ async def test_stage0_sell_is_never_rebought_and_does_not_count_as_stage1():
     market = make_market(remaining=150)
     books = books_for(market, up_ask=0.90, down_ask=0.10)
     await _stage0_buy(stack, market, books)
-    books[market.up_token_id].bids = {0.98: 0.5}  # thin: only part of the shares can be sold
+    books[market.up_token_id].bids = {0.99: 0.5}  # thin: only part of the shares can be sold
     results = await stack["manager"].handle_exits(market, books, "paper", stack["config"])
     assert results and results[0].status == "CANCELED" and results[0].filled_size > 0
     manager = stack["manager"]
@@ -287,7 +287,7 @@ async def _event(bot, market):
     await bot._handle_trading(market, evaluation, config, now_ms)
 
 
-async def test_bot_buys_stage0_on_gap_side_only_then_sells_at_98():
+async def test_bot_buys_stage0_on_gap_side_only_then_sells_at_cap():
     market = make_market(remaining=150)
     bot = _running_bot(market, btc=(99_850.0, 100_000.0, ""))  # BTC is $150 BELOW the price to beat
     books = books_for(market, up_ask=0.40, down_ask=0.88)  # both asks <= .95
@@ -303,7 +303,7 @@ async def test_bot_buys_stage0_on_gap_side_only_then_sells_at_98():
     with session_scope() as session:
         assert len(session.execute(select(Order)).scalars().all()) == 1
 
-    books[market.down_token_id].bids = {0.98: 100.0}
+    books[market.down_token_id].bids = {0.99: 100.0}
     await _event(bot, market)
     rows = await bot.recent_orders("paper")
     assert sorted((r["action"], r["stage"], r["status"]) for r in rows) == [
@@ -314,7 +314,7 @@ async def test_bot_buys_stage0_on_gap_side_only_then_sells_at_98():
     snap = await bot.snapshot()
     assert snap["positions"] == []  # closed by the sale, nothing waits for settlement
     assert snap["account"]["balance"] > 10.0 - 1e-9
-    assert snap["strategy"]["stage0_sell_price"] == 0.98
+    assert snap["strategy"]["stage0_take_profit_pct"] == 20.0
 
 
 async def test_bot_stage0_needs_gap_and_stops_in_final_window():
@@ -339,7 +339,7 @@ async def test_stage0_sell_orders_do_not_count_as_daily_trades():
     market = make_market(remaining=150)
     books = books_for(market, up_ask=0.90, down_ask=0.10)
     await _stage0_buy(stack, market, books)
-    books[market.up_token_id].bids = {0.98: 100.0}
+    books[market.up_token_id].bids = {0.99: 100.0}
     results = await stack["manager"].handle_exits(market, books, "paper", stack["config"])
     assert [r.status for r in results] == ["FILLED"]
     with session_scope() as session:
@@ -358,7 +358,7 @@ async def test_stage0_retry_loop_stays_awake_right_after_the_buy():
 
 
 async def test_stage0_sell_only_sells_stage0_shares_not_stage1():
-    """Stage 0 bought UP, then stage 1 bought UP in the final window: 0.98 sells ONLY stage 0's shares."""
+    """Stage 0 bought UP, then stage 1 bought UP in the final window: the 0.99 sell takes ONLY stage 0's shares."""
     stack = build_stack(make_config(**STAGE0, trade_amount_usdc=4.0))
     market = make_market(remaining=150)
     books = books_for(market, up_ask=0.90, down_ask=0.10)
@@ -381,8 +381,8 @@ async def test_stage0_sell_only_sells_stage0_shares_not_stage1():
         position = session.execute(select(Position)).scalar_one()
         assert abs(position.size - (s0_shares + s1_shares)) < 1e-6
 
-    # bid reaches 0.98: only the stage 0 shares (whole cents) are sold, stage 1 shares stay held
-    books1[late.up_token_id].bids = {0.98: 100.0}
+    # bid reaches 0.99: only the stage 0 shares (whole cents) are sold, stage 1 shares stay held
+    books1[late.up_token_id].bids = {0.99: 100.0}
     results = await stack["manager"].handle_exits(late, books1, "paper", stack["config"])
     assert [r.status for r in results] == ["FILLED"]
     with session_scope() as session:
@@ -414,7 +414,7 @@ async def test_stage0_sell_pnl_uses_stage0_cost_not_blended_average():
     ctx = make_ctx(remaining=45, btc_price=100_150.0, price_to_beat=100_000.0)
     await stack["manager"].handle_event(late, evaluation, books1, "paper", ctx)
 
-    books1[late.up_token_id].bids = {0.98: 100.0}
+    books1[late.up_token_id].bids = {0.99: 100.0}
     await stack["manager"].handle_exits(late, books1, "paper", stack["config"])
     with session_scope() as session:
         sell = session.execute(select(Order).order_by(Order.id.desc())).scalars().first()
@@ -468,40 +468,6 @@ async def test_bot_stage0_buys_up_above_plus50_and_down_below_minus50(btc, up_as
     with session_scope() as session:
         orders = session.execute(select(Order)).scalars().all()
     assert [o.side for o in orders] == ([expected] if expected else [])
-
-
-# ---------------------------------------------------------------- tiered take-profit
-def test_stage0_sell_price_tiers_follow_the_buy_cost():
-    config = make_config(**STAGE0)
-    assert config.stage0_sell_price_for(0.60) == 0.80
-    assert config.stage0_sell_price_for(0.69) == 0.80
-    assert config.stage0_sell_price_for(0.70) == 0.90
-    assert config.stage0_sell_price_for(0.79) == 0.90
-    assert config.stage0_sell_price_for(0.80) == 0.98
-    assert config.stage0_sell_price_for(0.95) == 0.98
-    assert config.stage0_sell_price_for(None) == 0.98  # unknown cost: highest tier, never sells too early
-
-
-@pytest.mark.parametrize(
-    "buy_ask, too_low, sold_at",
-    [(0.65, 0.79, 0.80), (0.75, 0.89, 0.90), (0.88, 0.97, 0.98)],
-)
-async def test_stage0_sells_at_the_tier_price_of_what_it_paid(buy_ask, too_low, sold_at):
-    stack = build_stack(make_config(**STAGE0, trade_amount_usdc=4.0))
-    market = make_market(remaining=150)
-    books = books_for(market, up_ask=buy_ask, down_ask=0.10)
-    results = await _stage0_buy(stack, market, books)
-    assert [r.status for r in results] == ["FILLED"]
-
-    books[market.up_token_id].bids = {too_low: 100.0}  # one cent under the tier price: hold
-    assert await stack["manager"].handle_exits(market, books, "paper", stack["config"]) == []
-
-    books[market.up_token_id].bids = {sold_at: 100.0}
-    results = await stack["manager"].handle_exits(market, books, "paper", stack["config"])
-    assert [r.status for r in results] == ["FILLED"]
-    with session_scope() as session:
-        sell = [o for o in session.execute(select(Order).order_by(Order.id)).scalars() if "sell" in (o.order_key or "")]
-    assert len(sell) == 1 and sell[0].avg_fill_price >= sold_at - 1e-9
 
 
 # ---------------------------------------------------------------- stage 1 / stage 2 take-profit
@@ -676,24 +642,41 @@ async def test_bot_stage1_buys_in_final_window_then_sells_at_95():
 
 # ---------------------------------------------------------------- percent take-profit
 def test_stage0_take_profit_percent_sets_the_sell_price_and_caps_at_099():
-    config = make_config(stage0_take_profit_pct=20.0)
+    config = make_config()  # default: +20 %
     assert config.stage0_sell_price_for(0.60) == pytest.approx(0.72)
     assert config.stage0_sell_price_for(0.70) == pytest.approx(0.84)
     assert config.stage0_sell_price_for(0.80) == pytest.approx(0.96)
     assert config.stage0_sell_price_for(0.90) == pytest.approx(0.99)  # +20 % would be 1.08: capped
-    assert config.stage0_sell_price_for(None) == config.stage0_sell_price  # unknown cost: old high tier
-    assert make_config(stage0_take_profit_pct=0.0).stage0_sell_price_for(0.70) == 0.90  # off: tiers
+    assert config.stage0_sell_price_for(None) is None  # unknown cost: no reference price, held to settlement
+    assert make_config(stage0_take_profit_pct=0.0).stage0_sell_price_for(0.70) is None  # off
+    assert make_config(stage0_take_profit_pct=10.0).stage0_sell_price_for(0.70) == pytest.approx(0.77)
 
 
-async def test_stage0_sells_at_plus_20_percent_of_the_buy_price():
+@pytest.mark.parametrize(
+    "buy_ask, too_low, sold_at",
+    [(0.60, 0.71, 0.72), (0.70, 0.83, 0.84), (0.80, 0.95, 0.96), (0.88, 0.98, 0.99)],
+)
+async def test_stage0_sells_at_plus_20_percent_of_the_buy_price(buy_ask, too_low, sold_at):
     stack = build_stack(make_config(**STAGE0, stage0_take_profit_pct=20.0, trade_amount_usdc=4.0))
     market = make_market(remaining=150)
-    books = books_for(market, up_ask=0.70, down_ask=0.10)
+    books = books_for(market, up_ask=buy_ask, down_ask=0.10)
     assert [r.status for r in await _stage0_buy(stack, market, books)] == ["FILLED"]
     manager = stack["manager"]
     up = books[market.up_token_id]
-    up.bids = {0.83: 100.0}  # +18.6 %: not yet
+    up.bids = {too_low: 100.0}  # one cent under the take-profit price: hold
     assert await manager.handle_exits(market, books, "paper", stack["config"]) == []
-    up.bids = {0.84: 100.0}  # exactly +20 %
+    up.bids = {sold_at: 100.0}
     results = await manager.handle_exits(market, books, "paper", stack["config"])
     assert [(r.status, r.reason) for r in results] == [("FILLED", "stage0_sell")]
+    with session_scope() as session:
+        sell = [o for o in session.execute(select(Order).order_by(Order.id)).scalars() if "sell" in (o.order_key or "")]
+    assert len(sell) == 1 and sell[0].avg_fill_price >= sold_at - 1e-9
+
+
+async def test_stage0_take_profit_off_holds_to_settlement():
+    stack = build_stack(make_config(**STAGE0, stage0_take_profit_pct=0.0, trade_amount_usdc=4.0))
+    market = make_market(remaining=150)
+    books = books_for(market, up_ask=0.70, down_ask=0.10)
+    assert [r.status for r in await _stage0_buy(stack, market, books)] == ["FILLED"]
+    books[market.up_token_id].bids = {0.99: 100.0}
+    assert await stack["manager"].handle_exits(market, books, "paper", stack["config"]) == []

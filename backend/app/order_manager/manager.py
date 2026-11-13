@@ -956,7 +956,7 @@ class OrderManager:
     async def handle_exits(
         self, market: MarketInfo, books: dict[str, OrderBook], mode: str, config
     ) -> list[OrderResult]:
-        """Exit sells: take-profit for stage 0 (tiered), stage 1 (0.95 / 0.99 by cost) and stage 2 (0.99)
+        """Exit sells: take-profit for stage 0 (+20 % of the buy price), stage 1 (0.95 / 0.99 by cost) and stage 2 (0.99)
         shares, and a stop-loss (percent below the buy price) for the shares of every stage 0-3."""
         if market.remaining_seconds() <= 0:
             return []
