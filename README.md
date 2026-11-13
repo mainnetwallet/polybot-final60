@@ -66,14 +66,14 @@ Copy-paste commands (PowerShell):
 First-time install (once, after `git clone`):
 
 ```powershell
-cd .\polybot-final60          # go into the project folder
+cd .\Polybot-BTC-5m          # go into the project folder
 .\setup.bat                   # one-time install
 ```
 
 Update and start (every time):
 
 ```powershell
-cd .\polybot-final60          # go into the project folder (after git clone)
+cd .\Polybot-BTC-5m          # go into the project folder (after git clone)
 git pull
 .\start.bat
 ```
@@ -124,8 +124,8 @@ If one of them is missing, install it, then **close and reopen PowerShell** so P
 Open PowerShell in any folder where you want the project (the folder does not matter), then run:
 
 ```powershell
-git clone https://github.com/mainnetwallet/polybot-final60.git
-cd polybot-final60
+git clone https://github.com/mainnetwallet/Polybot-BTC-5m.git
+cd Polybot-BTC-5m
 ```
 
 - If the repository is private, Git opens a browser/login window the first time (Git Credential Manager). Sign in with your GitHub account, or paste a Personal Access Token when it asks for a password.
@@ -229,7 +229,7 @@ To start without opening the browser:
 Setup is **not** needed again. Next time you just do:
 
 ```powershell
-cd .\polybot-final60          # the folder where you cloned it
+cd .\Polybot-BTC-5m          # the folder where you cloned it
 .\start.bat
 ```
 
@@ -248,7 +248,7 @@ What to know about repeat runs:
 ### 6. Updating to the latest version
 
 ```powershell
-cd .\polybot-final60          # the folder where you cloned it
+cd .\Polybot-BTC-5m          # the folder where you cloned it
 .\stop.bat
 git pull
 .\setup.bat      # re-installs dependencies if they changed; keeps your .env and database
