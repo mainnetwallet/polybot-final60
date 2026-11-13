@@ -24,6 +24,8 @@ class RiskContext:
     market_active: bool
     market_expired: bool
     remaining_seconds: float
+    # sides already held / working in this market; lets stage 2/3 add to a position
+    exposed_sides: frozenset[str] = frozenset()
 
 
 class RiskManager:
@@ -67,6 +69,7 @@ class RiskManager:
             )
         if ctx.trades_today >= config.max_trades_per_day:
             return RiskDecision(False, "max_trades_per_day", "daily trade cap reached")
-        if ctx.open_positions >= config.max_open_positions:
+        add_on = signal.stage > 1 and signal.side in ctx.exposed_sides
+        if ctx.open_positions >= config.max_open_positions and not add_on:
             return RiskDecision(False, "max_open_positions", "maximum open positions reached")
         return RiskDecision(True, "approved", "all risk checks passed")

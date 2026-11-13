@@ -1,11 +1,20 @@
-"""FINAL_60_SECONDS_MARKET_BUY.
+"""FINAL_WINDOW_STAGED_MARKET_BUY.
 
-First 4 minutes: no trading.
-Final N seconds (default 60): monitor UP and DOWN best asks.
-best_ask >= threshold (default 0.80) => emit a marketable buy signal.
+First part of the market: no trading.
+Final N seconds (default 80): monitor UP and DOWN best asks.
 
-The threshold is a trigger, never a limit price. Signals carry the live ask so
-the executor buys at the market instead of posting a fixed 0.80 order.
+Entries are staged. Each stage may place ONE buy per market:
+
+* stage 1: inside the final window, best_ask >= trigger_threshold (default 0.80).
+  If the ask is not there yet the strategy keeps watching and fires the moment it
+  gets there, any time before the market ends.
+* stage 2: remaining <= stage2_seconds (default 50) and best_ask >= stage2_threshold
+  (default 0.90).
+* stage 3: remaining <= stage3_seconds (default 30) and best_ask >= stage3_threshold
+  (default 0.90).
+
+The thresholds are triggers, never limit prices. Signals carry the live ask so the
+executor buys at the market instead of posting a fixed-price order.
 """
 
 from __future__ import annotations
@@ -21,6 +30,15 @@ from app.strategy.types import Signal, StrategyEvaluation
 def datetime_to_epoch_ms(value: datetime) -> int:
     aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
     return int(aware.timestamp() * 1000)
+
+
+def stage_plan(config: RuntimeSettings) -> list[tuple[int, float, float]]:
+    """(stage, max remaining seconds, ask threshold) for every entry stage."""
+    return [
+        (1, float(config.final_window_seconds), config.trigger_threshold),
+        (2, float(config.stage2_seconds), config.stage2_threshold),
+        (3, float(config.stage3_seconds), config.stage3_threshold),
+    ]
 
 
 class FinalWindowStrategy:
@@ -56,27 +74,31 @@ class FinalWindowStrategy:
             )
 
         signals: list[Signal] = []
-        for side, market_side_token, book, ask in (
-            ("UP", market.up_token_id, up, up_ask),
-            ("DOWN", market.down_token_id, down, down_ask),
-        ):
-            if book is None or ask is None:
+        for stage, max_remaining, threshold in stage_plan(config):
+            if remaining > max_remaining:
                 continue
-            if ask + 1e-9 < config.trigger_threshold:
-                continue
-            signals.append(
-                Signal(
-                    market_id=market.market_id,
-                    side=side,
-                    token_id=market_side_token,
-                    best_ask=round(ask, 6),
-                    ask_size=book.ask_size,
-                    remaining_seconds=round(remaining, 3),
-                    threshold=config.trigger_threshold,
-                    observed_at_ms=now_ms,
-                    book_age_ms=book.age_ms(now_ms),
+            for side, market_side_token, book, ask in (
+                ("UP", market.up_token_id, up, up_ask),
+                ("DOWN", market.down_token_id, down, down_ask),
+            ):
+                if book is None or ask is None:
+                    continue
+                if ask + 1e-9 < threshold:
+                    continue
+                signals.append(
+                    Signal(
+                        market_id=market.market_id,
+                        side=side,
+                        token_id=market_side_token,
+                        best_ask=round(ask, 6),
+                        ask_size=book.ask_size,
+                        remaining_seconds=round(remaining, 3),
+                        threshold=threshold,
+                        observed_at_ms=now_ms,
+                        book_age_ms=book.age_ms(now_ms),
+                        stage=stage,
+                    )
                 )
-            )
 
         reason = "trigger" if signals else "monitoring"
         return StrategyEvaluation(
@@ -84,4 +106,4 @@ class FinalWindowStrategy:
         )
 
 
-__all__ = ["FinalWindowStrategy", "datetime_to_epoch_ms"]
+__all__ = ["FinalWindowStrategy", "datetime_to_epoch_ms", "stage_plan"]

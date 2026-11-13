@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -30,6 +31,7 @@ ACTIVE_STATUSES = ("PENDING", "SUBMITTED", "PARTIALLY_FILLED")
 TERMINAL_EMPTY = ("REJECTED", "CANCELED", "EXPIRED")
 ExecutorProvider = Callable[[str], ExecutionEngine]
 SubmissionAllowed = Callable[[str], bool]
+_STAGE_SUFFIX = re.compile(r":s(\d+)$")
 
 
 @dataclass
@@ -77,7 +79,7 @@ class OrderManager:
         self._logs = logs
         self._submission_allowed = submission_allowed or (lambda _mode: True)
         self._lock = asyncio.Lock()
-        self._trigger_seen: set[tuple[str, str, str]] = set()
+        self._trigger_seen: set[tuple[str, str, str, int]] = set()
         self._trigger_market: str | None = None
         self._retry_after: dict[int, float] = {}
         self._background_writes: set[asyncio.Task] = set()
@@ -88,10 +90,12 @@ class OrderManager:
             self._logs.log(
                 "INFO" if decision == "submitted" else "WARNING",
                 "trigger",
+                f"{'S' + str(signal.stage) + ' ' if signal.stage > 1 else ''}"
                 f"{signal.side} ask {signal.best_ask:.3f} >= {signal.threshold:.2f} -> {decision}",
                 payload={
                     "market_id": signal.market_id,
                     "side": signal.side,
+                    "stage": signal.stage,
                     "best_ask": signal.best_ask,
                     "ask_size": signal.ask_size,
                     "remaining_seconds": signal.remaining_seconds,
@@ -130,17 +134,25 @@ class OrderManager:
         return sorted(signals, key=lambda s: order.get(s.side, 9))[0]
 
     def _order_key(self, mode: str, signal: Signal, policy: str) -> str:
+        # Stage 1 keeps the historical key; add-on stages get their own suffix so every
+        # stage has exactly one order row per market (a failed row is reset and retried).
+        suffix = f":s{signal.stage}" if signal.stage > 1 else ""
         if policy == "one_per_side":
-            return f"{mode}:{signal.market_id}:{signal.side}"
+            return f"{mode}:{signal.market_id}:{signal.side}{suffix}"
         if policy == "allow":
-            return f"{mode}:{signal.market_id}:{signal.side}:{signal.observed_at_ms // 1000}"
-        return f"{mode}:{signal.market_id}"
+            return f"{mode}:{signal.market_id}:{signal.side}:{signal.observed_at_ms // 1000}{suffix}"
+        return f"{mode}:{signal.market_id}{suffix}"
+
+    @staticmethod
+    def _key_stage(order_key: str | None) -> int:
+        match = _STAGE_SUFFIX.search(order_key or "")
+        return int(match.group(1)) if match else 1
 
     def _log_trigger_once(self, signal: Signal, decision: str, reason: str, mode: str) -> None:
         if self._trigger_market != signal.market_id:
             self._trigger_market = signal.market_id
             self._trigger_seen.clear()
-        key = (signal.market_id, signal.side, decision)
+        key = (signal.market_id, signal.side, decision, signal.stage)
         if key in self._trigger_seen:
             return
         self._trigger_seen.add(key)
@@ -189,19 +201,27 @@ class OrderManager:
             if not evaluation.signals or ctx is None:
                 return []
 
-            chosen = self._choose(evaluation.signals, config.conflict_policy)
-            results: list[OrderResult] = []
+            by_stage: dict[int, list[Signal]] = {}
             for signal in evaluation.signals:
-                if chosen is None:
-                    self._log_trigger_once(signal, "blocked_conflict", "both sides qualified; policy block_both", mode)
-                    results.append(OrderResult(None, signal.side, "BLOCKED", "conflict_blocked"))
-                    continue
-                if signal is not chosen:
-                    self._log_trigger_once(signal, "skipped_conflict", f"conflict policy {config.conflict_policy}", mode)
-                    results.append(OrderResult(None, signal.side, "SKIPPED", "conflict_not_selected"))
-                    continue
-                result = await self._submit(market, signal, books, mode, ctx, config)
-                results.append(result)
+                by_stage.setdefault(signal.stage, []).append(signal)
+
+            results: list[OrderResult] = []
+            # Stages are independent entries: each resolves its own UP/DOWN conflict and
+            # gets its own order, in stage order.
+            for stage in sorted(by_stage):
+                stage_signals = by_stage[stage]
+                chosen = self._choose(stage_signals, config.conflict_policy)
+                for signal in stage_signals:
+                    if chosen is None:
+                        self._log_trigger_once(signal, "blocked_conflict", "both sides qualified; policy block_both", mode)
+                        results.append(OrderResult(None, signal.side, "BLOCKED", "conflict_blocked"))
+                        continue
+                    if signal is not chosen:
+                        self._log_trigger_once(signal, "skipped_conflict", f"conflict policy {config.conflict_policy}", mode)
+                        results.append(OrderResult(None, signal.side, "SKIPPED", "conflict_not_selected"))
+                        continue
+                    result = await self._submit(market, signal, books, mode, ctx, config)
+                    results.append(result)
         return results
 
     async def _submit(
@@ -293,6 +313,9 @@ class OrderManager:
                 query = query.where(Order.side == signal.side)
             orders = session.execute(query).scalars().all()
             for order in orders:
+                # each entry stage has its own one-order allowance
+                if self._key_stage(order.order_key) != signal.stage:
+                    continue
                 if order.status in ACTIVE_STATUSES or order.status == "FILLED" or order.filled_size > 0:
                     return order
             return None

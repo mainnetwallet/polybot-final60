@@ -110,6 +110,7 @@ def make_ctx(
     open_positions: int = 0,
     remaining: float = 30.0,
     kill_switch: bool = False,
+    exposed_sides: frozenset[str] = frozenset(),
 ) -> RiskContext:
     return RiskContext(
         now_ms=int(time.time() * 1000),
@@ -121,6 +122,7 @@ def make_ctx(
         market_active=True,
         market_expired=remaining <= 0,
         remaining_seconds=remaining,
+        exposed_sides=exposed_sides,
     )
 
 

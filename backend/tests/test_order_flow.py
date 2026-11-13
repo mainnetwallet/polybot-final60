@@ -43,7 +43,7 @@ def _orders() -> list[Order]:
 
 async def test_order_uses_current_market_ask_not_threshold():
     stack = build_stack()
-    market = make_market(remaining=30)
+    market = make_market(remaining=55)  # stage 1 only (stage 2 starts at 50s)
     books = books_for(market, up_ask=0.93, down_ask=0.07)
 
     _, results = await _submit(stack, market, books)
@@ -80,7 +80,7 @@ async def test_no_fixed_limit_price_order():
 
 async def test_duplicate_orders_are_blocked():
     stack = build_stack()
-    market = make_market(remaining=30)
+    market = make_market(remaining=55)
     books = books_for(market, up_ask=0.90, down_ask=0.10)
 
     await _submit(stack, market, books)
@@ -97,7 +97,7 @@ async def test_duplicate_orders_are_blocked():
 
 async def test_concurrent_triggers_create_one_order():
     stack = build_stack()
-    market = make_market(remaining=30)
+    market = make_market(remaining=55)
     books = books_for(market, up_ask=0.90, down_ask=0.10)
     stack["books"].update(books)
     evaluation = _evaluate(stack, market, books)
@@ -301,3 +301,105 @@ async def test_paper_report_measures_latency():
     assert results[0].latency_ms >= 0
     assert results[0].latency_ms <= max(elapsed_ms, 1.0) + 5.0
     assert _orders()[0].latency_ms is not None
+
+
+# --- staged entries + retry -------------------------------------------------
+
+
+async def test_stage1_fires_late_when_ask_reaches_threshold_later():
+    stack = build_stack()
+    market = make_market(remaining=55)
+
+    _, results = await _submit(stack, market, books_for(market, up_ask=0.60, down_ask=0.40))
+    assert results == []
+    assert _orders() == []
+
+    # ask only gets to 0.82 later in the window: stage 1 still fires then
+    _, results = await _submit(stack, market, books_for(market, up_ask=0.82, down_ask=0.18))
+    assert [r.status for r in results] == ["FILLED"]
+    assert len(_orders()) == 1
+
+
+async def test_stage2_and_stage3_add_one_order_each():
+    stack = build_stack(make_config(max_open_positions=1))
+    market = make_market(remaining=55)
+    books = books_for(market, up_ask=0.93, down_ask=0.07)
+
+    # 55s left: only stage 1
+    await _submit(stack, market, books, make_ctx(remaining=55))
+    assert len(_orders()) == 1
+
+    # 45s left: stage 2 (ask >= 0.90) adds one order on the same side
+    market = make_market(remaining=45)
+    books = books_for(market, up_ask=0.93, down_ask=0.07)
+    ctx = make_ctx(remaining=45, open_positions=1, exposed_sides=frozenset({"UP"}))
+    await _submit(stack, market, books, ctx)
+    assert len(_orders()) == 2
+
+    # repeated events at 45s never create a second stage-2 order
+    await _submit(stack, market, books, ctx)
+    assert len(_orders()) == 2
+
+    # 25s left: stage 3 adds the last order
+    market = make_market(remaining=25)
+    books = books_for(market, up_ask=0.93, down_ask=0.07)
+    ctx = make_ctx(remaining=25, open_positions=1, exposed_sides=frozenset({"UP"}))
+    await _submit(stack, market, books, ctx)
+    await _submit(stack, market, books, ctx)
+    orders = _orders()
+    assert len(orders) == 3
+    assert {o.side for o in orders} == {"UP"}
+    assert all(o.status == "FILLED" for o in orders)
+
+
+async def test_stage2_needs_090_not_just_080():
+    stack = build_stack()
+    market = make_market(remaining=55)
+    await _submit(stack, market, books_for(market, up_ask=0.85, down_ask=0.15))
+    assert len(_orders()) == 1  # stage 1
+
+    market = make_market(remaining=45)
+    await _submit(stack, market, books_for(market, up_ask=0.85, down_ask=0.15))
+    assert len(_orders()) == 1  # 0.85 < 0.90: no stage 2
+
+
+async def test_blocked_trigger_is_retried_on_next_event():
+    stack = build_stack()
+    market = make_market(remaining=55)
+
+    # stale book -> blocked, no order
+    _, results = await _submit(
+        stack, market, books_for(market, up_ask=0.85, down_ask=0.15, up_age_ms=5000)
+    )
+    assert results[0].status == "BLOCKED"
+    assert _orders() == []
+
+    # fresh book on the next event -> same stage is tried again and fills
+    _, results = await _submit(stack, market, books_for(market, up_ask=0.85, down_ask=0.15))
+    assert results[0].status == "FILLED"
+    assert len(_orders()) == 1
+
+
+async def test_failed_order_is_retried_on_next_event():
+    stack = build_stack()
+    market = make_market(remaining=55)
+    real_provider = stack["manager"]._executor_provider
+    calls = {"n": 0}
+
+    class FailOnce:
+        async def place_buy(self, request):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return ExecutionReport(status="CANCELED", error="FOK order was not filled")
+            return await real_provider("paper").place_buy(request)
+
+    stack["manager"]._executor_provider = lambda _mode: FailOnce()
+    books = books_for(market, up_ask=0.85, down_ask=0.15)
+
+    _, first = await _submit(stack, market, books)
+    assert first[0].status == "CANCELED"
+
+    _, second = await _submit(stack, market, books)
+    assert second[0].status == "FILLED"
+    assert calls["n"] == 2
+    assert len(_orders()) == 1  # same row reused, not a second trade

@@ -92,3 +92,32 @@ def test_final_window_is_configurable():
     result = evaluate(90, up=0.95, down=0.95, final_window_seconds=120)
     assert result.in_window is True
     assert len(result.signals) == 2
+
+
+def _stages(result):
+    return sorted({sig.stage for sig in result.signals})
+
+
+def test_stage1_waits_then_fires_late_in_window():
+    assert evaluate(55, up=0.60, down=0.40).signals == []
+    late = evaluate(8, up=0.82, down=0.18)
+    assert _stages(late) == [1]
+
+
+def test_stage2_needs_50s_left_and_090():
+    assert _stages(evaluate(55, up=0.95, down=0.05)) == [1]
+    assert _stages(evaluate(45, up=0.85, down=0.15)) == [1]
+    assert _stages(evaluate(45, up=0.95, down=0.05)) == [1, 2]
+
+
+def test_stage3_needs_30s_left_and_090():
+    assert _stages(evaluate(35, up=0.95, down=0.05)) == [1, 2]
+    assert _stages(evaluate(25, up=0.85, down=0.15)) == [1]
+    assert _stages(evaluate(25, up=0.95, down=0.05)) == [1, 2, 3]
+
+
+def test_stage_settings_are_configurable():
+    result = evaluate(
+        40, up=0.95, down=0.05, stage2_seconds=45, stage2_threshold=0.95, stage3_seconds=20
+    )
+    assert _stages(result) == [1, 2]

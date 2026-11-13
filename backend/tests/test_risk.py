@@ -72,3 +72,22 @@ def test_kill_switch_blocks():
 def test_max_trades_per_day_blocks():
     decision = RiskManager().check(signal(), make_ctx(trades_today=60), make_config())
     assert decision.reason == "max_trades_per_day"
+
+
+def staged(stage: int, side: str = "UP") -> Signal:
+    base = signal(ask=0.93)
+    return Signal(**{**base.__dict__, "stage": stage, "side": side, "threshold": 0.90})
+
+
+def test_add_on_stage_may_add_to_existing_position_even_at_position_cap():
+    config = make_config(max_open_positions=1)
+    ctx = make_ctx(open_positions=1, exposed_sides=frozenset({"UP"}))
+    assert RiskManager().check(staged(2), ctx, config).approved is True
+    assert RiskManager().check(staged(3), ctx, config).approved is True
+
+
+def test_stage1_and_opposite_side_still_respect_position_cap():
+    config = make_config(max_open_positions=1)
+    ctx = make_ctx(open_positions=1, exposed_sides=frozenset({"UP"}))
+    assert RiskManager().check(staged(1), ctx, config).reason == "max_open_positions"
+    assert RiskManager().check(staged(2, side="DOWN"), ctx, config).reason == "max_open_positions"

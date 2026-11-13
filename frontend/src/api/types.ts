@@ -38,6 +38,10 @@ export interface StrategyState {
   reason: string;
   trigger_threshold: number;
   final_window_seconds: number;
+  stage2_seconds: number;
+  stage2_threshold: number;
+  stage3_seconds: number;
+  stage3_threshold: number;
   conflict_policy: string;
   duplicate_policy: string;
 }
@@ -198,6 +202,10 @@ export interface LogRow {
 export interface SettingsState {
   trigger_threshold: number;
   final_window_seconds: number;
+  stage2_seconds: number;
+  stage2_threshold: number;
+  stage3_seconds: number;
+  stage3_threshold: number;
   max_execution_price: number;
   trade_amount_usdc: number;
   max_daily_loss: number;

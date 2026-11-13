@@ -99,6 +99,7 @@ class TradingBot:
         self._stop_generation = 0
         self._market: MarketInfo | None = None
         self._evaluation: StrategyEvaluation | None = None
+        self._last_book_event_ms = 0
         self._last_order: dict | None = None
         self._latencies: deque[float] = deque(maxlen=50)
         self._live_balance: float | None = None
@@ -203,6 +204,7 @@ class TradingBot:
         self._tasks = [
             asyncio.create_task(self._state_broadcast_loop(), name="state-broadcast"),
             asyncio.create_task(self._maintenance_loop(), name="maintenance"),
+            asyncio.create_task(self._retry_loop(), name="entry-retry"),
         ]
         self.logs.log(
             "INFO",
@@ -331,6 +333,7 @@ class TradingBot:
             return
         config = self.runtime.get()
         now_ms = int(time.time() * 1000)
+        self._last_book_event_ms = now_ms
 
         evaluation = self.strategy.evaluate(market, self.data.books, now_ms, config)
         self._evaluation = evaluation
@@ -453,6 +456,7 @@ class TradingBot:
                 if order.market_id == market.market_id
             )
             open_positions = len(exposure_keys)
+            exposed_sides = frozenset(side for _, side in exposure_keys)
             balance = self._balance(session)
         remaining = market.remaining_seconds()
         return RiskContext(
@@ -465,6 +469,7 @@ class TradingBot:
             market_active=True,
             market_expired=remaining <= 0,
             remaining_seconds=remaining,
+            exposed_sides=exposed_sides,
         )
 
     def _balance(self, session) -> float:
@@ -770,6 +775,38 @@ class TradingBot:
         )
         await self._broadcast_state()
         return await self.snapshot()
+
+    # ------------------------------------------------------------------
+    async def _retry_loop(self) -> None:
+        """Safety net for entries that were blocked or failed.
+
+        Trading is book-event driven. If an entry is blocked (stale book, balance, ...)
+        or rejected and the book then goes quiet, no event would re-trigger it. While
+        the market is in its final window and the book has been silent for a moment,
+        re-evaluate so every stage whose condition still holds is tried again. Duplicate
+        protection in the order manager keeps this from double-buying.
+        """
+        while not self._shutdown:
+            await asyncio.sleep(0.5)
+            try:
+                market = self._market
+                if market is None or self._status != "RUNNING":
+                    continue
+                now_ms = int(time.time() * 1000)
+                if now_ms - self._last_book_event_ms < 500:
+                    continue
+                config = self.runtime.get()
+                if market.remaining_seconds() > config.final_window_seconds:
+                    continue
+                evaluation = self.strategy.evaluate(market, self.data.books, now_ms, config)
+                if not evaluation.signals:
+                    continue
+                self._evaluation = evaluation
+                await self._handle_trading(market, evaluation, config, now_ms)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("entry retry loop error: %s", exc)
 
     # ------------------------------------------------------------------
     async def _maintenance_loop(self) -> None:
@@ -1319,6 +1356,10 @@ class TradingBot:
                 ),
                 "trigger_threshold": config.trigger_threshold,
                 "final_window_seconds": config.final_window_seconds,
+                "stage2_seconds": config.stage2_seconds,
+                "stage2_threshold": config.stage2_threshold,
+                "stage3_seconds": config.stage3_seconds,
+                "stage3_threshold": config.stage3_threshold,
                 "conflict_policy": config.conflict_policy,
                 "duplicate_policy": config.duplicate_policy,
             },

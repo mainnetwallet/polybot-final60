@@ -14,6 +14,7 @@ class Signal:
     threshold: float
     observed_at_ms: int
     book_age_ms: float
+    stage: int = 1  # 1 = first entry (trigger), 2/3 = staged add-on entries
 
 
 @dataclass

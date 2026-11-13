@@ -37,6 +37,10 @@ class ResetServerRequest(BaseModel):
 class SettingsPatch(BaseModel):
     trigger_threshold: float | None = Field(default=None, ge=0.01, le=0.999)
     final_window_seconds: int | None = Field(default=None, ge=1, le=300)
+    stage2_seconds: int | None = Field(default=None, ge=1, le=300)
+    stage2_threshold: float | None = Field(default=None, ge=0.01, le=0.999)
+    stage3_seconds: int | None = Field(default=None, ge=1, le=300)
+    stage3_threshold: float | None = Field(default=None, ge=0.01, le=0.999)
     max_execution_price: float | None = Field(default=None, ge=0.01, le=1.0)
     trade_amount_usdc: float | None = Field(default=None, gt=0, le=100000)
     max_daily_loss: float | None = Field(default=None, ge=0)

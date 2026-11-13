@@ -18,6 +18,10 @@ from app.config.settings import Settings
 OVERRIDABLE_KEYS = (
     "trigger_threshold",
     "final_window_seconds",
+    "stage2_seconds",
+    "stage2_threshold",
+    "stage3_seconds",
+    "stage3_threshold",
     "max_execution_price",
     "trade_amount_usdc",
     "max_daily_loss",
@@ -35,6 +39,10 @@ OVERRIDABLE_KEYS = (
 class RuntimeSettings(BaseModel):
     trigger_threshold: float = Field(ge=0.01, le=0.999)
     final_window_seconds: int = Field(ge=1, le=300)
+    stage2_seconds: int = Field(default=50, ge=1, le=300)
+    stage2_threshold: float = Field(default=0.90, ge=0.01, le=0.999)
+    stage3_seconds: int = Field(default=30, ge=1, le=300)
+    stage3_threshold: float = Field(default=0.90, ge=0.01, le=0.999)
     max_execution_price: float = Field(ge=0.01, le=1.0)
     trade_amount_usdc: float = Field(gt=0.0, le=100000.0)
     max_daily_loss: float = Field(ge=0.0)
@@ -61,6 +69,8 @@ class RuntimeSettings(BaseModel):
             raise ValueError("conflict_policy must be up_first, down_first, highest_ask or block_both")
         if self.max_execution_price < self.trigger_threshold:
             raise ValueError("max_execution_price must be >= trigger_threshold")
+        if self.max_execution_price < max(self.stage2_threshold, self.stage3_threshold):
+            raise ValueError("max_execution_price must be >= the stage 2/3 thresholds")
         return self
 
     def to_public_dict(self) -> dict[str, Any]:

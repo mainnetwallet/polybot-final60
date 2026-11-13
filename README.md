@@ -5,10 +5,12 @@ A local Windows application for Polymarket BTC up/down markets.
 The entry rules are intentionally simple. The window and trigger values below are defaults and can be changed in Settings:
 
 - Before the configured final window, no order is created.
-- During the configured final window, monitor UP and DOWN. If a best ask reaches `TRIGGER_THRESHOLD` (default `0.80`), submit a **BUY at the current market price**.
-- `0.80` is a **trigger threshold, never a limit price**.
+- During the configured final window (default last 80s), monitor UP and DOWN. If a best ask reaches `TRIGGER_THRESHOLD` (default `0.80`), submit a **BUY at the current market price**. If the ask is not there when the window opens, the bot keeps watching and buys the moment it gets there, any time before the market ends (stage 1).
+- Two optional add-on entries per market (stages 2 and 3): once `STAGE2_SECONDS` (default `50`) or `STAGE3_SECONDS` (default `30`) or less remain and a best ask is at least `STAGE2_THRESHOLD` / `STAGE3_THRESHOLD` (default `0.90`), the bot places one more buy for that stage. Each stage buys at most once per market, so a market can have up to 3 buys.
+- If an entry is blocked (e.g. stale book) or fails (e.g. FOK not filled), the same stage is tried again on the next book event, and every 0.5s while the book is quiet, for as long as its condition still holds.
+- `0.80` / `0.90` are **trigger thresholds, never limit prices**.
 - Live orders use FOK and the configured maximum execution price as the worst acceptable price.
-- Execution is WebSocket/event-driven. There are no polling sleeps or artificial delays in the trigger path.
+- Execution is WebSocket/event-driven. There are no polling sleeps or artificial delays in the trigger path (a 0.5s retry heartbeat only re-tries blocked/failed entries when the book is quiet).
 
 Paper trading is the default. Live trading is implemented but disabled by default and guarded by explicit safety gates.
 
@@ -373,10 +375,12 @@ Strategy and risk defaults:
 | --- | --- | --- |
 | `TRIGGER_THRESHOLD` | `0.80` | Ask level that triggers a BUY |
 | `FINAL_WINDOW_SECONDS` | `80` | Trading window at the end of the market |
+| `STAGE2_SECONDS` / `STAGE2_THRESHOLD` | `50` / `0.90` | Stage 2 add-on: time left and ask level |
+| `STAGE3_SECONDS` / `STAGE3_THRESHOLD` | `30` / `0.90` | Stage 3 add-on: time left and ask level |
 | `MAX_EXECUTION_PRICE` | `0.991` | Hard cap on the price paid |
 | `TRADE_AMOUNT_USDC` | `1.0` | Requested notional per trade |
 | `STALE_DATA_MAX_AGE_MS` | `2000` | Maximum book age for execution |
-| `MAX_OPEN_POSITIONS` | `1` | Concurrent position cap |
+| `MAX_OPEN_POSITIONS` | `1` | Concurrent position cap per market (stage 2/3 may add to a side already held) |
 | `DUPLICATE_POLICY` | `one_per_market` | `one_per_market`, `one_per_side`, `allow` |
 | `CONFLICT_POLICY` | `up_first` | `up_first`, `down_first`, `highest_ask`, `block_both` |
 | `MAX_DAILY_LOSS` | `5.0` | Daily loss stop (USDC) |

@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     # --- strategy -------------------------------------------------------
     trigger_threshold: float = 0.80
     final_window_seconds: int = 80
+    # Extra staged entries inside the final window: once `remaining <= stageN_seconds`
+    # and a best ask >= stageN_threshold, one more buy per stage (same market).
+    stage2_seconds: int = 50
+    stage2_threshold: float = 0.90
+    stage3_seconds: int = 30
+    stage3_threshold: float = 0.90
     max_execution_price: float = 0.991
     trade_amount_usdc: float = 1.0
     stale_data_max_age_ms: int = 2000

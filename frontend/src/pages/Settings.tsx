@@ -42,6 +42,44 @@ const FIELDS: FieldSpec[] = [
     suffix: "s",
   },
   {
+    key: "stage2_seconds",
+    label: "Stage 2: seconds left",
+    hint: "From this many seconds before expiry, stage 2 may add one more buy.",
+    kind: "number",
+    step: "1",
+    min: "1",
+    max: "300",
+    suffix: "s",
+  },
+  {
+    key: "stage2_threshold",
+    label: "Stage 2: ask trigger",
+    hint: "Stage 2 buys when a best ask is at or above this decimal.",
+    kind: "number",
+    step: "0.01",
+    min: "0.01",
+    max: "0.999",
+  },
+  {
+    key: "stage3_seconds",
+    label: "Stage 3: seconds left",
+    hint: "From this many seconds before expiry, stage 3 may add one more buy.",
+    kind: "number",
+    step: "1",
+    min: "1",
+    max: "300",
+    suffix: "s",
+  },
+  {
+    key: "stage3_threshold",
+    label: "Stage 3: ask trigger",
+    hint: "Stage 3 buys when a best ask is at or above this decimal.",
+    kind: "number",
+    step: "0.01",
+    min: "0.01",
+    max: "0.999",
+  },
+  {
     key: "duplicate_policy",
     label: "Duplicate policy",
     hint: "Controls repeat entries for the same market or side.",
@@ -280,8 +318,13 @@ export function Settings() {
       notify("info", "No changes", "Every field already matches the persisted runtime settings.");
       return;
     }
-    if (Number(draft.max_execution_price) < Number(draft.trigger_threshold)) {
-      setError("Max execution price must be greater than or equal to the trigger threshold.");
+    const highestTrigger = Math.max(
+      Number(draft.trigger_threshold),
+      Number(draft.stage2_threshold),
+      Number(draft.stage3_threshold),
+    );
+    if (Number(draft.max_execution_price) < highestTrigger) {
+      setError("Max execution price must be greater than or equal to the trigger and stage 2/3 thresholds.");
       return;
     }
 
