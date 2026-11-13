@@ -67,6 +67,28 @@ function describeError(error: unknown): string {
 const HISTORY_LIMIT = 180;
 const LOG_LIMIT = 400;
 
+// "Clear view" hides every log up to the newest one seen. The logs stay in the database (audit
+// trail); this id is remembered in the browser so a refresh does not bring them back.
+const LOGS_CLEARED_KEY = "polybot.logs.clearedBeforeId";
+
+function readLogsCutoff(): number {
+  try {
+    const value = Number(window.localStorage.getItem(LOGS_CLEARED_KEY));
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writeLogsCutoff(id: number | null): void {
+  try {
+    if (id === null) window.localStorage.removeItem(LOGS_CLEARED_KEY);
+    else window.localStorage.setItem(LOGS_CLEARED_KEY, String(id));
+  } catch {
+    // storage can be blocked; the clear then only lasts until the next refresh
+  }
+}
+
 function pushPoint(points: number[], value: number | null | undefined): number[] {
   if (typeof value !== "number" || !Number.isFinite(value)) return points;
   const next = [...points, value];
@@ -221,7 +243,15 @@ export function BotProvider({ children }: { children: ReactNode }) {
     api
       .logs(200)
       .then((rows) => {
-        if (alive) setLogs(rows);
+        if (!alive) return;
+        const newest = rows.reduce((max, row) => Math.max(max, row.id ?? 0), 0);
+        let cutoff = readLogsCutoff();
+        if (cutoff > newest) {
+          // database was reset/wiped: ids restarted, the old cutoff no longer applies
+          writeLogsCutoff(null);
+          cutoff = 0;
+        }
+        setLogs(cutoff > 0 ? rows.filter((row) => (row.id ?? 0) > cutoff) : rows);
       })
       .catch(() => undefined);
     return () => {
@@ -395,6 +425,7 @@ export function BotProvider({ children }: { children: ReactNode }) {
       try {
         applySnapshot(await api.resetServer(phrase));
         setLogs([]);
+        writeLogsCutoff(null);
         notify("success", "Server reset", "All data was wiped and settings are back to .env defaults.");
         return { ok: true };
       } catch (error) {
@@ -406,7 +437,13 @@ export function BotProvider({ children }: { children: ReactNode }) {
     [applySnapshot, notify],
   );
 
-  const clearLogs = useCallback(() => setLogs([]), []);
+  const clearLogs = useCallback(() => {
+    setLogs((prev) => {
+      const newest = prev.reduce((max, row) => Math.max(max, row.id ?? 0), 0);
+      if (newest > 0) writeLogsCutoff(Math.max(newest, readLogsCutoff()));
+      return [];
+    });
+  }, []);
 
   const value = useMemo<BotContextValue>(
     () => ({
