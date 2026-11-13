@@ -63,7 +63,12 @@ class Settings(BaseSettings):
     stage3_threshold: float = 0.90
     max_execution_price: float = 0.991
     trade_amount_usdc: float = 1.0
-    stale_data_max_age_ms: int = 2000
+    # Book age only resets on a websocket book event, so a stable price on a quiet book looks
+    # "old" without being wrong. 5s keeps stage 2/3 (armed by the clock) from being blocked.
+    stale_data_max_age_ms: int = 5000
+    # Retry guard for failed/cancelled entries (per stage, per market)
+    entry_max_attempts: int = 5
+    entry_retry_gap_ms: int = 1000
     max_open_positions: int = 1
     duplicate_policy: str = "one_per_market"  # one_per_market | one_per_side | allow
     conflict_policy: str = "up_first"  # up_first | down_first | highest_ask | block_both

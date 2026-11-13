@@ -82,6 +82,10 @@ class OrderManager:
         self._trigger_seen: set[tuple[str, str, str, int]] = set()
         self._trigger_market: str | None = None
         self._retry_after: dict[int, float] = {}
+        self._max_attempts = settings.entry_max_attempts
+        self._retry_gap_ms = settings.entry_retry_gap_ms
+        self._attempts: dict[str, int] = {}
+        self._last_attempt_ms: dict[str, int] = {}
         self._background_writes: set[asyncio.Task] = set()
 
     def _schedule_trigger(self, signal: Signal, decision: str, reason: str, mode: str) -> None:
@@ -243,6 +247,18 @@ class OrderManager:
             self._log_trigger_once(signal, f"blocked_{decision.reason}", decision.detail, mode)
             return OrderResult(None, signal.side, "BLOCKED", decision.reason)
 
+        # Retry guard: a failed/cancelled entry is retried, but not in a tight loop and
+        # not forever (every attempt is a real exchange order in live mode).
+        attempts = self._attempts.get(key, 0)
+        if attempts >= self._max_attempts:
+            self._log_trigger_once(
+                signal, "blocked_max_attempts", f"{attempts} attempts used for this entry", mode
+            )
+            return OrderResult(None, signal.side, "BLOCKED", "max_attempts")
+        now_ms = clock.now_ms()
+        if now_ms - self._last_attempt_ms.get(key, 0) < self._retry_gap_ms:
+            return OrderResult(None, signal.side, "SKIPPED", "retry_cooldown")
+
         order_id, blocker_id, blocker_status = await asyncio.to_thread(
             self._reserve_order, mode, market, signal, key, config
         )
@@ -257,6 +273,12 @@ class OrderManager:
         if not self._submission_allowed(mode):
             await asyncio.to_thread(self._mark_not_submitted, order_id)
             return OrderResult(order_id, signal.side, "BLOCKED", "bot_not_accepting_orders")
+
+        if len(self._attempts) > 500:  # keys are per market; drop old markets
+            self._attempts.clear()
+            self._last_attempt_ms.clear()
+        self._attempts[key] = attempts + 1
+        self._last_attempt_ms[key] = now_ms
 
         request = OrderRequest(
             order_key=key,
@@ -303,6 +325,10 @@ class OrderManager:
             )
 
         result = await asyncio.to_thread(self._finalize_order, order_id, report, signal, mode)
+        if result.status not in {"REJECTED", "CANCELED"}:
+            # accepted/filled: the cooldown and attempt cap only apply to failed entries
+            self._attempts.pop(key, None)
+            self._last_attempt_ms.pop(key, None)
         self._record_order_result(result, report, signal, mode)
         return result
 

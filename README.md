@@ -379,7 +379,8 @@ Strategy and risk defaults:
 | `STAGE3_SECONDS` / `STAGE3_THRESHOLD` | `30` / `0.90` | Stage 3 add-on: time left and ask level |
 | `MAX_EXECUTION_PRICE` | `0.991` | Hard cap on the price paid |
 | `TRADE_AMOUNT_USDC` | `1.0` | Requested notional per trade |
-| `STALE_DATA_MAX_AGE_MS` | `2000` | Maximum book age for execution |
+| `STALE_DATA_MAX_AGE_MS` | `5000` | Maximum book age for execution |
+| `ENTRY_MAX_ATTEMPTS` / `ENTRY_RETRY_GAP_MS` | `5` / `1000` | Per stage and market: max tries for a failed/cancelled entry, and minimum gap between tries |
 | `MAX_OPEN_POSITIONS` | `1` | Concurrent position cap per market (stage 2/3 may add to a side already held) |
 | `DUPLICATE_POLICY` | `one_per_market` | `one_per_market`, `one_per_side`, `allow` |
 | `CONFLICT_POLICY` | `up_first` | `up_first`, `down_first`, `highest_ask`, `block_both` |
