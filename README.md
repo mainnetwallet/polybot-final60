@@ -173,7 +173,7 @@ LIVE_TRADING_ENABLED=true
 POLYMARKET_GEO_VERIFIED=true          # only after you confirmed your jurisdiction is eligible
 POLYMARKET_PRIVATE_KEY=<your key>
 POLYMARKET_FUNDER_ADDRESS=<your funder address>
-POLYMARKET_SIGNATURE_TYPE=0           # 0 = EOA, 1 = email/magic proxy, 2 = browser proxy
+POLYMARKET_SIGNATURE_TYPE=0           # 0 = EOA, 1 = email/magic proxy, 2 = browser proxy, 3 = smart-contract wallet
 POLYMARKET_API_KEY=<optional, if you have one>
 POLYMARKET_API_SECRET=<optional>
 POLYMARKET_API_PASSPHRASE=<optional>
@@ -193,7 +193,7 @@ Not sure which `POLYMARKET_SIGNATURE_TYPE` your account needs (0 = EOA, 1 = emai
 .venv\Scripts\python.exe scripts\check_wallet.py
 ```
 
-Your pUSD must sit in that proxy (funder) wallet. With `SIGNATURE_TYPE=1` or `2` the funder address is mandatory; the live check now fails with a clear message if it is empty.
+Your pUSD must sit in that proxy (funder) wallet. With `SIGNATURE_TYPE=1`, `2` or `3` the funder address is mandatory; the live check now fails with a clear message if it is empty.
 
 Rules for `.env`:
 
@@ -377,7 +377,7 @@ Strategy and risk defaults:
 | `FINAL_WINDOW_SECONDS` | `80` | Trading window at the end of the market |
 | `STAGE2_SECONDS` / `STAGE2_THRESHOLD` | `50` / `0.90` | Stage 2 add-on: time left and ask level |
 | `STAGE3_SECONDS` / `STAGE3_THRESHOLD` | `30` / `0.90` | Stage 3 add-on: time left and ask level |
-| `MAX_EXECUTION_PRICE` | `0.991` | Hard cap on the price paid |
+| `MAX_EXECUTION_PRICE` | `0.99` | Hard cap on the price paid (clamped to `1 - tick size` at order time) |
 | `TRADE_AMOUNT_USDC` | `1.0` | Requested notional per trade |
 | `STALE_DATA_MAX_AGE_MS` | `5000` | Maximum book age for execution |
 | `ENTRY_MAX_ATTEMPTS` / `ENTRY_RETRY_GAP_MS` | `5` / `1000` | Per stage and market: max tries for a failed/cancelled entry, and minimum gap between tries |
@@ -402,6 +402,7 @@ Other `.env` keys (all present in `.env.example`):
 | `HOST` | `127.0.0.1` | API bind address |
 | `PORT` | `8000` | API port |
 | `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Allowed dashboard origins |
+| `API_TOKEN` | _(empty)_ | Optional shared secret for the control API (`X-API-Key` / `Authorization: Bearer`, `?token=` on the WebSocket; `/api/health` stays open). Set it before binding `HOST` to a non-loopback address. In the dashboard: `localStorage.setItem("polybot_api_token", "<token>")` |
 | `LOG_LEVEL` | `INFO` | Log verbosity |
 | `DATABASE_URL` | `sqlite:///data/polymarket_bot.db` | Database location (relative paths resolve against the repo root) |
 | `LIVE_CONFIRMATION_PHRASE` | `GO LIVE` | Phrase required in the dashboard to enable live mode |
@@ -410,7 +411,7 @@ Other `.env` keys (all present in `.env.example`):
 | `POLYMARKET_RELAYER_API_KEY_ADDRESS` | empty | Address that belongs to the Relayer key |
 | `POLYMARKET_PRIVATE_KEY` | empty | Wallet private key (live only, never exposed by the API) |
 | `POLYMARKET_FUNDER_ADDRESS` | empty | Funder address (live only) |
-| `POLYMARKET_SIGNATURE_TYPE` | `0` | `0` = EOA, `1` = email/magic proxy, `2` = browser proxy |
+| `POLYMARKET_SIGNATURE_TYPE` | `0` | `0` = EOA, `1` = email/magic proxy, `2` = browser proxy, `3` = smart-contract wallet |
 | `POLYMARKET_CHAIN_ID` | `137` | Polygon mainnet |
 | `POLYMARKET_API_KEY` / `POLYMARKET_API_SECRET` / `POLYMARKET_API_PASSPHRASE` | empty | Optional CLOB API credentials |
 | `GAMMA_BASE_URL` | `https://gamma-api.polymarket.com` | Gamma API endpoint |

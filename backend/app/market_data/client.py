@@ -42,6 +42,8 @@ class ClobMarketDataClient:
         self._reconnects = 0
         self._last_error: str | None = None
         self._change = asyncio.Event()
+        # Optional hook for ``tick_size_change`` frames (set by the bot).
+        self.on_tick_size_change: Callable[[dict], None] | None = None
 
     @property
     def connected(self) -> bool:
@@ -187,6 +189,12 @@ class ClobMarketDataClient:
             await self._apply_best(message)
         elif event_type == "tick_size_change":
             logger.info("tick size change: %s", message)
+            callback = self.on_tick_size_change
+            if callback is not None:
+                try:
+                    callback(message)
+                except Exception as exc:  # a hook failure must not break the stream
+                    logger.warning("tick size change hook failed (%s)", type(exc).__name__)
         elif event_type == "last_trade_price":
             return
         elif event_type in {"subscribed", "pong"}:

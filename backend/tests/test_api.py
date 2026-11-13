@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import time
 
+import pytest
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -378,3 +380,47 @@ def test_server_reset_requires_phrase_and_wipes_data():
         assert ok.json()["bot"]["mode"] == "paper"
         # setting overrides are gone -> back to .env default
         assert client.get("/api/settings").json()["trigger_threshold"] == 0.80
+
+
+def test_api_token_is_optional_and_protects_everything_but_health():
+    app = create_app()
+    app.state.settings.api_token = "s3cret-token"
+    try:
+        with TestClient(app) as client:
+            # monitors keep working
+            assert client.get("/api/health").status_code == 200
+            # no / wrong token
+            assert client.get("/api/state").status_code == 401
+            assert client.post("/api/bot/stop").status_code == 401
+            assert client.post("/api/daily/reset", json={"confirm": True}).status_code == 401
+            assert client.get("/api/state", headers={"X-API-Key": "nope"}).status_code == 401
+            # right token, either header style
+            assert client.get("/api/state", headers={"X-API-Key": "s3cret-token"}).status_code == 200
+            assert client.get(
+                "/api/state", headers={"Authorization": "Bearer s3cret-token"}
+            ).status_code == 200
+    finally:
+        app.state.settings.api_token = ""
+
+
+def test_api_is_open_without_a_token():
+    with TestClient(create_app()) as client:
+        assert client.get("/api/state").status_code == 200
+
+
+def test_websocket_requires_token_when_configured():
+    from starlette.websockets import WebSocketDisconnect
+
+    from app.config.settings import get_settings
+
+    settings = get_settings()
+    settings.api_token = "s3cret-token"  # the ws router reads the token when the app is built
+    try:
+        with TestClient(create_app()) as client:
+            with pytest.raises(WebSocketDisconnect):
+                with client.websocket_connect("/api/ws"):
+                    pass
+            with client.websocket_connect("/api/ws?token=s3cret-token") as ws:
+                assert ws.receive_json()["type"] == "state"
+    finally:
+        settings.api_token = ""

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections.abc import Callable
 
@@ -25,6 +26,15 @@ from app.config.settings import Settings
 from app.execution.base import ExecutionEngine, ExecutionReport, FillPart, OrderRequest
 
 logger = logging.getLogger(__name__)
+
+# Tick used when the market's real tick is not cached yet. 0.01 is the coarsest tick these
+# markets use, so a price valid on it is valid on every finer tick as well.
+DEFAULT_TICK_SIZE = 0.01
+
+# HTTP statuses where the exchange may or may not have processed the request. Every other
+# 4xx is a definite refusal: the order does not exist on the exchange.
+_AMBIGUOUS_HTTP_STATUSES = {408}
+
 
 class LiveTradingUnavailable(RuntimeError):
     pass
@@ -35,6 +45,83 @@ def _num(value) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def cap_price_to_tick(price: float, tick: float) -> float:
+    """Largest price <= ``price`` that sits on the tick grid and inside ``[tick, 1 - tick]``.
+
+    The CLOB (and the SDK's ``price_valid``) rejects any price above ``1 - tick``. With a
+    0.01 tick a 0.991 cap is therefore refused outright, so the cap is rounded *down* to the
+    grid: the order never pays more than the configured maximum.
+    """
+    if not 0 < tick < 0.5:
+        return round(price, 6)
+    steps = math.floor(round(price / tick, 6) + 1e-9)
+    capped = min(max(steps * tick, tick), 1.0 - tick)
+    return round(capped, 6)
+
+
+def _make_client_class():
+    """ClobClient subclass that does not poll for settlement hashes after posting.
+
+    ``post_order`` (with ``deferExec=false``, the documented default) polls the trades API for
+    up to 30s to attach transaction hashes to a matched order. Nothing here uses those hashes
+    and the poll would hold the order lock, so it is skipped. If a future SDK renames the hook
+    the override simply stops applying: orders still work, only slower.
+    """
+    from py_clob_client_v2 import ClobClient
+
+    class LiveClobClient(ClobClient):
+        def _resolve_transactions_hashes(self, response):
+            return response
+
+    return LiveClobClient
+
+
+def _error_text(exc: Exception) -> str:
+    detail = getattr(exc, "error_msg", None) or getattr(exc, "msg", None) or ""
+    return str(detail)[:200]
+
+
+def classify_post_exception(exc: Exception) -> ExecutionReport:
+    """Map an SDK exception raised while building/posting an order to an ExecutionReport.
+
+    * ``PolyApiException`` with a 4xx status: the exchange answered and refused the order.
+      A FOK that could not be fully matched comes back this way too -> CANCELED.
+    * ``PolyException`` (not an API error): raised by the SDK while building the order
+      (invalid price / tick size, market info lookup), before anything was sent -> REJECTED.
+    * Anything else (timeouts, connection errors, 5xx, 408): the order may have been accepted,
+      so it stays SUBMITTED and is not retried until reconciled.
+    """
+    from py_clob_client_v2.exceptions import PolyApiException, PolyException
+
+    if isinstance(exc, PolyApiException):
+        status = getattr(exc, "status_code", None)
+        if isinstance(status, int) and 400 <= status < 500 and status not in _AMBIGUOUS_HTTP_STATUSES:
+            text = _error_text(exc)
+            lowered = text.lower()
+            if "fok" in lowered or "fully filled" in lowered:
+                return ExecutionReport(
+                    status="CANCELED",
+                    error="FOK order was not filled",
+                    raw={"http_status": status, "error": text},
+                )
+            return ExecutionReport(
+                status="REJECTED",
+                error=f"CLOB rejected the order (HTTP {status}): {text}" if text else f"CLOB rejected the order (HTTP {status})",
+                raw={"http_status": status, "error": text},
+            )
+    elif isinstance(exc, PolyException):
+        text = _error_text(exc)
+        return ExecutionReport(
+            status="REJECTED",
+            error=f"order not sent: {text}" if text else "order not sent",
+            raw={"error": text},
+        )
+    return ExecutionReport(
+        status="SUBMITTED",
+        error="order submission outcome is unknown; reconcile before retrying",
+    )
 
 
 class LiveExecutionEngine(ExecutionEngine):
@@ -76,9 +163,9 @@ class LiveExecutionEngine(ExecutionEngine):
 
     def _build_client(self):
         self._validate_gates()
-        from py_clob_client_v2 import ApiCreds, ClobClient
+        from py_clob_client_v2 import ApiCreds
 
-        client = ClobClient(
+        client = _make_client_class()(
             host=self._settings.clob_base_url,
             chain_id=self._settings.polymarket_chain_id,
             key=self._settings.polymarket_private_key,
@@ -193,6 +280,29 @@ class LiveExecutionEngine(ExecutionEngine):
             )
         return report
 
+    @staticmethod
+    def _order_price(client, request: OrderRequest) -> float:
+        """Worst acceptable price, clamped to what the market's tick size allows."""
+        try:
+            tick = float(client.get_tick_size(request.token_id))
+        except Exception:
+            tick = DEFAULT_TICK_SIZE
+        return cap_price_to_tick(round(request.max_price, 6), tick)
+
+    async def refresh_market_params(self, condition_id: str) -> None:
+        """Re-read tick size / neg-risk after a ``tick_size_change`` event.
+
+        The SDK caches tick sizes forever; without this a market whose tick gets finer
+        (or coarser) mid-window keeps being priced against a stale tick.
+        """
+        client = self._client
+        if client is None or not condition_id:
+            return
+        try:
+            await asyncio.to_thread(client.get_clob_market_info, condition_id)
+        except Exception as exc:
+            logger.debug("market params refresh failed (%s)", type(exc).__name__)
+
     def _place_sync(self, client, request: OrderRequest) -> ExecutionReport:
         from py_clob_client_v2 import MarketOrderArgs, OrderType, Side
 
@@ -202,22 +312,26 @@ class LiveExecutionEngine(ExecutionEngine):
             amount=round(request.notional, 6),
             side=Side.BUY,
             # price is the worst acceptable price (cap), not a resting limit
-            price=round(request.max_price, 6),
+            price=self._order_price(client, request),
             order_type=OrderType.FOK,
             user_usdc_balance=float(balance) if balance and balance > 0 else 0,
             position_id=request.token_id if request.asset_version == 2 else None,
         )
         try:
-            # defer_exec skips the SDK's post-submit transaction/trade polling.
-            response = client.create_and_post_market_order(args, None, OrderType.FOK, True)
+            # deferExec stays at the documented default (false). The SDK's post-submit
+            # settlement-hash polling is disabled by the client subclass instead.
+            response = client.create_and_post_market_order(args, None, OrderType.FOK, False)
         except Exception as exc:
-            # A transport exception can happen after Polymarket accepted the order.
-            # Keep it active and fail closed so a retry cannot double-submit.
-            logger.error("live order submit outcome unknown (%s)", type(exc).__name__)
-            return ExecutionReport(
-                status="SUBMITTED",
-                error="order submission outcome is unknown; reconcile before retrying",
-            )
+            report = classify_post_exception(exc)
+            if report.status == "SUBMITTED":
+                # A transport exception can happen after Polymarket accepted the order.
+                # Keep it active and fail closed so a retry cannot double-submit.
+                logger.error("live order submit outcome unknown (%s)", type(exc).__name__)
+            else:
+                logger.warning(
+                    "live order not accepted (%s): %s", type(exc).__name__, report.error
+                )
+            return report
         if not isinstance(response, dict):
             return ExecutionReport(status="REJECTED", error="unexpected CLOB response")
 

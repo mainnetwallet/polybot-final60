@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import hmac
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
 from sqlalchemy import select
 
@@ -29,7 +30,21 @@ def build_router(
     settings: Settings,
     analytics,
 ) -> APIRouter:
-    router = APIRouter(prefix="/api")
+    def require_token(request: Request) -> None:
+        """Opt-in shared-secret auth (API_TOKEN). No token configured = open, as before."""
+        expected = settings.api_token.strip()
+        if not expected:
+            return
+        supplied = request.headers.get("x-api-key", "")
+        authorization = request.headers.get("authorization", "")
+        if not supplied and authorization.lower().startswith("bearer "):
+            supplied = authorization[7:].strip()
+        if not hmac.compare_digest(supplied.encode(), expected.encode()):
+            raise HTTPException(status_code=401, detail="invalid or missing API token")
+
+    # /health stays open so uptime monitors keep working; everything else needs the token.
+    public = APIRouter(prefix="/api")
+    router = APIRouter(prefix="/api", dependencies=[Depends(require_token)])
 
     def _mode(value: str | None) -> str:
         if value is None:
@@ -38,7 +53,7 @@ def build_router(
             raise HTTPException(status_code=400, detail="mode must be 'paper' or 'live'")
         return value
 
-    @router.get("/health")
+    @public.get("/health")
     async def health() -> dict:
         return {
             "status": "ok",
@@ -197,4 +212,7 @@ def build_router(
             "final_window_seconds": runtime.get().final_window_seconds,
         }
 
-    return router
+    root = APIRouter()
+    root.include_router(public)
+    root.include_router(router)
+    return root

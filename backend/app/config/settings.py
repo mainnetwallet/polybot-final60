@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Optional shared secret for the control API (X-API-Key / Bearer header, ``?token=`` on the
+    # WebSocket). Empty = no auth, fine on 127.0.0.1; set it before binding HOST to 0.0.0.0.
+    api_token: str = ""
     log_level: str = "INFO"
 
     # --- database -------------------------------------------------------
@@ -61,7 +64,7 @@ class Settings(BaseSettings):
     stage2_threshold: float = 0.90
     stage3_seconds: int = 30
     stage3_threshold: float = 0.90
-    max_execution_price: float = 0.991
+    max_execution_price: float = 0.99
     trade_amount_usdc: float = 1.0
     # Book age only resets on a websocket book event, so a stable price on a quiet book looks
     # "old" without being wrong. 5s keeps stage 2/3 (armed by the clock) from being blocked.
@@ -124,6 +127,11 @@ class Settings(BaseSettings):
     @classmethod
     def _normalise_level(cls, value: str) -> str:
         return value.upper()
+
+    @property
+    def api_exposed_without_token(self) -> bool:
+        loopback = {"127.0.0.1", "localhost", "::1"}
+        return self.host.strip().lower() not in loopback and not self.api_token.strip()
 
     @property
     def cors_origin_list(self) -> list[str]:

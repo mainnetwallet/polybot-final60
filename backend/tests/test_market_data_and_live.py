@@ -7,7 +7,13 @@ from datetime import datetime, timezone, timedelta
 
 from app.config.settings import Settings
 from app.execution.base import OrderRequest
-from app.live_trading.engine import LiveExecutionEngine, LiveTradingUnavailable
+from app.live_trading.engine import (
+    LiveExecutionEngine,
+    LiveTradingUnavailable,
+    _make_client_class,
+    cap_price_to_tick,
+    classify_post_exception,
+)
 from app.market_data.book import OrderBook
 from app.market_data.client import ClobMarketDataClient
 from app.market_discovery.service import DiscoveryError, MarketDiscovery
@@ -117,7 +123,7 @@ def test_live_matched_fill_uses_real_amounts_not_limit_price():
     assert report.filled_size == 6.25
     assert report.avg_price == 0.8  # 5 / 6.25, not the 0.99 cap
     assert client.args.price == 0.99 and client.args.amount == 5.0
-    assert client.defer_exec is True
+    assert client.defer_exec is False  # documented default; SDK polling is disabled separately
 
 
 def test_live_amounts_in_base_units_are_normalised():
@@ -527,3 +533,166 @@ def test_live_validation_refreshes_cached_balance_before_reading_it():
     result = asyncio.run(engine.validate())
     assert calls[0] == "update"
     assert result["balance"] == 1.21
+
+
+# ---------------------------------------------------------------------------
+# Live order price cap / exception classification / SDK behaviour
+# ---------------------------------------------------------------------------
+def _api_error(status: int, body: dict | str):
+    import httpx
+    from py_clob_client_v2.exceptions import PolyApiException
+
+    response = httpx.Response(status, json=body) if isinstance(body, dict) else httpx.Response(status, text=body)
+    return PolyApiException(response)
+
+
+@pytest.mark.parametrize(
+    "price,tick,expected",
+    [
+        (0.991, 0.01, 0.99),
+        (0.99, 0.01, 0.99),
+        (0.991, 0.001, 0.991),
+        (0.995, 0.001, 0.995),
+        (0.9995, 0.001, 0.999),
+        (1.0, 0.01, 0.99),
+        (0.005, 0.01, 0.01),
+        (0.85, 0.01, 0.85),
+    ],
+)
+def test_cap_price_to_tick_stays_inside_valid_range(price, tick, expected):
+    from py_clob_client_v2.utilities import price_valid
+
+    capped = cap_price_to_tick(price, tick)
+    assert capped == expected
+    assert capped <= price + 1e-9 or price > 1 - tick or price < tick
+    assert price_valid(capped, str(tick))  # the SDK's own validity check
+
+
+def test_default_cap_is_valid_for_the_standard_tick():
+    from py_clob_client_v2.utilities import price_valid
+
+    assert not price_valid(0.991, "0.01")  # the old default was refused by the SDK
+    assert price_valid(Settings().max_execution_price, "0.01")
+
+
+class _TickClient(_FakeV2Client):
+    def __init__(self, response, tick):
+        super().__init__(response)
+        self.tick = tick
+
+    def get_tick_size(self, _token_id):
+        return self.tick
+
+
+_MATCHED = {
+    "success": True, "errorMsg": "", "orderID": "0xabc", "status": "matched",
+    "makingAmount": "5", "takingAmount": "6.25",
+}
+
+
+def test_live_order_price_is_clamped_to_market_tick():
+    engine = LiveExecutionEngine(Settings())
+    coarse = _TickClient(_MATCHED, "0.01")
+    engine._place_sync(coarse, _request(max_price=0.991))
+    assert coarse.args.price == 0.99
+
+    fine = _TickClient(_MATCHED, "0.001")
+    engine._place_sync(fine, _request(max_price=0.991))
+    assert fine.args.price == 0.991
+
+
+def test_live_order_price_falls_back_to_safe_cap_without_tick_info():
+    engine = LiveExecutionEngine(Settings())
+    client = _FakeV2Client(_MATCHED)  # no get_tick_size
+    engine._place_sync(client, _request(max_price=0.995))
+    assert client.args.price == 0.99
+
+
+def test_live_sdk_client_does_not_poll_for_settlement_hashes():
+    cls = _make_client_class()
+    client = cls("https://clob.polymarket.com", chain_id=137)
+    response = {"success": True, "orderID": "0x1", "tradeIDs": ["t1"], "status": "matched"}
+    # would block on the trades API for up to 30s in the stock SDK
+    assert client._resolve_transactions_hashes(response) is response
+
+
+def test_exchange_4xx_is_rejected_not_unknown():
+    report = classify_post_exception(_api_error(400, {"error": "not enough balance / allowance"}))
+    assert report.status == "REJECTED"
+    assert "HTTP 400" in report.error
+
+
+def test_fok_no_match_http_400_is_canceled():
+    report = classify_post_exception(
+        _api_error(400, {"error": "order couldn't be fully filled. FOK orders are fully filled or killed."})
+    )
+    assert report.status == "CANCELED"
+    assert report.filled_size == 0
+
+
+def test_sdk_validation_error_is_rejected_before_send():
+    from py_clob_client_v2.exceptions import PolyException
+
+    report = classify_post_exception(PolyException("invalid price (0.991), min: 0.01 - max: 0.99"))
+    assert report.status == "REJECTED"
+    assert "0.99" in report.error
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        TimeoutError("timeout"),
+        ConnectionError("reset"),
+        None,  # replaced below by 5xx / 408 / transport PolyApiException
+    ],
+)
+def test_ambiguous_failures_stay_submitted(exc):
+    candidates = [exc] if exc is not None else [
+        _api_error(500, "oops"),
+        _api_error(502, "bad gateway"),
+        _api_error(408, "request timeout"),
+    ]
+    from py_clob_client_v2.exceptions import PolyApiException
+
+    if exc is None:
+        candidates.append(PolyApiException(error_msg="Request exception!"))
+    for candidate in candidates:
+        report = classify_post_exception(candidate)
+        assert report.status == "SUBMITTED"
+        assert "unknown" in report.error
+
+
+def test_live_place_sync_maps_exchange_rejection():
+    engine = LiveExecutionEngine(Settings())
+
+    class Rejecting(_FakeV2Client):
+        def create_and_post_market_order(self, *args, **kwargs):
+            raise _api_error(400, {"error": "invalid signature"})
+
+    report = engine._place_sync(Rejecting(None), _request())
+    assert report.status == "REJECTED"
+    assert report.exchange_order_id is None
+
+
+def test_tick_size_change_refreshes_sdk_market_params():
+    engine = LiveExecutionEngine(Settings())
+
+    class C:
+        def __init__(self):
+            self.refreshed = []
+
+        def get_clob_market_info(self, condition_id):
+            self.refreshed.append(condition_id)
+
+    engine._client = C()
+    asyncio.run(engine.refresh_market_params("0xcond"))
+    assert engine._client.refreshed == ["0xcond"]
+
+
+def test_ws_tick_size_change_invokes_hook():
+    client, _ = _client()
+    seen = []
+    client.on_tick_size_change = seen.append
+    message = {"event_type": "tick_size_change", "market": "0xcond", "new_tick_size": "0.001"}
+    asyncio.run(client._handle_message(message))
+    assert seen == [message]

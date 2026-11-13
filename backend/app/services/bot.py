@@ -77,6 +77,7 @@ class TradingBot:
         self.discovery = MarketDiscovery(settings)
         self.monitor = MarketMonitor(self.discovery, settings, self._on_market)
         self.data = ClobMarketDataClient(settings, self._on_book)
+        self.data.on_tick_size_change = self._on_tick_size_change
         self.btc = BtcPriceFeed(settings)
 
         self.paper_engine = PaperExecutionEngine(settings, self.data.book_for)
@@ -149,6 +150,15 @@ class TradingBot:
 
     def _schedule_background(self, fn, *args) -> None:
         task = asyncio.create_task(asyncio.to_thread(fn, *args))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def _on_tick_size_change(self, message: dict) -> None:
+        """Re-read tick size for the market (the SDK caches it) without blocking the WS loop."""
+        condition_id = str(message.get("market") or "")
+        if not condition_id:
+            return
+        task = asyncio.create_task(self.live_engine.refresh_market_params(condition_id))
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 

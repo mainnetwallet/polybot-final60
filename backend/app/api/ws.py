@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -41,11 +42,17 @@ class RealtimeHub:
                     self._clients.discard(websocket)
 
 
-def build_ws_router(hub: RealtimeHub, snapshot_factory) -> APIRouter:
+def build_ws_router(hub: RealtimeHub, snapshot_factory, api_token: str = "") -> APIRouter:
     router = APIRouter()
 
     @router.websocket("/api/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
+        expected = api_token.strip()
+        if expected:
+            supplied = websocket.query_params.get("token") or websocket.headers.get("x-api-key", "")
+            if not hmac.compare_digest(supplied.encode(), expected.encode()):
+                await websocket.close(code=1008)
+                return
         await hub.connect(websocket)
         try:
             await websocket.send_json({"type": "state", "data": await snapshot_factory()})

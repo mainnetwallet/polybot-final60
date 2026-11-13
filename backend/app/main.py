@@ -51,6 +51,12 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         configure_logging()
+        if settings.api_exposed_without_token:
+            logging.getLogger(__name__).warning(
+                "API is bound to %s without API_TOKEN: anyone who can reach it can start/stop the bot. "
+                "Set API_TOKEN (or bind HOST=127.0.0.1).",
+                settings.host,
+            )
         ensure_schema()
         await bot.initialize()
         try:
@@ -72,7 +78,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(build_router(bot, runtime, settings, analytics))
-    app.include_router(build_ws_router(hub, bot.snapshot))
+    app.include_router(build_ws_router(hub, bot.snapshot, settings.api_token))
     app.state.bot = bot
     app.state.settings = settings
     return app

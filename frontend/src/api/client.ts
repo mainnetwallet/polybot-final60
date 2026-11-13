@@ -9,11 +9,22 @@ import type {
   TriggerRow,
 } from "./types";
 
+/** Optional API_TOKEN, stored once in the browser: localStorage.setItem("polybot_api_token", "...") */
+export function apiToken(): string {
+  try {
+    return window.localStorage.getItem("polybot_api_token") ?? "";
+  } catch {
+    return "";
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = apiToken();
   const response = await fetch(path, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { "X-API-Key": token } : {}),
       ...(init?.headers ?? {}),
     },
   });

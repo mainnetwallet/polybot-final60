@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api } from "../api/client";
+import { api, apiToken } from "../api/client";
 import type { BookSnapshot, LogRow, Mode, Snapshot } from "../api/types";
 
 export type ActionResult = { ok: boolean; error?: string };
@@ -239,7 +239,9 @@ export function BotProvider({ children }: { children: ReactNode }) {
       if (disposed) return;
       setFeedState("connecting");
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      socket = new WebSocket(`${protocol}://${window.location.host}/api/ws`);
+      const token = apiToken();
+      const query = token ? `?token=${encodeURIComponent(token)}` : "";
+      socket = new WebSocket(`${protocol}://${window.location.host}/api/ws${query}`);
 
       socket.onopen = () => {
         attempt = 0;
