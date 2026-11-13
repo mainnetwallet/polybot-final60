@@ -218,6 +218,7 @@ export interface SettingsState {
   max_trades_per_day: number;
   max_open_positions: number;
   min_price_gap_usd: number;
+  stage_chain_enabled: boolean;
   paper_fill_ratio: number;
   paper_fee_exponent: number;
   paper_starting_balance: number;

@@ -465,6 +465,17 @@ class TradingBot:
                 for order in active_orders
                 if order.market_id == market.market_id
             )
+            market_orders = session.execute(
+                select(Order).where(Order.mode == self._mode, Order.market_id == market.market_id)
+            ).scalars().all()
+            stage1_bought = any(
+                self.orders._key_stage(order.order_key) == 1
+                and (
+                    order.status in {"PENDING", "SUBMITTED", "PARTIALLY_FILLED", "FILLED"}
+                    or order.filled_size > 0
+                )
+                for order in market_orders
+            )
             open_positions = len(exposure_keys)
             exposed_sides = frozenset(side for _, side in exposure_keys)
             balance = self._balance(session)
@@ -484,6 +495,8 @@ class TradingBot:
             btc_price=btc_price,
             price_to_beat=price_to_beat,
             price_gap_issue=gap_issue,
+            stage1_bought=stage1_bought,
+            stage1_remaining=self.orders.stage1_remaining(self._mode, market.market_id),
         )
 
     def _balance(self, session) -> float:

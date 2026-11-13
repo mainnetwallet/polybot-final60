@@ -449,3 +449,82 @@ async def test_price_gap_blocks_order_until_btc_is_far_enough_from_price_to_beat
     _, results = await _submit(stack, market, books, ctx=strong)
     assert results[0].status == "FILLED"
     assert len(_orders()) == 1
+
+
+async def test_chain_gap_met_late_buys_only_stage1_then_stage3_next_event():
+    # gap rule blocks until 25s left: stage 1 must be refused at <=30s, so nothing buys at all
+    stack = build_stack(make_config(min_price_gap_usd=20.0, stage_chain_enabled=True))
+    market = make_market(remaining=25)
+    books = books_for(market, up_ask=0.93, down_ask=0.05)
+    strong = make_ctx(remaining=25, btc_price=100_030.0, price_to_beat=100_000.0)
+    _, results = await _submit(stack, market, books, ctx=strong)
+    assert {r.reason for r in results} == {"stage1_missed", "stage1_not_bought"}
+    assert _orders() == []
+
+
+async def test_chain_full_sequence_three_buys_in_one_market():
+    from .helpers import stage_books
+
+    config = make_config(
+        min_price_gap_usd=0.0, stage_chain_enabled=True, trade_amount_usdc=1.0, stale_data_max_age_ms=60_000
+    )
+    stack = build_stack(config)
+    manager = stack["manager"]
+    market = make_market(remaining=58)
+    now = int(time.time() * 1000)
+
+    async def step(offset_s: float, ask: float, **ctx_kwargs):
+        books = books_for(market, up_ask=ask, down_ask=round(1 - ask - 0.02, 2))
+        stage_books(stack, market, books)
+        evaluation = stack["strategy"].evaluate(market, books, now + int(offset_s * 1000), config)
+        ctx = make_ctx(remaining=58 - offset_s, balance=10.0, **ctx_kwargs)
+        return await manager.handle_event(market, evaluation, books, "paper", ctx)
+
+    # 58s left: stage 1 buys
+    results = await step(0, 0.85)
+    assert [r.status for r in results] == ["FILLED"]
+    s1 = manager.stage1_remaining("paper", market.market_id)
+    assert s1 == pytest.approx(58, abs=2)
+
+    held = dict(open_positions=1, exposed_sides=frozenset({"UP"}), stage1_bought=True, stage1_remaining=s1)
+    # 45s left: stage 1 bought before the 50s mark -> stage 2 buys (stage 1 itself is a duplicate)
+    results = await step(13, 0.93, **held)
+    assert sorted(r.status for r in results) == ["BLOCKED", "FILLED"]
+    # 28s left: stage 3 buys
+    results = await step(30, 0.94, **held)
+    assert [r.status for r in results if r.status == "FILLED"] == ["FILLED"]
+    assert len(_orders()) == 3
+
+
+async def test_chain_stage1_late_blocks_stage2_but_not_stage3():
+    from .helpers import stage_books
+
+    config = make_config(
+        min_price_gap_usd=0.0, stage_chain_enabled=True, trade_amount_usdc=1.0, stale_data_max_age_ms=60_000
+    )
+    stack = build_stack(config)
+    manager = stack["manager"]
+    market = make_market(remaining=58)
+    now = int(time.time() * 1000)
+
+    async def step(offset_s: float, ask: float, **ctx_kwargs):
+        books = books_for(market, up_ask=ask, down_ask=round(1 - ask - 0.02, 2))
+        stage_books(stack, market, books)
+        evaluation = stack["strategy"].evaluate(market, books, now + int(offset_s * 1000), config)
+        ctx = make_ctx(remaining=58 - offset_s, balance=10.0, **ctx_kwargs)
+        return await manager.handle_event(market, evaluation, books, "paper", ctx)
+
+    # ask only reaches the trigger at 40s left (rule not met earlier): stage 1 buys late,
+    # stage 2 must NOT fire in the same pass, stage 3 waits for the 30s mark
+    results = await step(18, 0.93)
+    assert sorted(r.reason for r in results) == ["stage1_too_late", "submitted"]
+    assert len(_orders()) == 1
+    s1 = manager.stage1_remaining("paper", market.market_id)
+    assert s1 == pytest.approx(40, abs=2)
+
+    held = dict(open_positions=1, exposed_sides=frozenset({"UP"}), stage1_bought=True, stage1_remaining=s1)
+    results = await step(24, 0.93, **held)  # 34s left: stage 2 still refused
+    assert "stage1_too_late" in [r.reason for r in results]
+    results = await step(30, 0.94, **held)  # 28s left: stage 3 buys
+    assert any(r.status == "FILLED" for r in results)
+    assert len(_orders()) == 2

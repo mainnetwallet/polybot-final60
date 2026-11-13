@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     # price to beat in the bought direction (UP: current >= beat + gap, DOWN: current <= beat - gap).
     # 0 disables the rule. With the rule on, missing/stale BTC data blocks the buy (fail closed).
     min_price_gap_usd: float = 20.0
+    # Chained stages: stage 1 must buy first. Stage 1 can only start while more than stage3_seconds
+    # remain; stage 2 needs stage 1 to have bought BEFORE the stage2_seconds mark; stage 3 needs
+    # stage 1 to have bought (its own rules decide the rest). false = independent stages.
+    stage_chain_enabled: bool = True
     duplicate_policy: str = "one_per_market"  # one_per_market | one_per_side | allow
     conflict_policy: str = "up_first"  # up_first | down_first | highest_ask | block_both
 

@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -86,7 +86,12 @@ class OrderManager:
         self._retry_gap_ms = settings.entry_retry_gap_ms
         self._attempts: dict[str, int] = {}
         self._last_attempt_ms: dict[str, int] = {}
+        # (mode, market) -> seconds remaining when stage 1 last got an accepted order (stage chain)
+        self._stage1_remaining: dict[tuple[str, str], float] = {}
         self._background_writes: set[asyncio.Task] = set()
+
+    def stage1_remaining(self, mode: str, market_id: str) -> float | None:
+        return self._stage1_remaining.get((mode, market_id))
 
     def _schedule_trigger(self, signal: Signal, decision: str, reason: str, mode: str) -> None:
         async def persist_then_publish() -> None:
@@ -226,6 +231,15 @@ class OrderManager:
                         continue
                     result = await self._submit(market, signal, books, mode, ctx, config)
                     results.append(result)
+                    if signal.stage == 1 and result.status not in {
+                        "REJECTED", "CANCELED", "BLOCKED", "SKIPPED"
+                    }:
+                        # later stages in this same pass see that stage 1 just bought
+                        ctx = replace(
+                            ctx,
+                            stage1_bought=True,
+                            stage1_remaining=self._stage1_remaining.get((mode, market.market_id)),
+                        )
         return results
 
     async def _submit(
@@ -329,6 +343,10 @@ class OrderManager:
             # accepted/filled: the cooldown and attempt cap only apply to failed entries
             self._attempts.pop(key, None)
             self._last_attempt_ms.pop(key, None)
+            if signal.stage == 1:
+                if len(self._stage1_remaining) > 500:
+                    self._stage1_remaining.clear()
+                self._stage1_remaining[(mode, market.market_id)] = signal.remaining_seconds
         self._record_order_result(result, report, signal, mode)
         return result
 

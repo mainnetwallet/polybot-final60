@@ -114,6 +114,8 @@ def make_ctx(
     btc_price: float | None = None,
     price_to_beat: float | None = None,
     price_gap_issue: str = "",
+    stage1_bought: bool = False,
+    stage1_remaining: float | None = None,
 ) -> RiskContext:
     return RiskContext(
         now_ms=int(time.time() * 1000),
@@ -129,6 +131,8 @@ def make_ctx(
         btc_price=btc_price,
         price_to_beat=price_to_beat,
         price_gap_issue=price_gap_issue,
+        stage1_bought=stage1_bought,
+        stage1_remaining=stage1_remaining,
     )
 
 

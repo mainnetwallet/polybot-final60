@@ -31,9 +31,47 @@ class RiskContext:
     btc_price: float | None = None
     price_to_beat: float | None = None
     price_gap_issue: str = ""
+    # Stage chain: did stage 1 already buy in this market, and how many seconds were left when it
+    # did (None = unknown, e.g. after a restart; then stage 2 stays blocked, fail closed).
+    stage1_bought: bool = False
+    stage1_remaining: float | None = None
 
 
 class RiskManager:
+    @staticmethod
+    def _check_stage_chain(signal: Signal, ctx: RiskContext, config: RuntimeSettings) -> RiskDecision | None:
+        """Chained entries per market.
+
+        * stage 1: once only stage3_seconds (30s) or less remain, a missed stage 1 means no entry
+          at all (stages 1, 2 and 3 stay off).
+        * stage 2: only if stage 1 bought while MORE than stage2_seconds (50s) remained.
+        * stage 3: only if stage 1 bought (stage 2 is not required).
+        """
+        if not config.stage_chain_enabled:
+            return None
+        if signal.stage == 1:
+            if not ctx.stage1_bought and ctx.remaining_seconds <= config.stage3_seconds:
+                return RiskDecision(
+                    False,
+                    "stage1_missed",
+                    f"stage 1 did not buy before the last {config.stage3_seconds}s; no entries this market",
+                )
+            return None
+        if not ctx.stage1_bought:
+            return RiskDecision(
+                False, "stage1_not_bought", f"stage {signal.stage} needs stage 1 to have bought first"
+            )
+        if signal.stage == 2 and (
+            ctx.stage1_remaining is None or ctx.stage1_remaining <= config.stage2_seconds
+        ):
+            when = "at an unknown time" if ctx.stage1_remaining is None else f"with {ctx.stage1_remaining:.0f}s left"
+            return RiskDecision(
+                False,
+                "stage1_too_late",
+                f"stage 2 needs stage 1 to buy before {config.stage2_seconds}s remained (it bought {when})",
+            )
+        return None
+
     @staticmethod
     def _check_price_gap(signal: Signal, ctx: RiskContext, config: RuntimeSettings) -> RiskDecision | None:
         """Buy only when BTC is already >= min_price_gap_usd beyond the price to beat, in the
@@ -81,6 +119,9 @@ class RiskManager:
             )
         if signal.ask_size is None or signal.ask_size <= 0:
             return RiskDecision(False, "no_liquidity", "no ask size available at best price")
+        chain = self._check_stage_chain(signal, ctx, config)
+        if chain is not None:
+            return chain
         gap = self._check_price_gap(signal, ctx, config)
         if gap is not None:
             return gap

@@ -156,3 +156,57 @@ def test_gap_threshold_is_configurable():
     ctx = make_ctx(btc_price=100_005.0, price_to_beat=100_000.0)
     assert RiskManager().check(_side("UP"), ctx, _gap_config(gap=5.0)).approved is True
     assert RiskManager().check(_side("UP"), ctx, _gap_config(gap=5.01)).reason == "price_gap_too_small"
+
+
+# ---------------------------------------------------------------------------
+# Stage chain
+# ---------------------------------------------------------------------------
+def _chain_config(**overrides):
+    return make_config(stage_chain_enabled=True, max_open_positions=1, **overrides)
+
+
+def _chain_ctx(remaining, bought=False, s1_remaining=None):
+    return make_ctx(
+        remaining=remaining,
+        open_positions=1 if bought else 0,
+        exposed_sides=frozenset({"UP"}) if bought else frozenset(),
+        stage1_bought=bought,
+        stage1_remaining=s1_remaining,
+    )
+
+
+def test_chain_is_off_by_default():
+    config = make_config()
+    assert config.stage_chain_enabled is False
+    assert RiskManager().check(_side("UP", stage=3, ask=0.93), make_ctx(remaining=20), config).approved is True
+
+
+def test_stage1_can_buy_until_the_last_30_seconds_then_everything_stops():
+    risk, config = RiskManager(), _chain_config()
+    assert risk.check(_side("UP"), _chain_ctx(55), config).approved is True
+    assert risk.check(_side("UP"), _chain_ctx(35), config).approved is True  # late, still stage 1
+    missed = risk.check(_side("UP"), _chain_ctx(30), config)
+    assert missed.reason == "stage1_missed"
+    # nothing else can run either: stage 2/3 need stage 1
+    assert risk.check(_side("UP", stage=2, ask=0.93), _chain_ctx(25), config).reason == "stage1_not_bought"
+    assert risk.check(_side("UP", stage=3, ask=0.93), _chain_ctx(25), config).reason == "stage1_not_bought"
+
+
+def test_stage2_needs_stage1_bought_before_the_50s_mark():
+    risk, config = RiskManager(), _chain_config()
+    s2 = _side("UP", stage=2, ask=0.93)
+    assert risk.check(s2, _chain_ctx(45, bought=True, s1_remaining=62), config).approved is True
+    assert risk.check(s2, _chain_ctx(45, bought=True, s1_remaining=50.5), config).approved is True
+    late = risk.check(s2, _chain_ctx(35, bought=True, s1_remaining=40), config)  # stage 1 bought at 40s
+    assert late.reason == "stage1_too_late"
+    unknown = risk.check(s2, _chain_ctx(45, bought=True, s1_remaining=None), config)
+    assert unknown.reason == "stage1_too_late"  # e.g. after a restart: fail closed
+
+
+def test_stage3_needs_only_stage1_even_if_it_bought_late_or_stage2_skipped():
+    risk, config = RiskManager(), _chain_config()
+    s3 = _side("UP", stage=3, ask=0.93)
+    assert risk.check(s3, _chain_ctx(25, bought=True, s1_remaining=70), config).approved is True
+    assert risk.check(s3, _chain_ctx(25, bought=True, s1_remaining=40), config).approved is True
+    assert risk.check(s3, _chain_ctx(25, bought=True, s1_remaining=None), config).approved is True
+    assert risk.check(s3, _chain_ctx(25), config).reason == "stage1_not_bought"
