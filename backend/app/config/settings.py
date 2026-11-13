@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     stage0_start_seconds: int = 200
     stage0_min_ask: float = 0.60
     stage0_max_ask: float = 0.85
-    stage0_min_price_gap_usd: float = 50.0
+    stage0_min_price_gap_usd: float = 80.0
     # Take-profit for stage 0: sell once the best bid is this many percent ABOVE the average price paid per
     # share (cost * (1 + pct / 100), capped at 0.99). The percentage depends on what stage 0 paid per share:
     #   cost <  stage0_mid_from_ask   -> stage0_take_profit_pct_low  (default 0.60-0.70 buy -> +15 %)
@@ -113,7 +113,7 @@ class Settings(BaseSettings):
     # Stop-loss per entry stage, in percent of the average price paid per share: once the best bid
     # is at or below cost * (1 - pct / 100), that stage's own shares are sold at the market.
     # 0 switches the stop-loss off for that stage. Stage 0 = 20 %, stages 1/2/3 = 15 % by default.
-    stage0_stop_loss_pct: float = 20.0
+    stage0_stop_loss_pct: float = 40.0
     stage1_stop_loss_pct: float = 15.0
     stage2_stop_loss_pct: float = 5.0
     stage3_stop_loss_pct: float = 5.0

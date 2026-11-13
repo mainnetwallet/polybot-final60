@@ -43,7 +43,7 @@ def test_stop_loss_is_off_at_zero_and_when_settings_are_built_directly():
 
 def test_app_defaults_are_20_percent_for_stage0_15_for_stage1_and_5_for_stages_2_and_3():
     fields = Settings.model_fields
-    assert fields["stage0_stop_loss_pct"].default == 20.0
+    assert fields["stage0_stop_loss_pct"].default == 40.0
     assert fields["stage1_stop_loss_pct"].default == 15.0
     assert all(fields[f"stage{n}_stop_loss_pct"].default == 5.0 for n in (2, 3))
 

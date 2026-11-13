@@ -24,7 +24,7 @@ from .helpers import (
     stage_books,
 )
 
-STAGE0 = dict(stage0_enabled=True)  # window 200s -> 60s (the test final window), ask .60-.85, gap $50, take-profit +15 / +10 / +5 %
+STAGE0 = dict(stage0_enabled=True)  # window 200s -> 60s (the test final window), ask .60-.85, gap $80, take-profit +15 / +10 / +5 %
 
 
 def evaluate(remaining: float, up: float, down: float, **config):
@@ -451,19 +451,19 @@ import pytest  # noqa: E402
 @pytest.mark.parametrize(
     "btc, up_ask, down_ask, expected",
     [
-        (100_050.0, 0.70, 0.30, "UP"),    # exactly +50 above the price to beat -> UP
+        (100_080.0, 0.70, 0.30, "UP"),    # exactly +80 above the price to beat -> UP
         (100_250.0, 0.70, 0.30, "UP"),    # +250
-        (100_049.0, 0.70, 0.30, None),    # +49: gap too small
-        (99_950.0, 0.30, 0.70, "DOWN"),   # exactly -50 below the price to beat -> DOWN
+        (100_079.0, 0.70, 0.30, None),    # +79: gap too small
+        (99_920.0, 0.30, 0.70, "DOWN"),   # exactly -80 below the price to beat -> DOWN
         (99_750.0, 0.30, 0.70, "DOWN"),   # -250
-        (99_951.0, 0.30, 0.70, None),     # -49: gap too small
+        (99_921.0, 0.30, 0.70, None),     # -79: gap too small
         (100_150.0, 0.86, 0.70, None),    # UP has the gap but its ask is above .85; DOWN has no gap
         (99_850.0, 0.70, 0.86, None),     # DOWN has the gap but its ask is above .85; UP has no gap
         (100_150.0, 0.55, 0.45, None),    # UP has the gap but its ask is below .60
         (100_000.0, 0.70, 0.70, None),    # no gap at all, both asks in range
     ],
 )
-async def test_bot_stage0_buys_up_above_plus50_and_down_below_minus50(btc, up_ask, down_ask, expected):
+async def test_bot_stage0_buys_up_above_plus80_and_down_below_minus80(btc, up_ask, down_ask, expected):
     market = make_market(remaining=150)
     bot = _running_bot(market, btc=(btc, 100_000.0, ""))  # (BTC price, price to beat)
     bot.data._books = dict(books_for(market, up_ask=up_ask, down_ask=down_ask))
