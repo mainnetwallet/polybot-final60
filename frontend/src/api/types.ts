@@ -79,6 +79,7 @@ export interface OrderRow {
   id: number;
   market_id: string;
   side: Side;
+  stage?: number;
   status: string;
   requested_notional: number;
   requested_price: number;

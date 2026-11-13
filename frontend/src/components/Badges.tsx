@@ -107,6 +107,21 @@ export function StatusChip({ status }: { status: string }) {
   return <span className={cx("chip", statusTone(status))}>{label}</span>;
 }
 
+export function StageChip({ stage }: { stage?: number | null }) {
+  if (!stage) return <span className="text-slate-600">—</span>;
+  const tone =
+    stage === 1
+      ? "border-sky-400/30 bg-sky-400/10 text-sky-300"
+      : stage === 2
+        ? "border-amber/30 bg-amber/10 text-amber"
+        : "border-violet-400/30 bg-violet-400/10 text-violet-300";
+  return (
+    <span className={cx("chip", tone)} title={`Entry stage ${stage}`}>
+      S{stage}
+    </span>
+  );
+}
+
 export function ResultChip({ result, pnl }: { result?: string | null; pnl?: number | null }) {
   if (!result) return <span className="text-slate-600">—</span>;
   const tone =
