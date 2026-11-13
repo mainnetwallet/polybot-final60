@@ -48,6 +48,10 @@ export interface StrategyState {
   stage0_max_ask: number;
   stage0_min_price_gap_usd: number;
   stage0_sell_price: number;
+  stage0_mid_from_ask: number;
+  stage0_high_from_ask: number;
+  stage0_sell_price_low: number;
+  stage0_sell_price_mid: number;
   conflict_policy: string;
   duplicate_policy: string;
 }
@@ -234,6 +238,10 @@ export interface SettingsState {
   stage0_max_ask: number;
   stage0_min_price_gap_usd: number;
   stage0_sell_price: number;
+  stage0_mid_from_ask: number;
+  stage0_high_from_ask: number;
+  stage0_sell_price_low: number;
+  stage0_sell_price_mid: number;
   paper_fill_ratio: number;
   paper_fee_exponent: number;
   paper_starting_balance: number;

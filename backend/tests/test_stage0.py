@@ -468,3 +468,37 @@ async def test_bot_stage0_buys_up_above_plus100_and_down_below_minus100(btc, up_
     with session_scope() as session:
         orders = session.execute(select(Order)).scalars().all()
     assert [o.side for o in orders] == ([expected] if expected else [])
+
+
+# ---------------------------------------------------------------- tiered take-profit
+def test_stage0_sell_price_tiers_follow_the_buy_cost():
+    config = make_config(**STAGE0)
+    assert config.stage0_sell_price_for(0.60) == 0.80
+    assert config.stage0_sell_price_for(0.69) == 0.80
+    assert config.stage0_sell_price_for(0.70) == 0.90
+    assert config.stage0_sell_price_for(0.79) == 0.90
+    assert config.stage0_sell_price_for(0.80) == 0.98
+    assert config.stage0_sell_price_for(0.95) == 0.98
+    assert config.stage0_sell_price_for(None) == 0.98  # unknown cost: highest tier, never sells too early
+
+
+@pytest.mark.parametrize(
+    "buy_ask, too_low, sold_at",
+    [(0.65, 0.79, 0.80), (0.75, 0.89, 0.90), (0.88, 0.97, 0.98)],
+)
+async def test_stage0_sells_at_the_tier_price_of_what_it_paid(buy_ask, too_low, sold_at):
+    stack = build_stack(make_config(**STAGE0, trade_amount_usdc=4.0))
+    market = make_market(remaining=150)
+    books = books_for(market, up_ask=buy_ask, down_ask=0.10)
+    results = await _stage0_buy(stack, market, books)
+    assert [r.status for r in results] == ["FILLED"]
+
+    books[market.up_token_id].bids = {too_low: 100.0}  # one cent under the tier price: hold
+    assert await stack["manager"].handle_exits(market, books, "paper", stack["config"]) == []
+
+    books[market.up_token_id].bids = {sold_at: 100.0}
+    results = await stack["manager"].handle_exits(market, books, "paper", stack["config"])
+    assert [r.status for r in results] == ["FILLED"]
+    with session_scope() as session:
+        sell = [o for o in session.execute(select(Order).order_by(Order.id)).scalars() if "sell" in (o.order_key or "")]
+    assert len(sell) == 1 and sell[0].avg_fill_price >= sold_at - 1e-9

@@ -90,6 +90,14 @@ class Settings(BaseSettings):
     stage0_max_ask: float = 0.95
     stage0_min_price_gap_usd: float = 100.0
     stage0_sell_price: float = 0.98
+    # Tiered take-profit: the sell price depends on what stage 0 actually paid per share.
+    #   cost <  stage0_mid_from_ask            -> sell at stage0_sell_price_low  (default 0.60-0.70 buy -> 0.80)
+    #   cost <  stage0_high_from_ask           -> sell at stage0_sell_price_mid  (default 0.70-0.80 buy -> 0.90)
+    #   cost >= stage0_high_from_ask           -> sell at stage0_sell_price      (default 0.80+ buy      -> 0.98)
+    stage0_mid_from_ask: float = 0.70
+    stage0_high_from_ask: float = 0.80
+    stage0_sell_price_low: float = 0.80
+    stage0_sell_price_mid: float = 0.90
     duplicate_policy: str = "one_per_market"  # one_per_market | one_per_side | allow
     conflict_policy: str = "up_first"  # up_first | down_first | highest_ask | block_both
 

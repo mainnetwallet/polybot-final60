@@ -60,6 +60,7 @@ class Stage0Holding:
     token_id: str
     size: float
     sell_in_flight: bool = False
+    cost: float | None = None  # average price paid per share (decides the take-profit tier)
 
 
 @dataclass
@@ -847,7 +848,16 @@ class OrderManager:
         in_flight = any(o.status in ACTIVE_STATUSES for o in sells)
         if held < SELL_DUST and not in_flight:
             return None
-        return Stage0Holding(side=side, token_id=token_id, size=round(held, 10), sell_in_flight=in_flight)
+        side_buys = [o for o in buys if o.side == side]
+        bought = sum(o.filled_size for o in side_buys)
+        cost = (
+            sum(o.filled_size * (o.avg_fill_price or 0.0) for o in side_buys) / bought
+            if bought > 0 and all(o.avg_fill_price for o in side_buys)
+            else None
+        )
+        return Stage0Holding(
+            side=side, token_id=token_id, size=round(held, 10), sell_in_flight=in_flight, cost=cost
+        )
 
     @staticmethod
     def stage0_basis(session, mode: str, market_id: str, side: str) -> tuple[float, float] | None:
@@ -909,7 +919,8 @@ class OrderManager:
                 return []
             book = books.get(holding.token_id)
             bid = book.best_bid if book is not None else None
-            if bid is None or bid + 1e-9 < config.stage0_sell_price:
+            sell_price = config.stage0_sell_price_for(holding.cost)
+            if bid is None or bid + 1e-9 < sell_price:
                 return []
             attempts = self._sell_attempts.get(reg_key, 0)
             if attempts >= MAX_SELL_ATTEMPTS:
@@ -933,7 +944,8 @@ class OrderManager:
                     "side": holding.side,
                     "size": sell_size,
                     "best_bid": bid,
-                    "min_price": config.stage0_sell_price,
+                    "min_price": sell_price,
+                    "buy_cost": holding.cost,
                     "mode": mode,
                     "order_key": key,
                     "attempt": attempts + 1,
@@ -947,7 +959,7 @@ class OrderManager:
                 side=holding.side,
                 token_id=holding.token_id,
                 size=sell_size,
-                min_price=config.stage0_sell_price,
+                min_price=sell_price,
                 observed_at_ms=now_ms,
                 order_min_size=market.min_order_size,
                 asset_version=market.asset_version,

@@ -42,6 +42,10 @@ OVERRIDABLE_KEYS = (
     "stage0_max_ask",
     "stage0_min_price_gap_usd",
     "stage0_sell_price",
+    "stage0_mid_from_ask",
+    "stage0_high_from_ask",
+    "stage0_sell_price_low",
+    "stage0_sell_price_mid",
 )
 
 
@@ -74,6 +78,10 @@ class RuntimeSettings(BaseModel):
     stage0_max_ask: float = Field(default=0.95, ge=0.01, le=0.999)
     stage0_min_price_gap_usd: float = Field(default=100.0, ge=0.0, le=1_000_000.0)
     stage0_sell_price: float = Field(default=0.98, ge=0.02, le=0.999)
+    stage0_mid_from_ask: float = Field(default=0.70, ge=0.01, le=0.999)
+    stage0_high_from_ask: float = Field(default=0.80, ge=0.01, le=0.999)
+    stage0_sell_price_low: float = Field(default=0.80, ge=0.02, le=0.999)
+    stage0_sell_price_mid: float = Field(default=0.90, ge=0.02, le=0.999)
     paper_fill_ratio: float = Field(gt=0.0, le=1.0)
     paper_fee_exponent: float = Field(ge=0.0, le=5.0)
     paper_starting_balance: float = Field(gt=0.0)
@@ -95,7 +103,23 @@ class RuntimeSettings(BaseModel):
             raise ValueError("stage0_min_ask must be <= stage0_max_ask")
         if self.stage0_sell_price <= self.stage0_max_ask:
             raise ValueError("stage0_sell_price must be greater than stage0_max_ask")
+        if self.stage0_mid_from_ask > self.stage0_high_from_ask:
+            raise ValueError("stage0_mid_from_ask must be <= stage0_high_from_ask")
+        if self.stage0_sell_price_low <= min(self.stage0_mid_from_ask, self.stage0_max_ask):
+            raise ValueError("stage0_sell_price_low must be above the buy prices of its tier")
+        if self.stage0_sell_price_mid <= min(self.stage0_high_from_ask, self.stage0_max_ask):
+            raise ValueError("stage0_sell_price_mid must be above the buy prices of its tier")
         return self
+
+    def stage0_sell_price_for(self, cost_per_share: float | None) -> float:
+        """Take-profit sell price for shares stage 0 bought at `cost_per_share` (unknown -> highest tier)."""
+        if cost_per_share is None:
+            return self.stage0_sell_price
+        if cost_per_share + 1e-9 < self.stage0_mid_from_ask:
+            return self.stage0_sell_price_low
+        if cost_per_share + 1e-9 < self.stage0_high_from_ask:
+            return self.stage0_sell_price_mid
+        return self.stage0_sell_price
 
     def to_public_dict(self) -> dict[str, Any]:
         data = self.model_dump()
