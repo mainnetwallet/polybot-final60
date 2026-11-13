@@ -126,6 +126,57 @@ async def test_stop_loss_off_holds_the_position_whatever_the_bid_does():
     assert await stack["manager"].handle_exits(market, books, "paper", stack["config"]) == []
 
 
+# ---------------------------------------------------------------- exit speed
+def test_exit_retry_gap_is_short_by_default():
+    assert Settings().exit_retry_gap_ms == 150
+
+
+async def test_failed_exit_sell_is_retried_on_the_exit_gap_not_the_entry_gap():
+    from app.execution.base import ExecutionReport
+
+    stack = build_stack(make_config(**STAGE0, **STOPS, trade_amount_usdc=4.0))
+    market = make_market(remaining=150)
+    books = books_for(market, up_ask=0.80, down_ask=0.10)
+    await _stage0_buy(stack, market, books)
+    manager = stack["manager"]
+    paper = manager._executor_provider("paper")
+    calls = {"n": 0}
+
+    class FlakyExit:
+        async def place_sell(self, request):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return ExecutionReport(status="CANCELED", error="FOK sell was not filled")
+            return await paper.place_sell(request)
+
+    manager._executor_provider = lambda _mode: FlakyExit()
+    books[market.up_token_id].bids = {0.30: 100.0}  # through the stop (0.64)
+
+    manager._retry_gap_ms = 60_000  # a long ENTRY gap must not slow an exit down
+    manager._exit_retry_gap_ms = 60_000
+    first = await manager.handle_exits(market, books, "paper", stack["config"])
+    assert [r.status for r in first] == ["CANCELED"]
+    # still inside the exit gap: held back, nothing is sent
+    assert await manager.handle_exits(market, books, "paper", stack["config"]) == []
+    assert calls["n"] == 1
+
+    manager._exit_retry_gap_ms = 0  # the exit gap elapsed (the entry gap is still 60 s)
+    again = await manager.handle_exits(market, books, "paper", stack["config"])
+    assert [(r.status, r.reason) for r in again] == [("FILLED", "stage0_stop_loss")]
+    assert calls["n"] == 2
+
+
+async def test_retry_loop_wakes_every_150ms_while_shares_are_held():
+    market = make_market(remaining=150)
+    bot = _running_bot(market, btc=(99_850.0, 100_000.0, ""))  # BTC is $150 BELOW the price to beat
+    bot.data._books = dict(books_for(market, up_ask=0.40, down_ask=0.80))
+
+    assert bot._retry_timing() == (0.5, 500)  # nothing held: the normal safety-net cadence
+
+    await _event(bot, market)  # stage 0 buys DOWN
+    assert bot._retry_timing() == (0.15, 150)  # shares held: exits are re-checked fast
+
+
 async def test_stopped_out_stage_is_not_bought_again_in_the_same_market():
     stack = build_stack(make_config(**STAGE0, **STOPS, trade_amount_usdc=4.0))
     market = make_market(remaining=150)

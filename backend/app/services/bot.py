@@ -910,23 +910,38 @@ class TradingBot:
         return await self.snapshot()
 
     # ------------------------------------------------------------------
+    # Safety-net loop timing: (seconds between looks, book silence needed before it acts). While
+    # shares are held it wakes much faster, so a take-profit / stop-loss that is due, or whose last
+    # FOK sell did not fill, never waits for the next book event or for a half-second tick.
+    RETRY_TICK_S = 0.5
+    RETRY_QUIET_MS = 500
+    EXIT_RETRY_TICK_S = 0.15
+    EXIT_RETRY_QUIET_MS = 150
+
+    def _retry_timing(self) -> tuple[float, int]:
+        market = self._market
+        if market is not None and self.orders.has_stage0_holding(self._mode, market.market_id):
+            return self.EXIT_RETRY_TICK_S, self.EXIT_RETRY_QUIET_MS
+        return self.RETRY_TICK_S, self.RETRY_QUIET_MS
+
     async def _retry_loop(self) -> None:
-        """Safety net for entries that were blocked or failed.
+        """Safety net for entries that were blocked or failed, and for exits that are still due.
 
         Trading is book-event driven. If an entry is blocked (stale book, balance, ...)
         or rejected and the book then goes quiet, no event would re-trigger it. While
         the market is in its final window and the book has been silent for a moment,
         re-evaluate so every stage whose condition still holds is tried again. Duplicate
-        protection in the order manager keeps this from double-buying.
+        protection in the order manager keeps this from double-buying. The same pass
+        re-checks the exits (stop-loss / take-profit) of every stage that holds shares.
         """
         while not self._shutdown:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(self._retry_timing()[0])
             try:
                 market = self._market
                 if market is None or self._status != "RUNNING":
                     continue
                 now_ms = int(time.time() * 1000)
-                if now_ms - self._last_book_event_ms < 500:
+                if now_ms - self._last_book_event_ms < self._retry_timing()[1]:
                     continue
                 config = self.runtime.get()
                 window = config.final_window_seconds
@@ -948,7 +963,10 @@ class TradingBot:
     # ------------------------------------------------------------------
     async def _maintenance_loop(self) -> None:
         while not self._shutdown:
-            await asyncio.sleep(2.0)
+            # 1s tick, and live orders are reconciled on every tick: an order whose response did not
+            # carry the fill (so the position is not known yet) must not wait several seconds.
+            # Reconciling only costs a REST call per order that is still open.
+            await asyncio.sleep(1.0)
             try:
                 await self._expire_market_if_due()
                 now = time.monotonic()
@@ -958,7 +976,7 @@ class TradingBot:
                 if (
                     self._mode == "live"
                     and self._status == "RUNNING"
-                    and now - self._last_live_reconcile >= 3.0
+                    and now - self._last_live_reconcile >= 1.0
                 ):
                     self._last_live_reconcile = now
                     await self._reconcile_open_live_orders()
