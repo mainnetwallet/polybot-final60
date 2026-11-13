@@ -271,11 +271,11 @@ function PolicyPanel() {
     ["Trigger threshold", fmtCents(strategy?.trigger_threshold ?? null)],
     ["Final window", strategy ? `${strategy.final_window_seconds}s` : "—"],
     [
-      "Stage 2 (add-on)",
+      "Stage 2 (after stage 1)",
       strategy ? `≤${strategy.stage2_seconds}s · ask ≥ ${fmtCents(strategy.stage2_threshold)}` : "—",
     ],
     [
-      "Stage 3 (add-on)",
+      "Stage 3 (independent)",
       strategy ? `≤${strategy.stage3_seconds}s · ask ≥ ${fmtCents(strategy.stage3_threshold)}` : "—",
     ],
     ["Max execution price", fmtCents(typeof config.max_execution_price === "number" ? config.max_execution_price : null)],

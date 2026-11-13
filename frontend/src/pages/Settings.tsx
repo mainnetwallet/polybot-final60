@@ -44,7 +44,7 @@ const FIELDS: FieldSpec[] = [
   {
     key: "stage2_seconds",
     label: "Stage 2: seconds left",
-    hint: "From this many seconds before expiry, stage 2 may add one more buy.",
+    hint: "From this many seconds before expiry, stage 2 may add one more buy, but only if stage 1 already bought before this mark.",
     kind: "number",
     step: "1",
     min: "1",
@@ -63,7 +63,7 @@ const FIELDS: FieldSpec[] = [
   {
     key: "stage3_seconds",
     label: "Stage 3: seconds left",
-    hint: "From this many seconds before expiry, stage 3 may add one more buy.",
+    hint: "From this many seconds before expiry, stage 3 may buy on its own rules. Stage 1 stops buying at this mark; if it has not bought by then, stages 1 and 2 stay off.",
     kind: "number",
     step: "1",
     min: "1",

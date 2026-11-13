@@ -13,6 +13,10 @@ Entries are staged. Each stage may place ONE buy per market:
 * stage 3: remaining <= stage3_seconds (default 30) and best_ask >= stage3_threshold
   (default 0.90).
 
+This module only produces the signals. The risk manager chains them: stage 1 can only buy while
+more than stage3_seconds remain, stage 2 needs stage 1 to have bought before stage2_seconds
+remained, and stage 3 is independent (see RiskManager._check_stage_chain).
+
 The thresholds are triggers, never limit prices. Signals carry the live ask so the
 executor buys at the market instead of posting a fixed-price order.
 """

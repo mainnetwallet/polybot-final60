@@ -539,3 +539,95 @@ async def test_chain_stage1_late_blocks_stage2_but_not_stage3():
     results = await step(30, 0.94, **held)  # 28s left: stage 3 buys
     assert any(r.status == "FILLED" for r in results)
     assert len(_orders()) == 2
+
+
+async def _timeline(stack, market, config, steps):
+    """Replay (seconds_into_window_offset, ask, btc_move) steps through the manager like the bot does."""
+    from .helpers import stage_books
+
+    manager = stack["manager"]
+    now = int(time.time() * 1000)
+    start_remaining = market.remaining_seconds()
+    for offset, ask, move in steps:
+        books = books_for(market, up_ask=ask, down_ask=round(max(0.01, 1 - ask - 0.02), 2))
+        stage_books(stack, market, books)
+        evaluation = stack["strategy"].evaluate(market, books, now + int(offset * 1000), config)
+        orders = _orders()
+        stage1 = [o for o in orders if o.order_key.count(":s") == 0]
+        ctx = make_ctx(
+            remaining=start_remaining - offset,
+            balance=10.0,
+            open_positions=1 if orders else 0,
+            exposed_sides=frozenset({"UP"}) if orders else frozenset(),
+            btc_price=100_000.0 + move,
+            price_to_beat=100_000.0,
+            stage1_bought=bool(stage1),
+            stage1_remaining=manager.stage1_remaining("paper", market.market_id),
+        )
+        await manager.handle_event(market, evaluation, books, "paper", ctx)
+
+
+def _keys() -> list[str]:
+    return sorted(o.order_key.rsplit(":", 1)[-1] if ":s" in o.order_key else "s1" for o in _orders())
+
+
+def _timeline_config():
+    return make_config(
+        final_window_seconds=80, min_price_gap_usd=20.0, trade_amount_usdc=1.0,
+        stale_data_max_age_ms=60_000, max_open_positions=1,
+    )
+
+
+async def test_timeline_gap_met_early_gives_three_buys():
+    config = _timeline_config()
+    stack = build_stack(config)
+    market = make_market(remaining=78)
+    await _timeline(stack, market, config, [
+        (0, 0.85, 5),     # 78s: ask ok, gap 5 < 20 -> blocked
+        (8, 0.86, 25),    # 70s: gap met -> stage 1 buys right away
+        (30, 0.93, 25),   # 48s: stage 2
+        (52, 0.95, 25),   # 26s: stage 3
+    ])
+    assert _keys() == ["s1", "s2", "s3"]
+
+
+async def test_timeline_stage1_late_skips_stage2_but_stage3_buys():
+    config = _timeline_config()
+    stack = build_stack(config)
+    market = make_market(remaining=78)
+    await _timeline(stack, market, config, [
+        (0, 0.93, 3),
+        (30, 0.93, 3),    # 48s: gap not met -> nothing
+        (38, 0.93, 30),   # 40s: gap met -> stage 1 (late), stage 2 refused
+        (44, 0.93, 30),   # 34s: still no stage 2
+        (52, 0.95, 30),   # 26s: stage 3
+    ])
+    assert _keys() == ["s1", "s3"]
+
+
+async def test_timeline_gap_only_met_in_last_30s_gives_stage3_only():
+    config = _timeline_config()
+    stack = build_stack(config)
+    market = make_market(remaining=78)
+    await _timeline(stack, market, config, [(0, 0.93, 3), (40, 0.93, 3), (54, 0.95, 30)])
+    assert _keys() == ["s3"]
+
+
+async def test_timeline_gap_never_met_gives_no_buy():
+    config = _timeline_config()
+    stack = build_stack(config)
+    market = make_market(remaining=78)
+    await _timeline(stack, market, config, [(0, 0.93, 3), (30, 0.93, 3), (54, 0.95, 3)])
+    assert _orders() == []
+
+
+async def test_timeline_gap_lost_then_regained_buys_stage2_when_it_returns():
+    config = _timeline_config()
+    stack = build_stack(config)
+    market = make_market(remaining=78)
+    await _timeline(stack, market, config, [
+        (5, 0.85, 25),    # 73s: stage 1 buys
+        (32, 0.93, 4),    # 46s: gap lost -> stage 2 blocked
+        (36, 0.93, 28),   # 42s: gap regained -> stage 2 buys at once
+    ])
+    assert _keys() == ["s1", "s2"]

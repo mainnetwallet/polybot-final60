@@ -436,3 +436,41 @@ def test_min_price_gap_setting_defaults_to_20_and_is_patchable():
         assert client.patch("/api/settings", json={"min_price_gap_usd": -1}).status_code == 422
         # 0 switches the rule off
         assert client.patch("/api/settings", json={"min_price_gap_usd": 0}).json()["min_price_gap_usd"] == 0.0
+
+
+def test_gap_inputs_are_read_on_the_event_loop_not_in_the_db_thread():
+    import asyncio
+    import threading
+
+    from app.strategy.types import Signal, StrategyEvaluation
+
+    from .helpers import make_market
+
+    with TestClient(create_app()) as client:
+        bot = client.app.state.bot
+        market = make_market(remaining=40)
+        seen: list[str] = []
+        real = bot.btc.gap_inputs
+
+        def spy(m):
+            seen.append(threading.current_thread().name)
+            return real(m)
+
+        bot.btc.gap_inputs = spy
+        signal = Signal(
+            market_id=market.market_id, side="UP", token_id=market.up_token_id, best_ask=0.9,
+            ask_size=10.0, remaining_seconds=40.0, threshold=0.8, observed_at_ms=int(time.time() * 1000),
+            book_age_ms=10.0, stage=1,
+        )
+        evaluation = StrategyEvaluation(True, 40.0, 0.9, 0.1, True, False, [signal], "trigger")
+
+        async def run():
+            await bot._handle_trading(market, evaluation, bot.runtime.get(), int(time.time() * 1000))
+            return threading.current_thread().name
+
+        loop_thread = client.portal.call(run)
+        assert seen and set(seen) == {loop_thread}  # never from an asyncio.to_thread worker
+
+        # a precomputed value is used as is
+        context = bot._risk_context(market, bot.runtime.get(), int(time.time() * 1000), (101.0, 100.0, ""))
+        assert (context.btc_price, context.price_to_beat) == (101.0, 100.0)

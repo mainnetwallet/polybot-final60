@@ -366,7 +366,10 @@ class TradingBot:
         ctx = None
         if evaluation.signals:
             try:
-                ctx = await asyncio.to_thread(self._risk_context, market, config, now_ms)
+                # BTC price / price to beat are read here on the event loop: the feed's tick buffer is
+                # written by the websocket task, so it must not be iterated from the database thread.
+                gap_inputs = self.btc.gap_inputs(market)
+                ctx = await asyncio.to_thread(self._risk_context, market, config, now_ms, gap_inputs)
             except Exception as exc:
                 logger.exception("risk context failed")
                 self.logs.log("ERROR", "error", f"risk context failed: {exc}", mode=self._mode)
@@ -441,7 +444,9 @@ class TradingBot:
         except Exception as exc:  # price history must never break trading
             logger.warning("price persist failed: %s", exc)
 
-    def _risk_context(self, market: MarketInfo, config, now_ms: int) -> RiskContext:
+    def _risk_context(
+        self, market: MarketInfo, config, now_ms: int, gap_inputs: tuple | None = None
+    ) -> RiskContext:
         marks = self._marks()
         with session_scope() as session:
             unrealized = self.portfolio.unrealized_pnl(session, self._mode, marks, market.market_id)
@@ -480,7 +485,7 @@ class TradingBot:
             exposed_sides = frozenset(side for _, side in exposure_keys)
             balance = self._balance(session)
         remaining = market.remaining_seconds()
-        btc_price, price_to_beat, gap_issue = self.btc.gap_inputs(market)
+        btc_price, price_to_beat, gap_issue = gap_inputs if gap_inputs is not None else self.btc.gap_inputs(market)
         return RiskContext(
             now_ms=now_ms,
             kill_switch=self._kill_switch,
