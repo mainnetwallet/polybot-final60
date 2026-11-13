@@ -74,8 +74,9 @@ class Settings(BaseSettings):
     max_execution_price: float = 0.99
     trade_amount_usdc: float = 1.0
     # Book age only resets on a websocket book event, so a stable price on a quiet book looks
-    # "old" without being wrong. 5s keeps stage 2/3 (armed by the clock) from being blocked.
-    stale_data_max_age_ms: int = 5000
+    # "old" without being wrong, so too low a limit blocks stage 2/3 (armed by the clock) on a quiet
+    # book. 2s: a signal is never built on a book older than that. Exits do not check book age.
+    stale_data_max_age_ms: int = 2000
     # Retry guard for failed/cancelled entries (per stage, per market)
     # A FOK entry that did not fill leaves nothing on the book, so it is retried almost at once.
     # 15 attempts x 250 ms keeps a retry window of a few seconds.

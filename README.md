@@ -401,8 +401,9 @@ Strategy and risk defaults:
 | `MIN_PRICE_GAP_USD` | `20` | Price-to-beat filter: an entry needs the current BTC price (Chainlink TWAP60) at least this many USD beyond the price to beat in the bought direction (UP: above, DOWN: below). `0` disables it. This is the stage 1 gap; missing/stale BTC data blocks the buy |
 | `STAGE2_MIN_PRICE_GAP_USD` / `STAGE3_MIN_PRICE_GAP_USD` | `25` / `30` | Same price-to-beat filter for stage 2 and stage 3 entries (`0` disables it for that stage) |
 | `TRADE_AMOUNT_USDC` | `1.0` | Requested notional per trade |
-| `STALE_DATA_MAX_AGE_MS` | `5000` | Maximum book age for execution |
-| `ENTRY_MAX_ATTEMPTS` / `ENTRY_RETRY_GAP_MS` | `5` / `1000` | Per stage and market: max tries for a failed/cancelled entry, and minimum gap between tries |
+| `STALE_DATA_MAX_AGE_MS` | `2000` | Maximum book age for a buy (exits do not check it) |
+| `ENTRY_MAX_ATTEMPTS` / `ENTRY_RETRY_GAP_MS` | `15` / `250` | Per stage and market: max tries for a failed/cancelled entry, and minimum gap between tries |
+| `EXIT_RETRY_GAP_MS` | `150` | Minimum gap between two sell attempts of the same take-profit / stop-loss |
 | `MAX_OPEN_POSITIONS` | `1` | Concurrent position cap per market (stage 2/3 may add to a side already held) |
 | `DUPLICATE_POLICY` | `one_per_market` | `one_per_market`, `one_per_side`, `allow` |
 | `CONFLICT_POLICY` | `up_first` | `up_first`, `down_first`, `highest_ask`, `block_both` |
