@@ -1015,6 +1015,13 @@ class OrderManager:
             self._sell_attempts[sell_key] = attempts + 1
             self._last_sell_ms[sell_key] = now_ms
 
+            def _bids_snapshot() -> dict:
+                return {
+                    "bids": [[p, sz] for p, sz in book.bid_levels()[:3]] if book is not None else None,
+                    "age_ms": round(book.age_ms()) if book is not None and book.updated_at_ms else None,
+                }
+
+            book_before = _bids_snapshot()  # the book the exit decision was taken on
             key = f"{mode}:{market.market_id}:{holding.side}:s{stage}{_SELL_MARK}{uuid.uuid4().hex[:8]}"
             order_id = await asyncio.to_thread(
                 self._reserve_sell_order, mode, market, holding, key, sell_size, bid, kind
@@ -1056,10 +1063,8 @@ class OrderManager:
                 order_min_size=market.min_order_size,
                 asset_version=market.asset_version,
             )
-            book_before = {
-                "bids": [[p, sz] for p, sz in book.bid_levels()[:3]] if book is not None else None,
-                "age_ms": round(book.age_ms()) if book is not None and book.updated_at_ms else None,
-            }
+            sent_ms = clock.now_ms()
+            book_at_send = _bids_snapshot()  # the book right before the order leaves
             try:
                 report = await self._executor_provider(mode).place_sell(request)
             except Exception as exc:
@@ -1096,6 +1101,13 @@ class OrderManager:
                         "avg_price": result.avg_price,
                         "latency_ms": result.latency_ms,
                         "exchange_order_id": result.exchange_order_id,
+                        # why a sell filled far from the bid it was decided on: waiting before the
+                        # order left (decision_to_send_ms) vs a thin book (compare the bid levels)
+                        "exit_kind": kind,
+                        "decision_bid": bid,
+                        "decision_to_send_ms": sent_ms - now_ms,
+                        "book_at_decision": book_before,
+                        "book_at_send": book_at_send,
                     },
                     mode=mode,
                 )
