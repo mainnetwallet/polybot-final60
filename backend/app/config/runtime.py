@@ -36,6 +36,11 @@ OVERRIDABLE_KEYS = (
     "min_price_gap_usd",
     "stage2_min_price_gap_usd",
     "stage3_min_price_gap_usd",
+    "stage0_enabled",
+    "stage0_start_seconds",
+    "stage0_max_ask",
+    "stage0_min_price_gap_usd",
+    "stage0_sell_price",
 )
 
 
@@ -60,6 +65,13 @@ class RuntimeSettings(BaseModel):
     min_price_gap_usd: float = Field(default=0.0, ge=0.0, le=1_000_000.0)
     stage2_min_price_gap_usd: float = Field(default=0.0, ge=0.0, le=1_000_000.0)
     stage3_min_price_gap_usd: float = Field(default=0.0, ge=0.0, le=1_000_000.0)
+    # Stage 0 (early entry + take-profit sell). Off by default when a RuntimeSettings is built
+    # directly; the app's Settings (.env) turns it on.
+    stage0_enabled: bool = False
+    stage0_start_seconds: int = Field(default=200, ge=1, le=300)
+    stage0_max_ask: float = Field(default=0.95, ge=0.01, le=0.999)
+    stage0_min_price_gap_usd: float = Field(default=100.0, ge=0.0, le=1_000_000.0)
+    stage0_sell_price: float = Field(default=0.98, ge=0.02, le=0.999)
     paper_fill_ratio: float = Field(gt=0.0, le=1.0)
     paper_fee_exponent: float = Field(ge=0.0, le=5.0)
     paper_starting_balance: float = Field(gt=0.0)
@@ -77,6 +89,8 @@ class RuntimeSettings(BaseModel):
             raise ValueError("max_execution_price must be >= trigger_threshold")
         if self.max_execution_price < max(self.stage2_threshold, self.stage3_threshold):
             raise ValueError("max_execution_price must be >= the stage 2/3 thresholds")
+        if self.stage0_sell_price <= self.stage0_max_ask:
+            raise ValueError("stage0_sell_price must be greater than stage0_max_ask")
         return self
 
     def to_public_dict(self) -> dict[str, Any]:

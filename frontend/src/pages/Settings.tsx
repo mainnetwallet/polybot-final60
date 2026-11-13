@@ -42,6 +42,53 @@ const FIELDS: FieldSpec[] = [
     suffix: "s",
   },
   {
+    key: "stage0_enabled",
+    label: "Stage 0: early buy + sell",
+    hint: "On: before the final window, buy when the ask is low enough and BTC is far enough beyond the price to beat, then sell at the sell price.",
+    kind: "select",
+    options: [
+      { value: "true", label: "On" },
+      { value: "false", label: "Off" },
+    ],
+  },
+  {
+    key: "stage0_start_seconds",
+    label: "Stage 0: starts at (seconds left)",
+    hint: "Stage 0 may buy from this many seconds before expiry until the final window starts.",
+    kind: "number",
+    step: "1",
+    min: "1",
+    max: "300",
+    suffix: "s",
+  },
+  {
+    key: "stage0_max_ask",
+    label: "Stage 0: max ask",
+    hint: "Stage 0 buys only while the best ask is at or below this decimal. It is also the highest price it will pay.",
+    kind: "number",
+    step: "0.01",
+    min: "0.01",
+    max: "0.999",
+  },
+  {
+    key: "stage0_min_price_gap_usd",
+    label: "Stage 0: min price gap",
+    hint: "BTC must be at least this far beyond the price to beat in the bought direction (UP above, DOWN below). 0 = off. Missing BTC data blocks the buy.",
+    kind: "number",
+    step: "1",
+    min: "0",
+    suffix: "USD",
+  },
+  {
+    key: "stage0_sell_price",
+    label: "Stage 0: sell at",
+    hint: "Stage 0 sells its shares as soon as the best bid reaches this decimal. Must be higher than the max ask.",
+    kind: "number",
+    step: "0.01",
+    min: "0.02",
+    max: "0.999",
+  },
+  {
     key: "stage2_seconds",
     label: "Stage 2: seconds left",
     hint: "From this many seconds before expiry, stage 2 may add one more buy, but only if stage 1 already bought before this mark.",
@@ -350,6 +397,10 @@ export function Settings() {
       Number(draft.stage2_threshold),
       Number(draft.stage3_threshold),
     );
+    if (Number(draft.stage0_sell_price) <= Number(draft.stage0_max_ask)) {
+      setError("Stage 0 sell price must be higher than the stage 0 max ask.");
+      return;
+    }
     if (Number(draft.max_execution_price) < highestTrigger) {
       setError("Max execution price must be greater than or equal to the trigger and stage 2/3 thresholds.");
       return;

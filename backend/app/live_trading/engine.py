@@ -23,7 +23,7 @@ import time
 from collections.abc import Callable
 
 from app.config.settings import Settings
-from app.execution.base import ExecutionEngine, ExecutionReport, FillPart, OrderRequest
+from app.execution.base import ExecutionEngine, ExecutionReport, FillPart, OrderRequest, SellRequest
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,23 @@ def cap_price_to_tick(price: float, tick: float) -> float:
     steps = math.floor(round(price / tick, 6) + 1e-9)
     capped = min(max(steps * tick, tick), 1.0 - tick)
     return round(capped, 6)
+
+
+def floor_size(size: float, decimals: int = 2) -> float:
+    """Round a share count DOWN so a SELL never asks for more shares than are held."""
+    factor = 10**decimals
+    return math.floor(round(size * factor, 6) + 1e-9) / factor
+
+
+def ceil_price_to_tick(price: float, tick: float) -> float:
+    """Smallest price >= ``price`` on the tick grid and inside ``[tick, 1 - tick]``.
+
+    Used for the minimum price of a SELL: rounding up never sells below the configured floor.
+    """
+    if not 0 < tick < 0.5:
+        return round(price, 6)
+    steps = math.ceil(round(price / tick, 6) - 1e-9)
+    return round(min(max(steps * tick, tick), 1.0 - tick), 6)
 
 
 def _make_client_class():
@@ -253,6 +270,106 @@ class LiveExecutionEngine(ExecutionEngine):
             report = await self._place_buy_locked(request)
             report.latency_ms = float(max(0, int(time.time() * 1000) - request.observed_at_ms))
             return report
+
+    async def place_sell(self, request: SellRequest) -> ExecutionReport:
+        if not self._orders_allowed:
+            return ExecutionReport(status="REJECTED", error="new live orders are blocked")
+        async with self._order_lock:
+            if not self._orders_allowed:
+                return ExecutionReport(status="REJECTED", error="new live orders are blocked")
+            try:
+                client = await self._get_client()
+            except Exception as exc:
+                return ExecutionReport(
+                    status="REJECTED", error=f"live client unavailable: {type(exc).__name__}"
+                )
+            try:
+                report = await asyncio.to_thread(self._place_sell_sync, client, request)
+            except Exception as exc:
+                logger.error("live sell failed (%s)", type(exc).__name__)
+                report = ExecutionReport(
+                    status="SUBMITTED",
+                    error="sell submission outcome is unknown; reconcile before retrying",
+                )
+            report.latency_ms = float(max(0, int(time.time() * 1000) - request.observed_at_ms))
+            return report
+
+    def _place_sell_sync(self, client, request: SellRequest) -> ExecutionReport:
+        from py_clob_client_v2 import MarketOrderArgs, OrderType, Side
+
+        try:
+            tick = float(client.get_tick_size(request.token_id))
+        except Exception:
+            tick = DEFAULT_TICK_SIZE
+        shares = floor_size(request.size)
+        if shares <= 0:
+            return ExecutionReport(status="REJECTED", error="sell size rounds down to zero")
+        args = MarketOrderArgs(
+            token_id=request.token_id if request.asset_version == 1 else None,
+            amount=shares,  # SELL amount is in shares
+            side=Side.SELL,
+            # worst acceptable price (floor), not a resting limit
+            price=ceil_price_to_tick(request.min_price, tick),
+            order_type=OrderType.FOK,
+            user_usdc_balance=0,
+            position_id=request.token_id if request.asset_version == 2 else None,
+        )
+        try:
+            response = client.create_and_post_market_order(args, None, OrderType.FOK, False)
+        except Exception as exc:
+            report = classify_post_exception(exc)
+            if report.status == "SUBMITTED":
+                report.error = "sell submission outcome is unknown; reconcile before retrying"
+                logger.error("live sell submit outcome unknown (%s)", type(exc).__name__)
+            else:
+                logger.warning("live sell not accepted (%s): %s", type(exc).__name__, report.error)
+            return report
+        if not isinstance(response, dict):
+            return ExecutionReport(status="REJECTED", error="unexpected CLOB response")
+
+        order_id = response.get("orderID") or response.get("orderId")
+        error_msg = str(response.get("errorMsg") or "")
+        status_raw = str(response.get("status") or "").lower()
+        if error_msg or response.get("success") is False or not order_id:
+            killed = "fok" in error_msg.lower() or "fully filled" in error_msg.lower()
+            return ExecutionReport(
+                status="CANCELED" if killed else "REJECTED",
+                exchange_order_id=order_id,
+                error="FOK sell was not filled" if killed else "CLOB rejected the sell order",
+                raw=response,
+            )
+        if status_raw == "unmatched":
+            return ExecutionReport(
+                status="CANCELED",
+                exchange_order_id=order_id,
+                error="sell not matched (FOK)",
+                raw=response,
+            )
+        making = _num(response.get("makingAmount"))  # SELL: shares given up
+        taking = _num(response.get("takingAmount"))  # SELL: collateral received
+        if making > shares * 10 and taking > 0:
+            making /= 1_000_000.0
+            taking /= 1_000_000.0
+        if status_raw == "matched" and making > 0 and taking > 0:
+            price = round(taking / making, 6)
+            size = round(making, 8)
+            fee = self.estimate_fee(request.token_id, size, price)
+            return ExecutionReport(
+                status="FILLED" if making >= 0.98 * shares else "PARTIALLY_FILLED",
+                filled_size=size,
+                avg_price=price,
+                fee=fee,
+                submitted_price=price,
+                exchange_order_id=order_id,
+                fills=[FillPart(price=price, size=size, fee=fee, exchange_trade_id=None)],
+                raw=response,
+            )
+        return ExecutionReport(
+            status="SUBMITTED",
+            exchange_order_id=order_id,
+            error="exchange accepted the sell; fill details are pending reconciliation",
+            raw=response,
+        )
 
     def allow_new_orders(self) -> None:
         self._orders_allowed = True

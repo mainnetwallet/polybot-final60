@@ -35,6 +35,9 @@ class RiskContext:
     # did (None = unknown, e.g. after a restart; then stage 2 stays blocked, fail closed).
     stage1_bought: bool = False
     stage1_remaining: float | None = None
+    # Sides whose open position in this market is nothing but a Stage 0 holding. Stage 0 manages and
+    # sells its own shares, so they do not count against max_open_positions for stages 1-3.
+    stage0_pure_sides: frozenset[str] = frozenset()
 
 
 class RiskManager:
@@ -73,6 +76,7 @@ class RiskManager:
         """Buy only when BTC is already >= min_price_gap_usd beyond the price to beat, in the
         direction being bought (UP above it, DOWN below it). Fails closed without price data."""
         min_gap = {
+            0: config.stage0_min_price_gap_usd,
             2: config.stage2_min_price_gap_usd,
             3: config.stage3_min_price_gap_usd,
         }.get(signal.stage, config.min_price_gap_usd)
@@ -95,6 +99,10 @@ class RiskManager:
             )
         return None
 
+    def price_gap_passes(self, signal: Signal, ctx: RiskContext, config: RuntimeSettings) -> bool:
+        """True when the price-gap rule is satisfied (or off) for this signal."""
+        return self._check_price_gap(signal, ctx, config) is None
+
     def check(self, signal: Signal, ctx: RiskContext, config: RuntimeSettings) -> RiskDecision:
         if ctx.kill_switch:
             return RiskDecision(False, "kill_switch", "emergency kill switch is active")
@@ -102,20 +110,38 @@ class RiskManager:
             return RiskDecision(False, "market_inactive", "market is no longer active")
         if ctx.market_expired or ctx.remaining_seconds <= 0:
             return RiskDecision(False, "market_expired", "market window has expired")
-        if ctx.remaining_seconds > config.final_window_seconds:
+        if signal.stage == 0:
+            if not config.stage0_enabled:
+                return RiskDecision(False, "stage0_disabled", "stage 0 is switched off")
+            if not (config.final_window_seconds < ctx.remaining_seconds <= config.stage0_start_seconds):
+                return RiskDecision(
+                    False,
+                    "outside_stage0_window",
+                    f"stage 0 buys only between {config.stage0_start_seconds}s left and the final "
+                    f"{config.final_window_seconds}s window",
+                )
+        elif ctx.remaining_seconds > config.final_window_seconds:
             return RiskDecision(False, "outside_final_window", "outside final trading window")
         if signal.book_age_ms > config.stale_data_max_age_ms:
             return RiskDecision(
                 False, "stale_data", f"book age {signal.book_age_ms:.0f}ms exceeds limit"
             )
-        if signal.best_ask + 1e-9 < config.trigger_threshold:
-            return RiskDecision(False, "below_threshold", "ask below trigger threshold")
-        if signal.best_ask > config.max_execution_price + 1e-9:
-            return RiskDecision(
-                False,
-                "max_execution_price_exceeded",
-                f"ask {signal.best_ask:.3f} above cap {config.max_execution_price:.3f}",
-            )
+        if signal.stage == 0:
+            if signal.best_ask > config.stage0_max_ask + 1e-9:
+                return RiskDecision(
+                    False,
+                    "stage0_ask_too_high",
+                    f"ask {signal.best_ask:.3f} above the stage 0 limit {config.stage0_max_ask:.3f}",
+                )
+        else:
+            if signal.best_ask + 1e-9 < config.trigger_threshold:
+                return RiskDecision(False, "below_threshold", "ask below trigger threshold")
+            if signal.best_ask > config.max_execution_price + 1e-9:
+                return RiskDecision(
+                    False,
+                    "max_execution_price_exceeded",
+                    f"ask {signal.best_ask:.3f} above cap {config.max_execution_price:.3f}",
+                )
         if signal.ask_size is None or signal.ask_size <= 0:
             return RiskDecision(False, "no_liquidity", "no ask size available at best price")
         chain = self._check_stage_chain(signal, ctx, config)
@@ -141,7 +167,13 @@ class RiskManager:
             )
         if ctx.trades_today >= config.max_trades_per_day:
             return RiskDecision(False, "max_trades_per_day", "daily trade cap reached")
-        add_on = signal.stage > 1 and signal.side in ctx.exposed_sides
-        if ctx.open_positions >= config.max_open_positions and not add_on:
+        exposed_sides = ctx.exposed_sides
+        open_positions = ctx.open_positions
+        if signal.stage != 0 and ctx.stage0_pure_sides:
+            # a pure Stage 0 holding belongs to its own take-profit system
+            exposed_sides = exposed_sides - ctx.stage0_pure_sides
+            open_positions -= len(ctx.stage0_pure_sides & ctx.exposed_sides)
+        add_on = signal.stage > 1 and signal.side in exposed_sides
+        if open_positions >= config.max_open_positions and not add_on:
             return RiskDecision(False, "max_open_positions", "maximum open positions reached")
         return RiskDecision(True, "approved", "all risk checks passed")

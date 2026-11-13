@@ -271,6 +271,12 @@ function PolicyPanel() {
     ["Trigger threshold", fmtCents(strategy?.trigger_threshold ?? null)],
     ["Final window", strategy ? `${strategy.final_window_seconds}s` : "—"],
     [
+      "Stage 0 (early buy + sell)",
+      strategy?.stage0_enabled
+        ? `≤${strategy.stage0_start_seconds}s · ask ≤ ${fmtCents(strategy.stage0_max_ask)} · gap ≥ $${strategy.stage0_min_price_gap_usd} · sell at ${fmtCents(strategy.stage0_sell_price)}`
+        : "off",
+    ],
+    [
       "Stage 2 (after stage 1)",
       strategy ? `≤${strategy.stage2_seconds}s · ask ≥ ${fmtCents(strategy.stage2_threshold)}` : "—",
     ],

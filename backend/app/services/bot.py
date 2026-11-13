@@ -7,6 +7,7 @@ import logging
 import secrets
 import time
 from collections import deque
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -23,7 +24,7 @@ from app.market_data.client import ClobMarketDataClient
 from app.market_discovery.service import MarketDiscovery, MarketMonitor
 from app.market_discovery.types import MarketInfo, ResolutionInfo
 from app.monitoring.logs import LogService, Publisher
-from app.order_manager.manager import OrderManager, OrderResult
+from app.order_manager.manager import SELL_DUST, OrderManager, OrderResult
 from app.paper_trading.engine import PaperExecutionEngine
 from app.portfolio.analytics import AnalyticsService
 from app.portfolio.service import Portfolio
@@ -35,6 +36,10 @@ logger = logging.getLogger(__name__)
 
 
 RESET_SERVER_PHRASE = "RESET ALL"
+
+def evaluation_market_id(evaluation: StrategyEvaluation) -> str:
+    return evaluation.signals[0].market_id if evaluation.signals else ""
+
 
 class BotError(RuntimeError):
     pass
@@ -364,11 +369,14 @@ class TradingBot:
     ) -> None:
         # The risk context hits the database; only build it when a signal needs it.
         ctx = None
+        gap_inputs = None
+        if evaluation.signals:
+            # BTC price / price to beat are read here on the event loop: the feed's tick buffer is
+            # written by the websocket task, so it must not be iterated from the database thread.
+            gap_inputs = self.btc.gap_inputs(market)
+            evaluation = self._prefilter_stage0(evaluation, gap_inputs, config)
         if evaluation.signals:
             try:
-                # BTC price / price to beat are read here on the event loop: the feed's tick buffer is
-                # written by the websocket task, so it must not be iterated from the database thread.
-                gap_inputs = self.btc.gap_inputs(market)
                 ctx = await asyncio.to_thread(self._risk_context, market, config, now_ms, gap_inputs)
             except Exception as exc:
                 logger.exception("risk context failed")
@@ -383,6 +391,15 @@ class TradingBot:
             logger.exception("order handling failed")
             self.logs.log("ERROR", "error", f"order handling failed: {exc}", mode=self._mode)
             return
+        # Stage 0 take-profit: sell the shares it holds once the bid reaches the sell price.
+        if self.orders.exit_check_needed(self._mode, market.market_id):
+            try:
+                results = list(results) + await self.orders.handle_exits(
+                    market, self.data.books, self._mode, config
+                )
+            except Exception as exc:
+                logger.exception("stage 0 exit handling failed")
+                self.logs.log("ERROR", "error", f"stage 0 exit handling failed: {exc}", mode=self._mode)
         for result in results:
             if result.status not in {"SKIPPED", "BLOCKED"}:
                 self._last_order = result.as_dict()
@@ -391,6 +408,37 @@ class TradingBot:
                     self._latencies.append(result.latency_ms)
         if results:
             await self._broadcast_state()
+
+    def _prefilter_stage0(self, evaluation: StrategyEvaluation, gap_inputs, config) -> StrategyEvaluation:
+        """Drop stage 0 signals that cannot buy, without touching the database.
+
+        Stage 0 watches both sides for ~2 minutes and "ask <= limit" is nearly always true for the
+        cheap side, so only the side the BTC price gap points to may go on to the risk manager (this
+        also keeps `conflict_policy` from picking the wrong side). It buys once per market.
+        """
+        if not any(signal.stage == 0 for signal in evaluation.signals):
+            return evaluation
+        min_gap = config.stage0_min_price_gap_usd
+        btc_price, price_to_beat, _issue = gap_inputs
+        done = self.orders.stage0_bought(self._mode, evaluation_market_id(evaluation))
+        keep = []
+        for signal in evaluation.signals:
+            if signal.stage != 0:
+                keep.append(signal)
+                continue
+            if done:
+                continue
+            if min_gap > 0:
+                if btc_price is None or price_to_beat is None:
+                    continue  # no BTC data: fail closed
+                move = btc_price - price_to_beat
+                directional = move if signal.side == "UP" else -move
+                if directional + 1e-9 < min_gap:
+                    continue
+            keep.append(signal)
+        if len(keep) == len(evaluation.signals):
+            return evaluation
+        return replace(evaluation, signals=keep)
 
     # ------------------------------------------------------------------
     def _schedule_tick(self) -> None:
@@ -454,11 +502,20 @@ class TradingBot:
             trades_today = self.portfolio.trades_today(session, self._mode)
             # max_open_positions is a per-market cap: a position from an earlier 5-minute
             # window that is still waiting to settle must not block the current market.
-            exposure_keys = {
-                (position.market_id, position.side)
+            position_sizes = {
+                position.side: position.size
                 for position in self.portfolio.open_positions(session, self._mode)
                 if position.market_id == market.market_id
             }
+            exposure_keys = {(market.market_id, side) for side in position_sizes}
+            stage0 = self.orders.stage0_holding_in_session(session, self._mode, market.market_id)
+            stage0_pure_sides = (
+                frozenset({stage0.side})
+                if stage0 is not None
+                and stage0.size >= SELL_DUST
+                and position_sizes.get(stage0.side, 0.0) <= stage0.size + SELL_DUST
+                else frozenset()
+            )
             active_orders = session.execute(
                 select(Order).where(
                     Order.mode == self._mode,
@@ -502,6 +559,7 @@ class TradingBot:
             price_gap_issue=gap_issue,
             stage1_bought=stage1_bought,
             stage1_remaining=self.orders.stage1_remaining(self._mode, market.market_id),
+            stage0_pure_sides=stage0_pure_sides,
         )
 
     def _balance(self, session) -> float:
@@ -828,10 +886,14 @@ class TradingBot:
                 if now_ms - self._last_book_event_ms < 500:
                     continue
                 config = self.runtime.get()
-                if market.remaining_seconds() > config.final_window_seconds:
+                window = config.final_window_seconds
+                if config.stage0_enabled:
+                    window = max(window, config.stage0_start_seconds)
+                has_exit = self.orders.has_stage0_holding(self._mode, market.market_id)
+                if market.remaining_seconds() > window and not has_exit:
                     continue
                 evaluation = self.strategy.evaluate(market, self.data.books, now_ms, config)
-                if not evaluation.signals:
+                if not evaluation.signals and not has_exit:
                     continue
                 self._evaluation = evaluation
                 await self._handle_trading(market, evaluation, config, now_ms)
@@ -1321,6 +1383,7 @@ class TradingBot:
                     "side": o.side,
                     "status": o.status,
                     "stage": self.orders._key_stage(o.order_key),
+                    "action": self.orders._key_action(o.order_key),
                     "requested_notional": o.requested_notional,
                     "requested_price": o.requested_price,
                     "submitted_price": o.submitted_price,
@@ -1393,6 +1456,11 @@ class TradingBot:
                 "stage2_threshold": config.stage2_threshold,
                 "stage3_seconds": config.stage3_seconds,
                 "stage3_threshold": config.stage3_threshold,
+                "stage0_enabled": config.stage0_enabled,
+                "stage0_start_seconds": config.stage0_start_seconds,
+                "stage0_max_ask": config.stage0_max_ask,
+                "stage0_min_price_gap_usd": config.stage0_min_price_gap_usd,
+                "stage0_sell_price": config.stage0_sell_price,
                 "conflict_policy": config.conflict_policy,
                 "duplicate_policy": config.duplicate_policy,
             },
@@ -1443,14 +1511,16 @@ class TradingBot:
             }
 
             def outcome(o: Order) -> tuple[str | None, float | None]:
-                # No fill -> nothing to win or lose.
-                if (o.filled_size or 0) <= 0:
+                # No fill -> nothing to win or lose. A SELL row is the exit itself, not a bet.
+                if (o.filled_size or 0) <= 0 or self.orders._key_action(o.order_key) == "SELL":
                     return None, None
                 pos = positions.get((o.market_id, o.side))
                 if pos is None:
                     return None, None
                 if pos.status != "closed":
                     return "OPEN", None
+                if pos.resolution is None:  # closed by a take-profit sale, not by settlement
+                    return ("WIN" if pos.realized_pnl > 0 else "LOSS"), pos.realized_pnl
                 return ("WIN" if pos.resolution == o.side else "LOSS"), pos.realized_pnl
 
             return [
@@ -1462,6 +1532,7 @@ class TradingBot:
                     "side": o.side,
                     "status": o.status,
                     "stage": self.orders._key_stage(o.order_key),
+                    "action": self.orders._key_action(o.order_key),
                     "requested_notional": o.requested_notional,
                     "requested_price": o.requested_price,
                     "submitted_price": o.submitted_price,

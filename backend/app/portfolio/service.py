@@ -172,6 +172,78 @@ class Portfolio:
             account = self.account(session, "paper")
             account.balance = round(account.balance - total_cost - total_fee, 10)
 
+    # A sell leaving fewer shares than this is dust (the exchange cannot trade it); the position is
+    # closed and the dust written off.
+    DUST_SHARES = 0.01
+
+    def apply_sell_report(
+        self, session: Session, mode: str, order: Order, report: ExecutionReport
+    ) -> float:
+        """Book a SELL: shrink the position, add the realised PnL, credit the paper balance.
+
+        Returns the realised PnL of this sale (proceeds - sell fee - cost basis and buy fees of the
+        shares sold). Nothing is booked when there is no position to sell from.
+        """
+        if not report.fills:
+            return 0.0
+        for part in report.fills:
+            session.add(
+                Fill(
+                    order_id=order.id,
+                    mode=mode,
+                    market_id=order.market_id,
+                    side=order.side,
+                    price=part.price,
+                    size=part.size,
+                    fee=part.fee,
+                    exchange_trade_id=part.exchange_trade_id,
+                )
+            )
+        position = session.execute(
+            select(Position).where(
+                Position.mode == mode,
+                Position.market_id == order.market_id,
+                Position.side == order.side,
+            )
+        ).scalar_one_or_none()
+        if position is None or position.size <= 0:
+            return 0.0
+
+        reported = sum(p.size for p in report.fills)
+        sold = min(reported, position.size)
+        scale = sold / reported if reported > 0 else 0.0
+        proceeds = sum(p.price * p.size for p in report.fills) * scale
+        sell_fee = sum(p.fee for p in report.fills) * scale
+        fraction = sold / position.size
+        cost_removed = position.cost_basis * fraction
+        buy_fee_removed = position.fees * fraction
+        realized = proceeds - sell_fee - cost_removed - buy_fee_removed
+
+        position.size = round(position.size - sold, 10)
+        position.cost_basis = round(position.cost_basis - cost_removed, 10)
+        position.fees = round(position.fees - buy_fee_removed, 10)
+        position.realized_pnl = round(position.realized_pnl + realized, 10)
+        if position.size < self.DUST_SHARES:
+            # write the dust off so the closed position's PnL stays complete
+            position.realized_pnl = round(
+                position.realized_pnl - position.cost_basis - position.fees, 10
+            )
+            position.size = 0.0
+            position.cost_basis = 0.0
+            position.fees = 0.0
+            position.avg_price = 0.0
+            position.unrealized_pnl = 0.0
+            position.status = "closed"
+            position.resolution = None
+            position.closed_at = utcnow()
+        else:
+            position.avg_price = round(position.cost_basis / position.size, 8)
+
+        if mode == "paper":
+            account = self.account(session, "paper")
+            account.balance = round(account.balance + proceeds - sell_fee, 10)
+        return round(realized, 10)
+
     # ------------------------------------------------------------------
     def unrealized_pnl(
         self,
@@ -267,7 +339,7 @@ class Portfolio:
         for position in positions:
             payout = position.size if position.side == outcome else 0.0
             pnl = round(payout - position.cost_basis - position.fees, 10)
-            position.realized_pnl = pnl
+            position.realized_pnl = round(position.realized_pnl + pnl, 10)  # keeps earlier sale PnL
             position.unrealized_pnl = 0.0
             position.status = "closed"
             position.resolution = outcome

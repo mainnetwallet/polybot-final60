@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 import uuid
@@ -17,7 +18,7 @@ from app.config.runtime import SettingsService
 from app.config.settings import Settings
 from app.database.models import Order, Position, TriggerEvent, utcnow
 from app.database.session import session_scope
-from app.execution.base import ExecutionEngine, ExecutionReport, FillPart, OrderRequest
+from app.execution.base import ExecutionEngine, ExecutionReport, FillPart, OrderRequest, SellRequest
 from app.market_data.book import OrderBook
 from app.market_discovery.types import MarketInfo
 from app.monitoring.logs import LogService
@@ -40,6 +41,25 @@ TERMINAL_EMPTY = ("REJECTED", "CANCELED", "EXPIRED")
 ExecutorProvider = Callable[[str], ExecutionEngine]
 SubmissionAllowed = Callable[[str], bool]
 _STAGE_SUFFIX = re.compile(r":s(\d+)$")
+# Stage 0 take-profit SELL orders carry this marker in their order key.
+_SELL_MARK = ":sell:"
+MAX_SELL_ATTEMPTS = 30
+SELL_DUST = 0.01
+
+
+def _floor_shares(size: float) -> float:
+    """Whole cents of a share, rounded down: a SELL must never ask for more than is held."""
+    return math.floor(round(size * 100, 6) + 1e-9) / 100
+
+
+@dataclass
+class Stage0Holding:
+    """Shares bought by stage 0 in one market that have not been sold yet."""
+
+    side: str
+    token_id: str
+    size: float
+    sell_in_flight: bool = False
 
 
 @dataclass
@@ -97,6 +117,12 @@ class OrderManager:
         # (mode, market) -> seconds remaining when stage 1 last got an accepted order (stage chain)
         self._stage1_remaining: dict[tuple[str, str], float] = {}
         self._background_writes: set[asyncio.Task] = set()
+        # (mode, market) -> stage 0 shares still held; absent = not loaded from the database yet
+        self._stage0_holdings: dict[tuple[str, str], Stage0Holding | None] = {}
+        self._sell_attempts: dict[tuple[str, str], int] = {}
+        self._last_sell_ms: dict[tuple[str, str], int] = {}
+        # (mode, market) pairs where stage 0 already got an accepted buy (it buys once per market)
+        self._stage0_bought: set[tuple[str, str]] = set()
 
     def stage1_remaining(self, mode: str, market_id: str) -> float | None:
         return self._stage1_remaining.get((mode, market_id))
@@ -107,8 +133,9 @@ class OrderManager:
             self._logs.log(
                 "INFO" if decision == "submitted" else "WARNING",
                 "trigger",
-                f"{'S' + str(signal.stage) + ' ' if signal.stage > 1 else ''}"
-                f"{signal.side} ask {signal.best_ask:.3f} >= {signal.threshold:.2f} -> {decision}",
+                f"{'S' + str(signal.stage) + ' ' if signal.stage != 1 else ''}"
+                f"{signal.side} ask {signal.best_ask:.3f} {'<=' if signal.stage == 0 else '>='} "
+                f"{signal.threshold:.2f} -> {decision}",
                 payload={
                     "market_id": signal.market_id,
                     "side": signal.side,
@@ -153,7 +180,7 @@ class OrderManager:
     def _order_key(self, mode: str, signal: Signal, policy: str) -> str:
         # Stage 1 keeps the historical key; add-on stages get their own suffix so every
         # stage has exactly one order row per market (a failed row is reset and retried).
-        suffix = f":s{signal.stage}" if signal.stage > 1 else ""
+        suffix = f":s{signal.stage}" if signal.stage != 1 else ""
         if policy == "one_per_side":
             return f"{mode}:{signal.market_id}:{signal.side}{suffix}"
         if policy == "allow":
@@ -162,8 +189,14 @@ class OrderManager:
 
     @staticmethod
     def _key_stage(order_key: str | None) -> int:
+        if _SELL_MARK in (order_key or ""):
+            return 0  # sells only exist for stage 0
         match = _STAGE_SUFFIX.search(order_key or "")
         return int(match.group(1)) if match else 1
+
+    @staticmethod
+    def _key_action(order_key: str | None) -> str:
+        return "SELL" if _SELL_MARK in (order_key or "") else "BUY"
 
     def _log_trigger_once(self, signal: Signal, decision: str, reason: str, mode: str) -> None:
         if self._trigger_market != signal.market_id:
@@ -309,7 +342,8 @@ class OrderManager:
             side=signal.side,
             token_id=signal.token_id,
             notional=config.trade_amount_usdc,
-            max_price=config.max_execution_price,
+            # stage 0 never pays more than its own ask limit
+            max_price=config.stage0_max_ask if signal.stage == 0 else config.max_execution_price,
             observed_at_ms=signal.observed_at_ms,
             order_min_size=market.min_order_size,
             asset_version=market.asset_version,
@@ -318,7 +352,8 @@ class OrderManager:
         self._logs.log(
             "INFO",
             "order_submit",
-            f"marketable BUY {signal.side} {config.trade_amount_usdc:.2f} USDC at ask {signal.best_ask:.3f}",
+            f"{'S0 ' if signal.stage == 0 else ''}marketable BUY {signal.side} "
+            f"{config.trade_amount_usdc:.2f} USDC at ask {signal.best_ask:.3f}",
             payload={
                 "market_id": market.market_id,
                 "side": signal.side,
@@ -348,6 +383,12 @@ class OrderManager:
             )
 
         result = await asyncio.to_thread(self._finalize_order, order_id, report, signal, mode)
+        if signal.stage == 0:
+            self._stage0_holdings.pop((mode, market.market_id), None)  # reload what is held
+            if result.status not in {"REJECTED", "CANCELED"}:
+                if len(self._stage0_bought) > 500:
+                    self._stage0_bought.clear()
+                self._stage0_bought.add((mode, market.market_id))
         if result.status not in {"REJECTED", "CANCELED"}:
             # accepted/filled: the cooldown and attempt cap only apply to failed entries
             self._attempts.pop(key, None)
@@ -523,15 +564,22 @@ class OrderManager:
             return
         pending = await asyncio.to_thread(self._partial_order_candidates, market.market_id, mode)
 
-        for order_id, side, filled_size, avg_fill_price, requested_notional in pending:
+        for order_id, side, filled_size, avg_fill_price, requested_notional, order_key in pending:
             now_ms = clock.now_ms()
             last = self._retry_after.get(order_id, 0.0)
             if now_ms - last < 500:
                 continue
+            stage = self._key_stage(order_key)
+            max_price = config.max_execution_price
+            if stage == 0:
+                remaining_s = market.remaining_seconds()
+                if not (config.stage0_enabled and config.final_window_seconds < remaining_s <= config.stage0_start_seconds):
+                    continue  # stage 0 stops buying when its window is over
+                max_price = config.stage0_max_ask
             book = books.get(market.token_for(side))
             if book is None or book.best_ask is None or book.ask_size is None or book.ask_size <= 0:
                 continue
-            if book.best_ask > config.max_execution_price + 1e-9:
+            if book.best_ask > max_price + 1e-9:
                 continue
             spent = filled_size * avg_fill_price
             remaining = requested_notional - spent
@@ -545,7 +593,7 @@ class OrderManager:
                 side=side,
                 token_id=market.token_for(side),
                 notional=round(remaining, 8),
-                max_price=config.max_execution_price,
+                max_price=max_price,
                 observed_at_ms=now_ms,
                 order_min_size=market.min_order_size,
                 asset_version=market.asset_version,
@@ -558,6 +606,8 @@ class OrderManager:
             if not report.fills:
                 continue
             await asyncio.to_thread(self._apply_partial_retry, order_id, report, mode)
+            if stage == 0:
+                self._stage0_holdings.pop((mode, market.market_id), None)
             self._logs.log(
                 "INFO",
                 "fill",
@@ -567,7 +617,7 @@ class OrderManager:
             )
 
     @staticmethod
-    def _partial_order_candidates(market_id: str, mode: str) -> list[tuple[int, str, float, float, float]]:
+    def _partial_order_candidates(market_id: str, mode: str) -> list[tuple[int, str, float, float, float, str]]:
         with session_scope() as session:
             orders = session.execute(
                 select(Order).where(
@@ -577,8 +627,9 @@ class OrderManager:
                 )
             ).scalars().all()
             return [
-                (o.id, o.side, o.filled_size, o.avg_fill_price or 0.0, o.requested_notional)
+                (o.id, o.side, o.filled_size, o.avg_fill_price or 0.0, o.requested_notional, o.order_key)
                 for o in orders
+                if _SELL_MARK not in o.order_key  # a partly filled SELL must never be re-bought
             ]
 
     def _apply_partial_retry(self, order_id: int, report: ExecutionReport, mode: str) -> None:
@@ -663,6 +714,8 @@ class OrderManager:
             current_size = order.filled_size
             token_id = order.token_id
             current_price = order.avg_fill_price
+            is_sell = self._key_action(order.order_key) == "SELL"
+            order_market_id = order.market_id
 
         engine = self._executor_provider("live")
         payload = await getattr(engine, "fetch_order", lambda _id: None)(exchange_id)
@@ -737,7 +790,11 @@ class OrderManager:
                     8,
                 )
             order.status = next_status
-            self._portfolio.apply_report(session, "live", order, report)
+            if is_sell:
+                self._portfolio.apply_sell_report(session, "live", order, report)
+            else:
+                self._portfolio.apply_report(session, "live", order, report)
+        self._stage0_holdings.pop(("live", order_market_id), None)  # reload what is still held
         if delta > 0:
             self._logs.log(
                 "INFO",
@@ -751,6 +808,229 @@ class OrderManager:
         self._trigger_seen.clear()
         self._trigger_market = None
         self._retry_after.clear()
+        self._stage0_holdings.clear()  # re-read from the database on the next event
+        if len(self._sell_attempts) > 500:
+            self._sell_attempts.clear()
+            self._last_sell_ms.clear()
+
+    # ------------------------------------------------------------------
+    # Stage 0 take-profit: sell what stage 0 bought once the best bid reaches the sell price
+    # ------------------------------------------------------------------
+    @staticmethod
+    def stage0_holding_in_session(session, mode: str, market_id: str) -> Stage0Holding | None:
+        orders = session.execute(
+            select(Order).where(Order.mode == mode, Order.market_id == market_id)
+        ).scalars().all()
+        buys = [
+            o for o in orders
+            if o.order_key and _SELL_MARK not in o.order_key
+            and OrderManager._key_stage(o.order_key) == 0 and o.filled_size > 0
+        ]
+        if not buys:
+            return None
+        side, token_id = buys[0].side, buys[0].token_id
+        sells = [o for o in orders if _SELL_MARK in (o.order_key or "") and o.side == side]
+        held = sum(o.filled_size for o in buys if o.side == side) - sum(o.filled_size for o in sells)
+        position = session.execute(
+            select(Position).where(
+                Position.mode == mode, Position.market_id == market_id, Position.side == side
+            )
+        ).scalar_one_or_none()
+        if position is None or position.status != "open":
+            return None
+        held = min(held, position.size)
+        in_flight = any(o.status in ACTIVE_STATUSES for o in sells)
+        if held < SELL_DUST and not in_flight:
+            return None
+        return Stage0Holding(side=side, token_id=token_id, size=round(held, 10), sell_in_flight=in_flight)
+
+    def load_stage0_holding(self, mode: str, market_id: str) -> Stage0Holding | None:
+        with session_scope() as session:
+            return self.stage0_holding_in_session(session, mode, market_id)
+
+    def stage0_bought(self, mode: str, market_id: str) -> bool:
+        return (mode, market_id) in self._stage0_bought
+
+    def exit_check_needed(self, mode: str, market_id: str) -> bool:
+        """False once we know nothing is held for stage 0 in this market (keeps the hot path cheap)."""
+        key = (mode, market_id)
+        return key not in self._stage0_holdings or self._stage0_holdings[key] is not None
+
+    def has_stage0_holding(self, mode: str, market_id: str) -> bool:
+        holding = self._stage0_holdings.get((mode, market_id))
+        return holding is not None and not holding.sell_in_flight
+
+    async def handle_exits(
+        self, market: MarketInfo, books: dict[str, OrderBook], mode: str, config
+    ) -> list[OrderResult]:
+        """Sell the stage 0 shares of this market when the best bid has reached stage0_sell_price."""
+        if market.remaining_seconds() <= 0:
+            return []
+        reg_key = (mode, market.market_id)
+        async with self._lock:
+            if not self._submission_allowed(mode):
+                return []
+            if reg_key not in self._stage0_holdings:
+                self._stage0_holdings[reg_key] = await asyncio.to_thread(
+                    self.load_stage0_holding, mode, market.market_id
+                )
+            holding = self._stage0_holdings[reg_key]
+            if holding is None or holding.sell_in_flight:
+                return []
+            sell_size = _floor_shares(holding.size)
+            if sell_size < SELL_DUST:
+                self._stage0_holdings[reg_key] = None
+                return []
+            book = books.get(holding.token_id)
+            bid = book.best_bid if book is not None else None
+            if bid is None or bid + 1e-9 < config.stage0_sell_price:
+                return []
+            attempts = self._sell_attempts.get(reg_key, 0)
+            if attempts >= MAX_SELL_ATTEMPTS:
+                return [OrderResult(None, holding.side, "BLOCKED", "max_sell_attempts")]
+            now_ms = clock.now_ms()
+            if now_ms - self._last_sell_ms.get(reg_key, 0) < self._retry_gap_ms:
+                return []
+            self._sell_attempts[reg_key] = attempts + 1
+            self._last_sell_ms[reg_key] = now_ms
+
+            key = f"{mode}:{market.market_id}:{holding.side}:s0{_SELL_MARK}{uuid.uuid4().hex[:8]}"
+            order_id = await asyncio.to_thread(
+                self._reserve_sell_order, mode, market, holding, key, sell_size, bid
+            )
+            self._logs.log(
+                "INFO",
+                "order_submit",
+                f"S0 marketable SELL {holding.side} {sell_size:.2f} shares at bid {bid:.3f}",
+                payload={
+                    "market_id": market.market_id,
+                    "side": holding.side,
+                    "size": sell_size,
+                    "best_bid": bid,
+                    "min_price": config.stage0_sell_price,
+                    "mode": mode,
+                    "order_key": key,
+                    "attempt": attempts + 1,
+                },
+                mode=mode,
+            )
+            request = SellRequest(
+                order_key=key,
+                client_order_id=f"ord-{uuid.uuid4().hex[:20]}",
+                market_id=market.market_id,
+                side=holding.side,
+                token_id=holding.token_id,
+                size=sell_size,
+                min_price=config.stage0_sell_price,
+                observed_at_ms=now_ms,
+                order_min_size=market.min_order_size,
+                asset_version=market.asset_version,
+            )
+            book_before = {
+                "bids": [[p, sz] for p, sz in book.bid_levels()[:3]] if book is not None else None,
+                "age_ms": round(book.age_ms()) if book is not None and book.updated_at_ms else None,
+            }
+            try:
+                report = await self._executor_provider(mode).place_sell(request)
+            except Exception as exc:
+                logger.error("executor raised on sell (%s)", type(exc).__name__)
+                report = ExecutionReport(
+                    status="SUBMITTED" if mode == "live" else "REJECTED",
+                    error=(
+                        "sell submission outcome is unknown; reconcile before retrying"
+                        if mode == "live"
+                        else f"{type(exc).__name__}: {exc}"
+                    ),
+                )
+            result = await asyncio.to_thread(
+                self._finalize_sell_order, order_id, report, holding.side, mode
+            )
+            self._stage0_holdings[reg_key] = await asyncio.to_thread(
+                self.load_stage0_holding, mode, market.market_id
+            )
+            if report.fills:
+                self._sell_attempts.pop(reg_key, None)
+                self._logs.log(
+                    "INFO",
+                    "fill",
+                    f"S0 sold {report.filled_size:.4f} shares @ {report.avg_price or 0:.4f}",
+                    payload={
+                        "order_id": result.order_id,
+                        "filled_size": result.filled_size,
+                        "avg_price": result.avg_price,
+                        "latency_ms": result.latency_ms,
+                        "exchange_order_id": result.exchange_order_id,
+                    },
+                    mode=mode,
+                )
+            if report.error or report.status == "REJECTED":
+                self._logs.log(
+                    "WARNING" if report.fills or report.status == "CANCELED" else "ERROR",
+                    "error",
+                    f"S0 sell {report.status}: {report.error or 'rejected'}",
+                    payload={
+                        "order_id": result.order_id,
+                        "side": holding.side,
+                        "best_bid": bid,
+                        "exchange_response": report.raw,
+                        "book_at_submit": book_before,
+                        "attempt": attempts + 1,
+                    },
+                    mode=mode,
+                )
+            return [result]
+
+    @staticmethod
+    def _reserve_sell_order(
+        mode: str, market: MarketInfo, holding: Stage0Holding, key: str, size: float, bid: float
+    ) -> int:
+        with session_scope() as session:
+            order = Order(
+                order_key=key,
+                client_order_id=f"ord-{uuid.uuid4().hex[:20]}",
+                mode=mode,
+                market_id=market.market_id,
+                side=holding.side,
+                token_id=holding.token_id,
+                status="PENDING",
+                requested_notional=round(size * bid, 6),
+                requested_price=bid,
+                reason="stage0_take_profit",
+            )
+            session.add(order)
+            session.flush()
+            return order.id
+
+    def _finalize_sell_order(
+        self, order_id: int, report: ExecutionReport, side: str, mode: str
+    ) -> OrderResult:
+        with session_scope() as session:
+            order = session.get(Order, order_id)
+            if order is None:
+                return OrderResult(None, side, "REJECTED", "missing_order")
+            order.status = report.status
+            order.filled_size = round(order.filled_size + report.filled_size, 10)
+            if report.filled_size > 0 and report.avg_price:
+                order.avg_fill_price = report.avg_price
+            order.fee = round(order.fee + report.fee, 10)
+            order.submitted_price = report.submitted_price or order.submitted_price
+            order.exchange_order_id = report.exchange_order_id or order.exchange_order_id
+            order.latency_ms = report.latency_ms
+            order.error = report.error
+            self._portfolio.apply_sell_report(session, mode, order, report)
+            result = OrderResult(
+                order.id,
+                side,
+                order.status,
+                "stage0_sell",
+                order.filled_size,
+                order.avg_fill_price,
+                order.latency_ms,
+                order.exchange_order_id,
+                order.error,
+            )
+            session.flush()
+        return result
 
 
 __all__ = ["OrderManager", "OrderResult", "datetime", "timezone", "Position"]

@@ -54,7 +54,7 @@ export function OrdersTable({
                   <SideBadge side={order.side} size="sm" />
                 </td>
                 <td>
-                  <StageChip stage={order.stage} />
+                  <StageChip stage={order.stage} action={order.action} />
                 </td>
                 <td>
                   <StatusChip status={order.status} />

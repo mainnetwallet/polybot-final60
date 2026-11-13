@@ -55,6 +55,11 @@ class SettingsPatch(BaseModel):
     min_price_gap_usd: float | None = Field(default=None, ge=0, le=1_000_000)
     stage2_min_price_gap_usd: float | None = Field(default=None, ge=0, le=1_000_000)
     stage3_min_price_gap_usd: float | None = Field(default=None, ge=0, le=1_000_000)
+    stage0_enabled: bool | None = None
+    stage0_start_seconds: int | None = Field(default=None, ge=1, le=300)
+    stage0_max_ask: float | None = Field(default=None, ge=0.01, le=0.999)
+    stage0_min_price_gap_usd: float | None = Field(default=None, ge=0, le=1_000_000)
+    stage0_sell_price: float | None = Field(default=None, ge=0.02, le=0.999)
 
     def changes(self) -> dict:
         return {k: v for k, v in self.model_dump().items() if v is not None}

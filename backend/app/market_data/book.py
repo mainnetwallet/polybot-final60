@@ -48,6 +48,13 @@ class OrderBook:
             prices = [p for p in prices if p <= up_to + 1e-9]
         return [(p, self.asks[p]) for p in prices]
 
+    def bid_levels(self, down_to: float | None = None) -> list[tuple[float, float]]:
+        """Bid levels, best (highest) first, optionally only those at or above ``down_to``."""
+        prices = sorted((p for p, size in self.bids.items() if size > 0), reverse=True)
+        if down_to is not None:
+            prices = [p for p in prices if p >= down_to - 1e-9]
+        return [(p, self.bids[p]) for p in prices]
+
     def snapshot(self) -> dict:
         return {
             "token_id": self.token_id,

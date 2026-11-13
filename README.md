@@ -7,6 +7,7 @@ The entry rules are intentionally simple. The window and trigger values below ar
 - Before the configured final window, no order is created.
 - During the configured final window (default last 80s), monitor UP and DOWN. If a best ask reaches `TRIGGER_THRESHOLD` (default `0.80`), submit a **BUY at the current market price**. If the ask is not there when the window opens, the bot keeps watching and buys the moment it gets there, any time before the market ends (stage 1).
 - Two optional add-on entries per market (stages 2 and 3): once `STAGE2_SECONDS` (default `50`) or `STAGE3_SECONDS` (default `30`) or less remain and a best ask is at least `STAGE2_THRESHOLD` / `STAGE3_THRESHOLD` (default `0.90`), the bot places one more buy for that stage. Each stage buys at most once per market, so a market can have up to 3 buys.
+- **Stage 0 (early buy + take-profit sell, on by default):** from `STAGE0_START_SECONDS` (default `200`) left until the final window starts, the bot buys a side whose best ask is `STAGE0_MAX_ASK` (default `0.95`) or lower **and** whose BTC price gap beyond the price to beat is at least `STAGE0_MIN_PRICE_GAP_USD` (default `$100`, in the bought direction). It buys at most once per market and never pays above `STAGE0_MAX_ASK`. The shares it bought are then **sold** (marketable, never below `STAGE0_SELL_PRICE`) as soon as the best bid reaches `STAGE0_SELL_PRICE` (default `0.98`), any time before the market ends. If the bid never gets there the position is held and settles like any other. Stage 0 is independent of stages 1-3 and its holding does not count against `MAX_OPEN_POSITIONS` for them.
 - If an entry is blocked (e.g. stale book) or fails (e.g. FOK not filled), the same stage is tried again on the next book event, and every 0.5s while the book is quiet, for as long as its condition still holds.
 - `0.80` / `0.90` are **trigger thresholds, never limit prices**.
 - Live orders use FOK and the configured maximum execution price as the worst acceptable price.
@@ -377,6 +378,11 @@ Strategy and risk defaults:
 | --- | --- | --- |
 | `TRIGGER_THRESHOLD` | `0.80` | Ask level that triggers a BUY |
 | `FINAL_WINDOW_SECONDS` | `80` | Trading window at the end of the market |
+| `STAGE0_ENABLED` | `true` | Switches stage 0 (early buy + take-profit sell) on or off |
+| `STAGE0_START_SECONDS` | `200` | Stage 0 may buy from this many seconds before expiry until the final window starts |
+| `STAGE0_MAX_ASK` | `0.95` | Stage 0 buys only while the best ask is at or below this; also its max price |
+| `STAGE0_MIN_PRICE_GAP_USD` | `100` | Stage 0 price-to-beat filter (BTC beyond the price to beat in the bought direction); `0` disables it; missing/stale BTC data blocks the buy |
+| `STAGE0_SELL_PRICE` | `0.98` | Stage 0 sells its shares once the best bid reaches this price (must be above `STAGE0_MAX_ASK`) |
 | `STAGE2_SECONDS` / `STAGE2_THRESHOLD` | `50` / `0.90` | Stage 2 add-on: time left and ask level |
 | `STAGE3_SECONDS` / `STAGE3_THRESHOLD` | `30` / `0.90` | Stage 3 add-on: time left and ask level |
 | `MAX_EXECUTION_PRICE` | `0.99` | Hard cap on the price paid (clamped to `1 - tick size` at order time) |

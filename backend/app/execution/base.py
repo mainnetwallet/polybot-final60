@@ -27,6 +27,22 @@ class OrderRequest:
 
 
 @dataclass
+class SellRequest:
+    """Marketable SELL of `size` shares, never below `min_price` (Stage 0 take-profit)."""
+
+    order_key: str
+    client_order_id: str
+    market_id: str
+    side: str
+    token_id: str
+    size: float
+    min_price: float
+    observed_at_ms: int
+    order_min_size: float = 0.0
+    asset_version: int = 1
+
+
+@dataclass
 class ExecutionReport:
     status: str  # SUBMITTED | PARTIALLY_FILLED | FILLED | REJECTED | CANCELED
     filled_size: float = 0.0
@@ -46,6 +62,10 @@ class ExecutionEngine(ABC):
     @abstractmethod
     async def place_buy(self, request: OrderRequest) -> ExecutionReport:
         """Submit a marketable BUY for `notional` USDC, never above max_price."""
+
+    async def place_sell(self, request: SellRequest) -> ExecutionReport:
+        """Submit a marketable SELL for `size` shares, never below min_price."""
+        return ExecutionReport(status="REJECTED", error="this execution engine cannot sell")
 
     @abstractmethod
     async def get_balance(self) -> float | None:

@@ -5,6 +5,11 @@ Final N seconds (default 80): monitor UP and DOWN best asks.
 
 Entries are staged. Each stage may place ONE buy per market:
 
+* stage 0 (optional, independent): while stage0_start_seconds (default 200) or fewer remain and the
+  final window has NOT started yet, best_ask <= stage0_max_ask (default 0.95). The risk manager also
+  demands the BTC price gap (default $100) and the order manager sells the shares again once the
+  best bid reaches stage0_sell_price (default 0.98).
+
 * stage 1: inside the final window, best_ask >= trigger_threshold (default 0.80).
   If the ask is not there yet the strategy keeps watching and fires the moment it
   gets there, any time before the market ends.
@@ -45,6 +50,14 @@ def stage_plan(config: RuntimeSettings) -> list[tuple[int, float, float]]:
     ]
 
 
+def stage0_active(config: RuntimeSettings, remaining: float) -> bool:
+    """Stage 0 buys between `stage0_start_seconds` left and the start of the final window."""
+    return bool(
+        config.stage0_enabled
+        and config.final_window_seconds < remaining <= config.stage0_start_seconds
+    )
+
+
 class FinalWindowStrategy:
     def evaluate(
         self,
@@ -72,12 +85,36 @@ class FinalWindowStrategy:
             return StrategyEvaluation(
                 False, remaining, up_ask, down_ask, up_armed, down_armed, reason="market_expired"
             )
-        if remaining > config.final_window_seconds:
+        in_stage0 = stage0_active(config, remaining)
+        if remaining > config.final_window_seconds and not in_stage0:
             return StrategyEvaluation(
                 False, remaining, up_ask, down_ask, up_armed, down_armed, reason="outside_final_window"
             )
 
         signals: list[Signal] = []
+        if in_stage0:
+            for side, market_side_token, book, ask in (
+                ("UP", market.up_token_id, up, up_ask),
+                ("DOWN", market.down_token_id, down, down_ask),
+            ):
+                if book is None or ask is None:
+                    continue
+                if ask > config.stage0_max_ask + 1e-9:
+                    continue
+                signals.append(
+                    Signal(
+                        market_id=market.market_id,
+                        side=side,
+                        token_id=market_side_token,
+                        best_ask=round(ask, 6),
+                        ask_size=book.ask_size,
+                        remaining_seconds=round(remaining, 3),
+                        threshold=config.stage0_max_ask,
+                        observed_at_ms=now_ms,
+                        book_age_ms=book.age_ms(now_ms),
+                        stage=0,
+                    )
+                )
         for stage, max_remaining, threshold in stage_plan(config):
             if remaining > max_remaining:
                 continue
@@ -110,4 +147,4 @@ class FinalWindowStrategy:
         )
 
 
-__all__ = ["FinalWindowStrategy", "datetime_to_epoch_ms", "stage_plan"]
+__all__ = ["FinalWindowStrategy", "datetime_to_epoch_ms", "stage0_active", "stage_plan"]

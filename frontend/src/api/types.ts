@@ -42,6 +42,11 @@ export interface StrategyState {
   stage2_threshold: number;
   stage3_seconds: number;
   stage3_threshold: number;
+  stage0_enabled: boolean;
+  stage0_start_seconds: number;
+  stage0_max_ask: number;
+  stage0_min_price_gap_usd: number;
+  stage0_sell_price: number;
   conflict_policy: string;
   duplicate_policy: string;
 }
@@ -80,6 +85,7 @@ export interface OrderRow {
   market_id: string;
   side: Side;
   stage?: number;
+  action?: "BUY" | "SELL";
   status: string;
   requested_notional: number;
   requested_price: number;
@@ -221,6 +227,11 @@ export interface SettingsState {
   min_price_gap_usd: number;
   stage2_min_price_gap_usd: number;
   stage3_min_price_gap_usd: number;
+  stage0_enabled: boolean;
+  stage0_start_seconds: number;
+  stage0_max_ask: number;
+  stage0_min_price_gap_usd: number;
+  stage0_sell_price: number;
   paper_fill_ratio: number;
   paper_fee_exponent: number;
   paper_starting_balance: number;
