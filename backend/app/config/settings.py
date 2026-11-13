@@ -77,8 +77,13 @@ class Settings(BaseSettings):
     # "old" without being wrong. 5s keeps stage 2/3 (armed by the clock) from being blocked.
     stale_data_max_age_ms: int = 5000
     # Retry guard for failed/cancelled entries (per stage, per market)
-    entry_max_attempts: int = 5
-    entry_retry_gap_ms: int = 1000
+    # A FOK entry that did not fill leaves nothing on the book, so it is retried almost at once.
+    # 15 attempts x 250 ms keeps a retry window of a few seconds.
+    entry_max_attempts: int = 15
+    entry_retry_gap_ms: int = 250
+    # Gap between two sell attempts of the same exit (take-profit / stop-loss) when the previous
+    # FOK sell did not fill. Kept short: an exit must not wait a full second for the next try.
+    exit_retry_gap_ms: int = 150
     max_open_positions: int = 1
     # Price-to-beat filter: a buy needs the current BTC price at least this many USD beyond the
     # price to beat in the bought direction (UP: current >= beat + gap, DOWN: current <= beat - gap).

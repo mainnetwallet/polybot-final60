@@ -254,6 +254,9 @@ class LiveExecutionEngine(ExecutionEngine):
                     client.get_neg_risk(token_id)
                 except Exception as exc:  # best effort only
                     logger.debug("live prewarm failed for %s (%s)", token_id[:10], type(exc).__name__)
+                # A SELL needs the conditional-token allowance synced once per token. Doing it here
+                # keeps that REST round trip out of the first take-profit / stop-loss sell.
+                self._ensure_conditional_allowance(client, token_id)
 
         try:
             await asyncio.to_thread(_warm, self._client)

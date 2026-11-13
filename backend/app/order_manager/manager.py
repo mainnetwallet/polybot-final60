@@ -42,7 +42,8 @@ _STAGE_SUFFIX = re.compile(r":s(\d+)$")
 _SELL_STAGE = re.compile(r":s(\d+):sell:")
 # Stage 0 take-profit SELL orders carry this marker in their order key.
 _SELL_MARK = ":sell:"
-MAX_SELL_ATTEMPTS = 30
+# With the short exit retry gap this still covers the whole final window.
+MAX_SELL_ATTEMPTS = 150
 SELL_DUST = 0.01
 # Entry stages whose shares are watched for an exit: stages 0-2 have a take-profit sell, and every
 # stage (0-3) has a stop-loss sell (stage 3 has no take-profit, it is held to settlement otherwise).
@@ -119,6 +120,7 @@ class OrderManager:
         self._retry_after: dict[int, float] = {}
         self._max_attempts = settings.entry_max_attempts
         self._retry_gap_ms = settings.entry_retry_gap_ms
+        self._exit_retry_gap_ms = settings.exit_retry_gap_ms
         self._attempts: dict[str, int] = {}
         self._last_attempt_ms: dict[str, int] = {}
         # (mode, market) -> seconds remaining when stage 1 last got an accepted order (stage chain)
@@ -1008,7 +1010,7 @@ class OrderManager:
             if attempts >= MAX_SELL_ATTEMPTS:
                 return [OrderResult(None, holding.side, "BLOCKED", "max_sell_attempts")]
             now_ms = clock.now_ms()
-            if now_ms - self._last_sell_ms.get(sell_key, 0) < self._retry_gap_ms:
+            if now_ms - self._last_sell_ms.get(sell_key, 0) < self._exit_retry_gap_ms:
                 return []
             self._sell_attempts[sell_key] = attempts + 1
             self._last_sell_ms[sell_key] = now_ms

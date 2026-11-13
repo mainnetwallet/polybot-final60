@@ -423,7 +423,7 @@ async def test_failed_entry_has_cooldown_and_attempt_cap():
     manager._executor_provider = lambda _mode: AlwaysCancel()
     books = books_for(market, up_ask=0.85, down_ask=0.15)
 
-    # default 1s gap: an immediate second event is held back, not sent to the exchange
+    # default 250ms gap: an immediate second event is held back, not sent to the exchange
     await _submit(stack, market, books)
     _, results = await _submit(stack, market, books)
     assert calls["n"] == 1
@@ -431,7 +431,7 @@ async def test_failed_entry_has_cooldown_and_attempt_cap():
 
     # without the gap, attempts stop at the cap
     manager._retry_gap_ms = 0
-    for _ in range(10):
+    for _ in range(manager._max_attempts + 5):
         await _submit(stack, market, books)
     assert calls["n"] == manager._max_attempts
     assert len(_orders()) == 1
