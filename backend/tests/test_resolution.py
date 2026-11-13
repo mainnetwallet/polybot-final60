@@ -220,10 +220,9 @@ async def test_clob_failure_falls_back_to_gamma_and_stays_pending():
 # Bot-level: the exact symptom (finished 5m trade stuck "Unrealized", balance
 # never credited), including recovery after a restart.
 # ---------------------------------------------------------------------------
-from datetime import timedelta  # noqa: E402
 
 from app.config.runtime import SettingsService  # noqa: E402
-from app.database.models import Market, utcnow  # noqa: E402
+from app.database.models import Market  # noqa: E402
 from app.database.session import session_scope  # noqa: E402
 from app.execution.base import ExecutionReport, FillPart  # noqa: E402
 from app.monitoring.logs import NullPublisher  # noqa: E402

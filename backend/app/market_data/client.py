@@ -46,10 +46,6 @@ class ClobMarketDataClient:
         self.on_tick_size_change: Callable[[dict], None] | None = None
 
     @property
-    def connected(self) -> bool:
-        return self._connected
-
-    @property
     def books(self) -> dict[str, OrderBook]:
         return self._books
 
@@ -223,7 +219,6 @@ class ClobMarketDataClient:
         book.bids = self._levels(message.get("bids"))
         book.asks = self._levels(message.get("asks"))
         book.updated_at_ms = now_ms()
-        book.sequence += 1
         await self._on_book(book.market_id, book.side, book)
 
     async def _apply_price_change(self, message: dict) -> None:
@@ -265,7 +260,6 @@ class ClobMarketDataClient:
                 for stale in [p for p in book.bids if p > best_bid + 1e-9]:
                     book.bids.pop(stale, None)
             book.updated_at_ms = now_ms()
-            book.sequence += 1
             touched[asset_id] = book
 
         for book in touched.values():
@@ -285,7 +279,6 @@ class ClobMarketDataClient:
         if best_bid is not None:
             book.bids = {p: s for p, s in book.bids.items() if p <= best_bid + 1e-9}
         book.updated_at_ms = now_ms()
-        book.sequence += 1
         await self._on_book(book.market_id, book.side, book)
 
     @staticmethod

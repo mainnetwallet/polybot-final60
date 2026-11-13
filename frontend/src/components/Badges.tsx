@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import type { Mode, Side } from "../api/types";
 import { cx } from "../lib/format";
 import { IconArrowDown, IconArrowUp, IconLock, IconZap } from "./Icons";
@@ -154,21 +153,4 @@ export function LevelChip({ level }: { level: string }) {
         ? "border-amber/30 bg-amber/10 text-amber"
         : "border-sky/25 bg-sky/10 text-sky";
   return <span className={cx("chip font-mono", tone)}>{level}</span>;
-}
-
-export function KeyValue({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: ReactNode;
-  mono?: boolean;
-}) {
-  return (
-    <div>
-      <div className="label">{label}</div>
-      <div className={cx("mt-1 text-[13px] text-slate-200", mono && "mono text-[12px]")}>{value}</div>
-    </div>
-  );
 }

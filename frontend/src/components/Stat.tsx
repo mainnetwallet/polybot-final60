@@ -34,9 +34,3 @@ export function Stat({ label, value, hint, tone = "default", icon, className }: 
     </div>
   );
 }
-
-export function StatGrid({ children }: { children: ReactNode }) {
-  return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-2">{children}</div>
-  );
-}

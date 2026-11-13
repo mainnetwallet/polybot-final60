@@ -24,7 +24,7 @@ from app.market_data.client import ClobMarketDataClient
 from app.market_discovery.service import MarketDiscovery, MarketMonitor
 from app.market_discovery.types import MarketInfo, ResolutionInfo
 from app.monitoring.logs import LogService, Publisher
-from app.order_manager.manager import SELL_DUST, OrderManager, OrderResult
+from app.order_manager.manager import SELL_DUST, OrderManager
 from app.paper_trading.engine import PaperExecutionEngine
 from app.portfolio.analytics import AnalyticsService
 from app.portfolio.service import Portfolio
@@ -122,7 +122,6 @@ class TradingBot:
         self._last_resolution_poll = 0.0
         self._last_live_reconcile = 0.0
         self._risk_halt_reason: str | None = None
-        self._risk_halt_logged = False
         self._tick_pending = False
         # market_id -> {"attempts": int, "next_at": monotonic seconds}
         self._redeem_queue: dict[str, dict] = {}
@@ -135,10 +134,6 @@ class TradingBot:
     @property
     def mode(self) -> str:
         return self._mode
-
-    @property
-    def current_market(self) -> MarketInfo | None:
-        return self._market
 
     # ------------------------------------------------------------------
     def _executor_for(self, mode: str) -> ExecutionEngine:
@@ -652,7 +647,6 @@ class TradingBot:
                     state.status = "RUNNING"
                     state.started_at = self._started_at
             self._risk_halt_reason = None
-            self._risk_halt_logged = False
             self.orders.reset_trigger_cache()
             if self._mode == "live":
                 self.live_engine.allow_new_orders()
@@ -676,7 +670,6 @@ class TradingBot:
             with session_scope() as session:
                 self.portfolio.reset_daily(session, self._mode)
             self._risk_halt_reason = None
-            self._risk_halt_logged = False
             self.orders.reset_trigger_cache()
             self.logs.log(
                 "WARNING",
@@ -725,7 +718,6 @@ class TradingBot:
             self._redeem_queue.clear()
             self._redeem_notice_logged.clear()
             self._risk_halt_reason = None
-            self._risk_halt_logged = False
             self.orders.reset_trigger_cache()
             self.logs.log(
                 "WARNING",

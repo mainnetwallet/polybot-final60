@@ -27,11 +27,6 @@ export function fmtCents(value: number | null | undefined, digits = 1): string {
   return `${(value * 100).toFixed(digits)}¢`;
 }
 
-export function fmtPct(value: number | null | undefined, digits = 1): string {
-  if (!isNum(value)) return "—";
-  return `${(value * 100).toFixed(digits)}%`;
-}
-
 export function fmtNum(value: number | null | undefined, digits = 2): string {
   if (!isNum(value)) return "—";
   return value.toFixed(digits);
@@ -81,20 +76,4 @@ export function clamp(value: number, min: number, max: number): number {
 export function pnlClass(value: number | null | undefined): string {
   if (!isNum(value) || value === 0) return "text-slate-300";
   return value > 0 ? "text-up" : "text-down";
-}
-
-export function sideClass(side: "UP" | "DOWN"): string {
-  return side === "UP" ? "text-up" : "text-down";
-}
-
-export function levelClass(level: string): string {
-  switch (level) {
-    case "ERROR":
-    case "CRITICAL":
-      return "text-down";
-    case "WARNING":
-      return "text-amber";
-    default:
-      return "text-sky";
-  }
 }

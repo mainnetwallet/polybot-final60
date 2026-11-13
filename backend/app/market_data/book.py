@@ -12,7 +12,6 @@ class OrderBook:
     bids: dict[float, float] = field(default_factory=dict)
     asks: dict[float, float] = field(default_factory=dict)
     updated_at_ms: int = 0
-    sequence: int = 0
     source: str = "clob_ws"
 
     @property
@@ -38,9 +37,6 @@ class OrderBook:
     def age_ms(self, now_ms: int | None = None) -> float:
         now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
         return max(0.0, float(now_ms - self.updated_at_ms)) if self.updated_at_ms else float("inf")
-
-    def is_fresh(self, max_age_ms: float, now_ms: int | None = None) -> bool:
-        return self.updated_at_ms > 0 and self.age_ms(now_ms) <= max_age_ms
 
     def level_prices(self, up_to: float | None = None) -> list[tuple[float, float]]:
         prices = sorted(p for p, size in self.asks.items() if size > 0)

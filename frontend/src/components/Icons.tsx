@@ -74,15 +74,6 @@ export function IconLogs({ size, className }: IconProps) {
   );
 }
 
-export function IconPower({ size, className }: IconProps) {
-  return (
-    <svg {...svgProps(size)} className={className}>
-      <path d="M12 3v8" />
-      <path d="M6.6 6.2a8 8 0 1 0 10.8 0" />
-    </svg>
-  );
-}
-
 export function IconPause({ size, className }: IconProps) {
   return (
     <svg {...svgProps(size)} className={className}>
@@ -209,14 +200,6 @@ export function IconActivity({ size, className }: IconProps) {
   return (
     <svg {...svgProps(size)} className={className}>
       <path d="M2.8 12h4l2.4-6.2L14 18l2.4-6h4.8" />
-    </svg>
-  );
-}
-
-export function IconChevron({ size, className }: IconProps) {
-  return (
-    <svg {...svgProps(size)} className={className}>
-      <path d="m9 5.5 6.5 6.5L9 18.5" />
     </svg>
   );
 }

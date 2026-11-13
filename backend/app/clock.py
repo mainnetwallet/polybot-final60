@@ -29,10 +29,6 @@ _last_error: str | None = None
 _rtt_ms: float | None = None
 
 
-def offset_ms() -> float:
-    return _offset_ms
-
-
 def now_ms() -> int:
     return int(time.time() * 1000 + _offset_ms)
 

@@ -6,7 +6,6 @@ import time
 import pytest
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 
 from app.database.models import AppState, Order
 from app.database.session import session_scope
@@ -158,7 +157,6 @@ async def test_stop_during_live_start_cannot_be_overridden_by_late_validation():
     bot._started_at = None
     bot._market = None
     bot._risk_halt_reason = None
-    bot._risk_halt_logged = False
     bot.live_engine = FakeLiveEngine()
     bot.orders = FakeOrders()
     bot.logs = FakeLogs()
@@ -441,7 +439,6 @@ def test_min_price_gap_setting_defaults_to_20_and_is_patchable():
 
 
 def test_gap_inputs_are_read_on_the_event_loop_not_in_the_db_thread():
-    import asyncio
     import threading
 
     from app.strategy.types import Signal, StrategyEvaluation

@@ -30,7 +30,6 @@ class LogService:
         self._queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=5000)
         self._task: asyncio.Task | None = None
         self._running = False
-        self._dropped = 0
         self._max_rows = max_rows
 
     def start(self) -> None:
@@ -74,7 +73,7 @@ class LogService:
         try:
             self._queue.put_nowait(record)
         except asyncio.QueueFull:
-            self._dropped += 1
+            pass  # queue full: drop the record rather than block the bot
 
     async def _worker(self) -> None:
         while True:

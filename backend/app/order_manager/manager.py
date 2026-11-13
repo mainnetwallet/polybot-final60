@@ -4,7 +4,6 @@ import asyncio
 import logging
 import math
 import re
-import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -16,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from app import clock
 from app.config.runtime import SettingsService
 from app.config.settings import Settings
-from app.database.models import Order, Position, TriggerEvent, utcnow
+from app.database.models import Order, Position, TriggerEvent
 from app.database.session import session_scope
 from app.execution.base import ExecutionEngine, ExecutionReport, FillPart, OrderRequest, SellRequest
 from app.market_data.book import OrderBook
@@ -37,7 +36,6 @@ def _book_top_asks(book: OrderBook | None, n: int = 3) -> dict | None:
         return None
     levels = [[price, size] for price, size in book.level_prices()[:n]]
     return {"asks": levels, "age_ms": round(book.age_ms()) if book.updated_at_ms else None}
-TERMINAL_EMPTY = ("REJECTED", "CANCELED", "EXPIRED")
 ExecutorProvider = Callable[[str], ExecutionEngine]
 SubmissionAllowed = Callable[[str], bool]
 _STAGE_SUFFIX = re.compile(r":s(\d+)$")

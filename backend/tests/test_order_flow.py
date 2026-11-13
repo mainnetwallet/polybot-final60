@@ -13,7 +13,6 @@ from app.execution.base import ExecutionReport, FillPart
 from .helpers import (
     books_for,
     build_stack,
-    make_book,
     make_config,
     make_ctx,
     make_market,
