@@ -155,6 +155,15 @@ const FIELDS: FieldSpec[] = [
     min: "0",
   },
   {
+    key: "min_price_gap_usd",
+    label: "Min price gap",
+    hint: "Buy only if BTC is at least this far beyond the price to beat in the bought direction (UP above, DOWN below). 0 = off. Missing BTC data blocks buys.",
+    kind: "number",
+    step: "1",
+    min: "0",
+    suffix: "USD",
+  },
+  {
     key: "stale_data_max_age_ms",
     label: "Stale data cap",
     hint: "Quotes older than this are rejected before order construction.",

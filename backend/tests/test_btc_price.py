@@ -209,3 +209,38 @@ def test_price_to_beat_falls_back_to_nearest_tick_when_the_start_tick_was_missed
     feed.handle_message(_frame(start_ms - 300, 71_000.0))
     feed.handle_message(_frame(start_ms + 2_000, 71_010.0))  # stream moved on without an at/after-start tick
     assert feed.snapshot(market)["price_to_beat"] == 71_000.0
+
+
+def test_gap_inputs_return_price_and_beat_when_fresh():
+    start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
+    start_ms = int(start.replace(tzinfo=timezone.utc).timestamp() * 1000)
+    now_ms = int(time.time() * 1000)
+    feed = BtcPriceFeed(Settings(btc_price_enabled=True))
+    market = _market(start)
+    feed.handle_message(_frame(start_ms + 100, 71_000.0))
+    feed.handle_message(_frame(now_ms, 71_035.0))
+    price, beat, issue = feed.gap_inputs(market)
+    assert (price, beat, issue) == (71_035.0, 71_000.0, "")
+
+
+def test_gap_inputs_explain_why_data_is_unusable():
+    start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
+    market = _market(start)
+
+    disabled = BtcPriceFeed(Settings(btc_price_enabled=False))
+    assert disabled.gap_inputs(market)[:2] == (None, None)
+    assert "disabled" in disabled.gap_inputs(market)[2]
+
+    empty = BtcPriceFeed(Settings(btc_price_enabled=True))
+    assert "no BTC price tick" in empty.gap_inputs(market)[2]
+
+    stale = BtcPriceFeed(Settings(btc_price_enabled=True))
+    stale.handle_message(_frame(int(time.time() * 1000) - 60_000, 71_000.0))
+    assert stale.gap_inputs(market)[:2] == (None, None)
+    assert "stale" in stale.gap_inputs(market)[2]
+
+    no_beat = BtcPriceFeed(Settings(btc_price_enabled=True))
+    no_beat.handle_message(_frame(int(time.time() * 1000), 71_000.0))
+    started_earlier = _market(start - timedelta(seconds=120))  # window-start tick was never seen
+    price, beat, issue = no_beat.gap_inputs(started_earlier)
+    assert price == 71_000.0 and beat is None and "price to beat" in issue

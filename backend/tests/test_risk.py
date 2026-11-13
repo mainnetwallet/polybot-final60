@@ -91,3 +91,68 @@ def test_stage1_and_opposite_side_still_respect_position_cap():
     ctx = make_ctx(open_positions=1, exposed_sides=frozenset({"UP"}))
     assert RiskManager().check(staged(1), ctx, config).reason == "max_open_positions"
     assert RiskManager().check(staged(2, side="DOWN"), ctx, config).reason == "max_open_positions"
+
+
+# ---------------------------------------------------------------------------
+# Price-to-beat gap rule
+# ---------------------------------------------------------------------------
+def _side(side: str, stage: int = 1, ask: float = 0.85) -> Signal:
+    base = signal(ask=ask)
+    return Signal(**{**base.__dict__, "side": side, "stage": stage})
+
+
+def _gap_config(gap: float = 20.0, **overrides):
+    return make_config(min_price_gap_usd=gap, **overrides)
+
+
+def test_gap_rule_is_off_by_default_and_ignores_missing_price_data():
+    config = make_config()
+    assert config.min_price_gap_usd == 0
+    assert RiskManager().check(signal(), make_ctx(), config).approved is True
+
+
+def test_up_needs_price_at_least_gap_above_price_to_beat():
+    ctx = lambda price: make_ctx(btc_price=price, price_to_beat=100_000.0)  # noqa: E731
+    risk = RiskManager()
+    assert risk.check(_side("UP"), ctx(100_020.0), _gap_config()).approved is True  # exactly the gap
+    assert risk.check(_side("UP"), ctx(100_150.0), _gap_config()).approved is True
+    too_small = risk.check(_side("UP"), ctx(100_019.99), _gap_config())
+    assert too_small.reason == "price_gap_too_small"
+    assert risk.check(_side("UP"), ctx(100_000.0), _gap_config()).reason == "price_gap_too_small"
+    # price on the wrong side of the price to beat
+    assert risk.check(_side("UP"), ctx(99_900.0), _gap_config()).reason == "price_gap_too_small"
+
+
+def test_down_needs_price_at_least_gap_below_price_to_beat():
+    ctx = lambda price: make_ctx(btc_price=price, price_to_beat=100_000.0)  # noqa: E731
+    risk = RiskManager()
+    assert risk.check(_side("DOWN"), ctx(99_980.0), _gap_config()).approved is True  # exactly the gap
+    assert risk.check(_side("DOWN"), ctx(99_800.0), _gap_config()).approved is True
+    assert risk.check(_side("DOWN"), ctx(99_980.01), _gap_config()).reason == "price_gap_too_small"
+    assert risk.check(_side("DOWN"), ctx(100_100.0), _gap_config()).reason == "price_gap_too_small"
+
+
+def test_gap_rule_applies_to_add_on_stages_too():
+    config = _gap_config(max_open_positions=1)
+    exposed = frozenset({"UP"})
+    weak = make_ctx(open_positions=1, exposed_sides=exposed, btc_price=100_010.0, price_to_beat=100_000.0)
+    strong = make_ctx(open_positions=1, exposed_sides=exposed, btc_price=100_030.0, price_to_beat=100_000.0)
+    for stage in (2, 3):
+        assert RiskManager().check(_side("UP", stage=stage, ask=0.93), weak, config).reason == "price_gap_too_small"
+        assert RiskManager().check(_side("UP", stage=stage, ask=0.93), strong, config).approved is True
+
+
+def test_gap_rule_fails_closed_without_price_data():
+    risk = RiskManager()
+    no_price = risk.check(_side("UP"), make_ctx(price_gap_issue="BTC price is stale (12s old)"), _gap_config())
+    assert no_price.approved is False
+    assert no_price.reason == "price_gap_unavailable"
+    assert "stale" in no_price.detail
+    no_beat = risk.check(_side("UP"), make_ctx(btc_price=100_050.0), _gap_config())
+    assert no_beat.reason == "price_gap_unavailable"
+
+
+def test_gap_threshold_is_configurable():
+    ctx = make_ctx(btc_price=100_005.0, price_to_beat=100_000.0)
+    assert RiskManager().check(_side("UP"), ctx, _gap_config(gap=5.0)).approved is True
+    assert RiskManager().check(_side("UP"), ctx, _gap_config(gap=5.01)).reason == "price_gap_too_small"

@@ -469,6 +469,7 @@ class TradingBot:
             exposed_sides = frozenset(side for _, side in exposure_keys)
             balance = self._balance(session)
         remaining = market.remaining_seconds()
+        btc_price, price_to_beat, gap_issue = self.btc.gap_inputs(market)
         return RiskContext(
             now_ms=now_ms,
             kill_switch=self._kill_switch,
@@ -480,6 +481,9 @@ class TradingBot:
             market_expired=remaining <= 0,
             remaining_seconds=remaining,
             exposed_sides=exposed_sides,
+            btc_price=btc_price,
+            price_to_beat=price_to_beat,
+            price_gap_issue=gap_issue,
         )
 
     def _balance(self, session) -> float:

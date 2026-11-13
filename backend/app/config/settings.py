@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     entry_max_attempts: int = 5
     entry_retry_gap_ms: int = 1000
     max_open_positions: int = 1
+    # Price-to-beat filter: a buy needs the current BTC price at least this many USD beyond the
+    # price to beat in the bought direction (UP: current >= beat + gap, DOWN: current <= beat - gap).
+    # 0 disables the rule. With the rule on, missing/stale BTC data blocks the buy (fail closed).
+    min_price_gap_usd: float = 20.0
     duplicate_policy: str = "one_per_market"  # one_per_market | one_per_side | allow
     conflict_policy: str = "up_first"  # up_first | down_first | highest_ask | block_both
 

@@ -26,9 +26,38 @@ class RiskContext:
     remaining_seconds: float
     # sides already held / working in this market; lets stage 2/3 add to a position
     exposed_sides: frozenset[str] = frozenset()
+    # Current BTC price and the window's price to beat (same Chainlink TWAP60 series), for the
+    # price-gap rule. None = unavailable; price_gap_issue says why.
+    btc_price: float | None = None
+    price_to_beat: float | None = None
+    price_gap_issue: str = ""
 
 
 class RiskManager:
+    @staticmethod
+    def _check_price_gap(signal: Signal, ctx: RiskContext, config: RuntimeSettings) -> RiskDecision | None:
+        """Buy only when BTC is already >= min_price_gap_usd beyond the price to beat, in the
+        direction being bought (UP above it, DOWN below it). Fails closed without price data."""
+        min_gap = config.min_price_gap_usd
+        if min_gap <= 0:
+            return None
+        if ctx.btc_price is None or ctx.price_to_beat is None:
+            return RiskDecision(
+                False,
+                "price_gap_unavailable",
+                ctx.price_gap_issue or "BTC price or price to beat is unavailable",
+            )
+        move = ctx.btc_price - ctx.price_to_beat
+        directional = move if signal.side == "UP" else -move
+        if directional + 1e-9 < min_gap:
+            return RiskDecision(
+                False,
+                "price_gap_too_small",
+                f"BTC {ctx.btc_price:.2f} is {move:+.2f} from price to beat {ctx.price_to_beat:.2f}; "
+                f"{signal.side} needs {min_gap:.2f} in its direction",
+            )
+        return None
+
     def check(self, signal: Signal, ctx: RiskContext, config: RuntimeSettings) -> RiskDecision:
         if ctx.kill_switch:
             return RiskDecision(False, "kill_switch", "emergency kill switch is active")
@@ -52,6 +81,9 @@ class RiskManager:
             )
         if signal.ask_size is None or signal.ask_size <= 0:
             return RiskDecision(False, "no_liquidity", "no ask size available at best price")
+        gap = self._check_price_gap(signal, ctx, config)
+        if gap is not None:
+            return gap
         notional = config.trade_amount_usdc
         if ctx.account_balance + 1e-9 < notional:
             return RiskDecision(

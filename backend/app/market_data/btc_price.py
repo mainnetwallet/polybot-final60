@@ -15,8 +15,9 @@ it is read from the RTDS tick stamped at the window start (same official Polymar
 spot/exchange price or an estimate); Gamma's value replaces it as soon as it is published.
 If neither is available it is shown as missing (reason in `last_error` / `price_to_beat_error`).
 
-It is display-only: nothing here feeds the strategy or order path, and every failure
-degrades to "no value" instead of raising.
+Besides the dashboard, ``gap_inputs`` feeds the risk manager's price-gap rule (buy only when BTC is
+already ``min_price_gap_usd`` beyond the price to beat). It never raises; every failure degrades to
+"no value" and the rule then fails closed.
 """
 
 from __future__ import annotations
@@ -143,6 +144,25 @@ class BtcPriceFeed:
         if official is not None:
             return official
         return self._rtds_open(market) or self._site_opens.get(market.market_id)
+
+    def gap_inputs(self, market: MarketInfo | None) -> tuple[float | None, float | None, str]:
+        """(current price, price to beat, reason) for the risk manager's price-gap rule.
+
+        Both prices are the same official Chainlink TWAP60 series Polymarket settles on. A stale
+        tick or a missing price to beat returns None for the unusable value plus a reason.
+        """
+        if not self._settings.btc_price_enabled:
+            return None, None, "BTC price feed is disabled (BTC_PRICE_ENABLED=false)"
+        latest = self._latest
+        if latest is None:
+            return None, None, "no BTC price tick received yet"
+        age_ms = _now_ms() - latest[0]
+        if age_ms > STALE_AFTER_MS:
+            return None, None, f"BTC price is stale ({age_ms / 1000:.0f}s old)"
+        beat = self.price_to_beat(market)
+        if beat is None:
+            return latest[1], None, "price to beat is not available yet"
+        return latest[1], beat[0], ""
 
     def _rtds_open(self, market: MarketInfo) -> tuple[float, str] | None:
         """TWAP60 tick stamped at the window start (== Polymarket's price to beat), if we saw it."""

@@ -111,6 +111,9 @@ def make_ctx(
     remaining: float = 30.0,
     kill_switch: bool = False,
     exposed_sides: frozenset[str] = frozenset(),
+    btc_price: float | None = None,
+    price_to_beat: float | None = None,
+    price_gap_issue: str = "",
 ) -> RiskContext:
     return RiskContext(
         now_ms=int(time.time() * 1000),
@@ -123,6 +126,9 @@ def make_ctx(
         market_expired=remaining <= 0,
         remaining_seconds=remaining,
         exposed_sides=exposed_sides,
+        btc_price=btc_price,
+        price_to_beat=price_to_beat,
+        price_gap_issue=price_gap_issue,
     )
 
 

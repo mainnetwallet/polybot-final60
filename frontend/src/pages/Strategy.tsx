@@ -284,6 +284,12 @@ function PolicyPanel() {
     ["Conflict policy", String(strategy?.conflict_policy ?? "—").replace(/_/g, " ")],
     ["Max trades / day", String(config.max_trades_per_day ?? "—")],
     ["Max open positions", String(config.max_open_positions ?? "—")],
+    [
+      "Min price gap",
+      typeof config.min_price_gap_usd === "number" && config.min_price_gap_usd > 0
+        ? `$${config.min_price_gap_usd} from price to beat`
+        : "off",
+    ],
     ["Daily loss stop", fmtUsd(typeof config.max_daily_loss === "number" ? config.max_daily_loss : null)],
     ["Daily profit target", fmtUsd(typeof config.daily_profit_target === "number" ? config.daily_profit_target : null)],
   ];

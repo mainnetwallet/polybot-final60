@@ -432,3 +432,20 @@ async def test_failed_entry_has_cooldown_and_attempt_cap():
         await _submit(stack, market, books)
     assert calls["n"] == manager._max_attempts
     assert len(_orders()) == 1
+
+
+async def test_price_gap_blocks_order_until_btc_is_far_enough_from_price_to_beat():
+    stack = build_stack(make_config(min_price_gap_usd=20.0))
+    market = make_market(remaining=30)
+    books = books_for(market, up_ask=0.85, down_ask=0.10)
+
+    weak = make_ctx(remaining=30, btc_price=100_005.0, price_to_beat=100_000.0)
+    _, results = await _submit(stack, market, books, ctx=weak)
+    assert results[0].reason == "price_gap_too_small"
+    assert _orders() == []
+
+    # same market, same book: the next event buys as soon as BTC has moved far enough
+    strong = make_ctx(remaining=30, btc_price=100_025.0, price_to_beat=100_000.0)
+    _, results = await _submit(stack, market, books, ctx=strong)
+    assert results[0].status == "FILLED"
+    assert len(_orders()) == 1
