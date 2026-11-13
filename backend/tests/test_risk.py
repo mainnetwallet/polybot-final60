@@ -102,6 +102,8 @@ def _side(side: str, stage: int = 1, ask: float = 0.85) -> Signal:
 
 
 def _gap_config(gap: float = 20.0, **overrides):
+    overrides.setdefault("stage2_min_price_gap_usd", 25.0)
+    overrides.setdefault("stage3_min_price_gap_usd", 30.0)
     return make_config(min_price_gap_usd=gap, **overrides)
 
 
@@ -146,6 +148,30 @@ def test_gap_rule_applies_to_add_on_stages_too():
     for stage in (2, 3):
         assert RiskManager().check(_side("UP", stage=stage, ask=0.93), weak, config).reason == "price_gap_too_small"
         assert RiskManager().check(_side("UP", stage=stage, ask=0.93), strong, config).approved is True
+
+
+def test_each_stage_has_its_own_gap_20_25_30():
+    config = _gap_config(max_open_positions=1)
+    exposed = frozenset({"UP"})
+
+    def ctx_for(stage: int, move: float):
+        # stage 1 is the first buy (no position yet); stage 2/3 add to the held UP position
+        return make_ctx(
+            open_positions=0 if stage == 1 else 1,
+            exposed_sides=frozenset() if stage == 1 else exposed,
+            btc_price=100_000.0 + move, price_to_beat=100_000.0,
+            stage1_bought=stage != 1, stage1_remaining=None if stage == 1 else 60,
+        )
+
+    def verdict(stage: int, move: float) -> str:
+        return RiskManager().check(_side("UP", stage=stage, ask=0.93), ctx_for(stage, move), config).reason
+
+    assert verdict(1, 20.0) == "approved"
+    assert verdict(1, 19.99) == "price_gap_too_small"
+    assert verdict(2, 24.99) == "price_gap_too_small"
+    assert verdict(2, 25.0) == "approved"
+    assert verdict(3, 29.99) == "price_gap_too_small"
+    assert verdict(3, 30.0) == "approved"
 
 
 def test_gap_rule_fails_closed_without_price_data():

@@ -378,7 +378,8 @@ Strategy and risk defaults:
 | `STAGE2_SECONDS` / `STAGE2_THRESHOLD` | `50` / `0.90` | Stage 2 add-on: time left and ask level |
 | `STAGE3_SECONDS` / `STAGE3_THRESHOLD` | `30` / `0.90` | Stage 3 add-on: time left and ask level |
 | `MAX_EXECUTION_PRICE` | `0.99` | Hard cap on the price paid (clamped to `1 - tick size` at order time) |
-| `MIN_PRICE_GAP_USD` | `20` | Price-to-beat filter: an entry needs the current BTC price (Chainlink TWAP60) at least this many USD beyond the price to beat in the bought direction (UP: above, DOWN: below). `0` disables it. Applies to every stage; missing/stale BTC data blocks the buy |
+| `MIN_PRICE_GAP_USD` | `20` | Price-to-beat filter: an entry needs the current BTC price (Chainlink TWAP60) at least this many USD beyond the price to beat in the bought direction (UP: above, DOWN: below). `0` disables it. This is the stage 1 gap; missing/stale BTC data blocks the buy |
+| `STAGE2_MIN_PRICE_GAP_USD` / `STAGE3_MIN_PRICE_GAP_USD` | `25` / `30` | Same price-to-beat filter for stage 2 and stage 3 entries (`0` disables it for that stage) |
 | `TRADE_AMOUNT_USDC` | `1.0` | Requested notional per trade |
 | `STALE_DATA_MAX_AGE_MS` | `5000` | Maximum book age for execution |
 | `ENTRY_MAX_ATTEMPTS` / `ENTRY_RETRY_GAP_MS` | `5` / `1000` | Per stage and market: max tries for a failed/cancelled entry, and minimum gap between tries |

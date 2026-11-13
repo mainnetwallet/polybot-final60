@@ -458,7 +458,7 @@ async def test_price_gap_blocks_order_until_btc_is_far_enough_from_price_to_beat
 async def test_chain_gap_met_in_last_30s_buys_only_stage3():
     # gap rule blocks until 25s left: stage 1 missed its 30s deadline and stage 2 needs stage 1,
     # but stage 3 is independent and buys as soon as its rules are met
-    stack = build_stack(make_config(min_price_gap_usd=20.0))
+    stack = build_stack(make_config(min_price_gap_usd=20.0, stage3_min_price_gap_usd=30.0))
     market = make_market(remaining=25)
     books = books_for(market, up_ask=0.93, down_ask=0.05)
     weak = make_ctx(remaining=25, btc_price=100_005.0, price_to_beat=100_000.0)
@@ -573,7 +573,8 @@ def _keys() -> list[str]:
 
 def _timeline_config():
     return make_config(
-        final_window_seconds=80, min_price_gap_usd=20.0, trade_amount_usdc=1.0,
+        final_window_seconds=80, min_price_gap_usd=20.0, stage2_min_price_gap_usd=25.0,
+        stage3_min_price_gap_usd=30.0, trade_amount_usdc=1.0,
         stale_data_max_age_ms=60_000, max_open_positions=1,
     )
 
@@ -586,7 +587,7 @@ async def test_timeline_gap_met_early_gives_three_buys():
         (0, 0.85, 5),     # 78s: ask ok, gap 5 < 20 -> blocked
         (8, 0.86, 25),    # 70s: gap met -> stage 1 buys right away
         (30, 0.93, 25),   # 48s: stage 2
-        (52, 0.95, 25),   # 26s: stage 3
+        (52, 0.95, 30),   # 26s: stage 3 needs gap 30
     ])
     assert _keys() == ["s1", "s2", "s3"]
 

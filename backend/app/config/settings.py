@@ -76,7 +76,10 @@ class Settings(BaseSettings):
     # Price-to-beat filter: a buy needs the current BTC price at least this many USD beyond the
     # price to beat in the bought direction (UP: current >= beat + gap, DOWN: current <= beat - gap).
     # 0 disables the rule. With the rule on, missing/stale BTC data blocks the buy (fail closed).
-    min_price_gap_usd: float = 20.0
+    min_price_gap_usd: float = 20.0  # stage 1
+    # Each add-on stage can demand a bigger gap: stage 2 = 25 USD, stage 3 = 30 USD by default.
+    stage2_min_price_gap_usd: float = 25.0
+    stage3_min_price_gap_usd: float = 30.0
     duplicate_policy: str = "one_per_market"  # one_per_market | one_per_side | allow
     conflict_policy: str = "up_first"  # up_first | down_first | highest_ask | block_both
 

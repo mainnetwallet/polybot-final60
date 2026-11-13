@@ -53,6 +53,8 @@ class SettingsPatch(BaseModel):
     max_trades_per_day: int | None = Field(default=None, ge=1, le=10000)
     max_open_positions: int | None = Field(default=None, ge=0, le=100)
     min_price_gap_usd: float | None = Field(default=None, ge=0, le=1_000_000)
+    stage2_min_price_gap_usd: float | None = Field(default=None, ge=0, le=1_000_000)
+    stage3_min_price_gap_usd: float | None = Field(default=None, ge=0, le=1_000_000)
 
     def changes(self) -> dict:
         return {k: v for k, v in self.model_dump().items() if v is not None}
