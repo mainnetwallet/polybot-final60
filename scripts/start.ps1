@@ -26,8 +26,19 @@ New-Item -ItemType Directory -Force -Path $Pids | Out-Null
 
 # The servers get an empty file as stdin. Otherwise Vite/node switches the shared console to raw
 # input mode and swallows the keys typed in this terminal (Ctrl+C and typing then stop working).
+# A previous run's server can still hold this file open (Windows then refuses to write it), so only
+# (re)write it when it is missing or not empty, and fall back to a per-run file if it is locked.
 $NullInput = Join-Path $Logs "empty.in"
-Set-Content -Path $NullInput -Value "" -NoNewline -Encoding ASCII
+$needsWrite = (-not (Test-Path $NullInput)) -or ((Get-Item $NullInput).Length -ne 0)
+if ($needsWrite) {
+    try {
+        Set-Content -Path $NullInput -Value "" -NoNewline -Encoding ASCII
+    }
+    catch {
+        $NullInput = Join-Path $Logs ("empty-" + $PID + ".in")
+        Set-Content -Path $NullInput -Value "" -NoNewline -Encoding ASCII
+    }
+}
 
 function Write-Step([string]$Message) {
     Write-Host "==> $Message" -ForegroundColor Cyan
