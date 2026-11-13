@@ -29,7 +29,7 @@ from app.paper_trading.engine import PaperExecutionEngine
 from app.portfolio.analytics import AnalyticsService
 from app.portfolio.service import Portfolio
 from app.risk_manager.manager import RiskContext, RiskManager
-from app.services.order_outcomes import stage_outcomes
+from app.services.order_outcomes import sell_outcomes, stage_outcomes
 from app.strategy.engine import FinalWindowStrategy
 from app.strategy.types import StrategyEvaluation
 
@@ -123,6 +123,8 @@ class TradingBot:
         self._last_live_reconcile = 0.0
         self._risk_halt_reason: str | None = None
         self._tick_pending = False
+        self._trade_task: asyncio.Task | None = None
+        self._trade_dirty = False
         # market_id -> {"attempts": int, "next_at": monotonic seconds}
         self._redeem_queue: dict[str, dict] = {}
         self._redeem_notice_logged: set[str] = set()
@@ -239,6 +241,12 @@ class TradingBot:
             except Exception as exc:
                 logger.warning("shutdown stop failed: %s", exc)
         self._shutdown = True
+        if self._trade_task is not None:
+            self._trade_task.cancel()
+            try:
+                await self._trade_task
+            except asyncio.CancelledError:
+                pass
         for task in self._tasks:
             task.cancel()
         for task in self._tasks:
@@ -351,7 +359,11 @@ class TradingBot:
         self._schedule_tick()
         try:
             if self._status == "RUNNING":
-                await self._handle_trading(market, evaluation, config, now_ms)
+                # Trading runs in its own task. It used to be awaited inside the websocket reader:
+                # while a (live) order was in flight no book update was read, so the stop-loss judged
+                # a stale bid and sold far below its level. Now the books keep updating and the
+                # worker always re-reads them.
+                self._dispatch_trading()
         finally:
             # Price history is written after the trade path so a database write never
             # sits between a book event and the order.
@@ -360,9 +372,46 @@ class TradingBot:
                 self._last_price_persist_ms[side] = now_ms
                 self._schedule_background(self._persist_price, market_id, side, book.snapshot())
 
+    def _dispatch_trading(self) -> None:
+        """Wake the trading worker; events that arrive while it is busy are coalesced into one more pass."""
+        self._trade_dirty = True
+        task = self._trade_task
+        if task is None or task.done():
+            self._trade_task = asyncio.create_task(self._trade_worker(), name="trade-worker")
+
+    async def _trade_worker(self) -> None:
+        try:
+            while self._trade_dirty:
+                self._trade_dirty = False
+                market = self._market
+                if market is None or self._status != "RUNNING":
+                    return
+                config = self.runtime.get()
+                now_ms = int(time.time() * 1000)
+                evaluation = self.strategy.evaluate(market, self.data.books, now_ms, config)
+                self._evaluation = evaluation
+                await self._handle_trading(market, evaluation, config, now_ms)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("trade worker failed")
+            self.logs.log("ERROR", "error", f"trade worker failed: {exc}", mode=self._mode)
+
     async def _handle_trading(
         self, market: MarketInfo, evaluation: StrategyEvaluation, config, now_ms: int
     ) -> None:
+        # Exits first: a stop-loss must not wait behind the entry path (risk-context DB read,
+        # order submission).
+        exit_results: list = []
+        if self.orders.exit_check_needed(self._mode, market.market_id):
+            try:
+                exit_results = await self.orders.handle_exits(
+                    market, self.data.books, self._mode, config
+                )
+            except Exception as exc:
+                logger.exception("exit handling failed")
+                self.logs.log("ERROR", "error", f"exit handling failed: {exc}", mode=self._mode)
+
         # The risk context hits the database; only build it when a signal needs it.
         ctx = None
         gap_inputs = None
@@ -386,16 +435,16 @@ class TradingBot:
         except Exception as exc:
             logger.exception("order handling failed")
             self.logs.log("ERROR", "error", f"order handling failed: {exc}", mode=self._mode)
-            return
-        # Stage 0 take-profit: sell the shares it holds once the bid reaches the sell price.
-        if self.orders.exit_check_needed(self._mode, market.market_id):
+            results = []
+        entered = any(r.status not in {"SKIPPED", "BLOCKED"} for r in results)
+        results = list(exit_results) + list(results)
+        if entered and self.orders.exit_check_needed(self._mode, market.market_id):
+            # freshly bought shares are watched for their exits right away
             try:
-                results = list(results) + await self.orders.handle_exits(
-                    market, self.data.books, self._mode, config
-                )
+                results += await self.orders.handle_exits(market, self.data.books, self._mode, config)
             except Exception as exc:
-                logger.exception("stage 0 exit handling failed")
-                self.logs.log("ERROR", "error", f"stage 0 exit handling failed: {exc}", mode=self._mode)
+                logger.exception("exit handling failed")
+                self.logs.log("ERROR", "error", f"exit handling failed: {exc}", mode=self._mode)
         for result in results:
             if result.status not in {"SKIPPED", "BLOCKED"}:
                 self._last_order = result.as_dict()
@@ -1527,11 +1576,15 @@ class TradingBot:
                 market_orders, positions, self.orders._key_stage, self.orders._key_action
             )
 
+            exit_results = sell_outcomes(market_orders, self.orders._key_stage, self.orders._key_action)
+
             def outcome(o: Order) -> tuple[str | None, float | None]:
-                # No fill -> nothing to win or lose. A SELL row is the exit itself, not a bet.
-                # Every stage is judged on its own shares (own sells, own cost), never on the whole position.
-                if (o.filled_size or 0) <= 0 or self.orders._key_action(o.order_key) == "SELL":
+                # No fill -> nothing to win or lose. A SELL row shows what that exit itself realised
+                # (take-profit or stop-loss), so no filled row is left without a result.
+                if (o.filled_size or 0) <= 0:
                     return None, None
+                if self.orders._key_action(o.order_key) == "SELL":
+                    return exit_results.get(o.id, (None, None))
                 return stage_results.get((o.market_id, o.side, self.orders._key_stage(o.order_key)), (None, None))
 
             return [
