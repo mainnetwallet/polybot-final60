@@ -7,7 +7,7 @@ import logging
 import secrets
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -1055,6 +1055,10 @@ class TradingBot:
         for market_id in redeemable & known:
             self._redeem_queue.setdefault(market_id, {"attempts": 0, "next_at": 0.0})
 
+    # A FOK order resolves within seconds. Anything still "active" after this long
+    # that the exchange can no longer tell us about is stuck, not in flight.
+    STALE_LIVE_ORDER_SECONDS = 300
+
     async def _reconcile_open_live_orders(self) -> None:
         with session_scope() as session:
             orders = session.execute(
@@ -1070,6 +1074,45 @@ class TradingBot:
                 await self.orders.reconcile_live_order(order_id)
             except Exception as exc:
                 logger.warning("live reconciliation failed for order %s: %s", order_id, exc)
+        self._expire_stale_live_orders()
+
+    def _expire_stale_live_orders(self) -> int:
+        """Close live orders that can never be reconciled by exchange id.
+
+        Covers (a) orders with no exchange_order_id (submission outcome unknown, e.g.
+        the executor raised) and (b) orders the exchange no longer returns. Only
+        orders with zero recorded fills and older than STALE_LIVE_ORDER_SECONDS are
+        touched, so nothing that could still be filling is cancelled. Any real fill
+        that was missed will show up in the on-chain position reconciliation.
+        """
+        cutoff = utcnow() - timedelta(seconds=self.STALE_LIVE_ORDER_SECONDS)
+        expired: list[dict] = []
+        with session_scope() as session:
+            stale = session.execute(
+                select(Order).where(
+                    Order.mode == "live",
+                    Order.status.in_(["PENDING", "SUBMITTED", "PARTIALLY_FILLED"]),
+                    Order.filled_size <= 0,
+                    Order.created_at < cutoff,
+                )
+            ).scalars().all()
+            for order in stale:
+                order.status = "CANCELED"
+                order.reason = "stale live order closed at startup"
+                order.error = (
+                    (order.error + "; " if order.error else "")
+                    + "exchange outcome unknown; verify against on-chain positions"
+                )
+                expired.append({"order_id": order.id, "exchange_order_id": order.exchange_order_id})
+        if expired:
+            self.logs.log(
+                "WARNING",
+                "reconciliation",
+                f"{len(expired)} stale live order(s) closed (no fills recorded, outcome unconfirmed)",
+                payload={"orders": expired},
+                mode="live",
+            )
+        return len(expired)
 
     async def _refresh_live_balance(self) -> None:
         balance = await self.live_engine.get_balance()
