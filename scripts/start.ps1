@@ -2,7 +2,10 @@ param(
     [switch]$NoBrowser,
     # By default start.bat does a fresh restart: any previous instance is stopped first.
     # Pass -NoRestart to keep an already-running healthy instance instead.
-    [switch]$NoRestart
+    [switch]$NoRestart,
+    # By default start.bat stays open and Ctrl+C (or Q) stops everything. Pass -Detach to start the
+    # servers in the background and return to the prompt right away (stop later with stop.bat).
+    [switch]$Detach
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,6 +23,11 @@ $UiUrl = "http://127.0.0.1:5173"
 
 New-Item -ItemType Directory -Force -Path $Logs | Out-Null
 New-Item -ItemType Directory -Force -Path $Pids | Out-Null
+
+# The servers get an empty file as stdin. Otherwise Vite/node switches the shared console to raw
+# input mode and swallows the keys typed in this terminal (Ctrl+C and typing then stop working).
+$NullInput = Join-Path $Logs "empty.in"
+Set-Content -Path $NullInput -Value "" -NoNewline -Encoding ASCII
 
 function Write-Step([string]$Message) {
     Write-Host "==> $Message" -ForegroundColor Cyan
@@ -161,6 +169,7 @@ else {
     $proc = Start-Process -FilePath $VenvPython `
         -ArgumentList @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000", "--no-access-log") `
         -WorkingDirectory $BackendDir `
+        -RedirectStandardInput $NullInput `
         -RedirectStandardOutput $backendOut `
         -RedirectStandardError $backendErr `
         -WindowStyle Hidden -PassThru
@@ -184,6 +193,7 @@ else {
     $proc = Start-Process -FilePath "node.exe" `
         -ArgumentList @($viteEntry) `
         -WorkingDirectory $FrontendDir `
+        -RedirectStandardInput $NullInput `
         -RedirectStandardOutput $frontendOut `
         -RedirectStandardError $frontendErr `
         -WindowStyle Hidden -PassThru
@@ -238,11 +248,66 @@ Write-Host "    Dashboard: $UiUrl" -ForegroundColor Gray
 Write-Host "    API docs:  $ApiUrl/docs" -ForegroundColor Gray
 Write-Host "    Mode:      $($mode.ToUpper())" -ForegroundColor Gray
 Write-Host "    Logs:      logs\backend.log, logs\frontend.out.log" -ForegroundColor DarkGray
-Write-Host "    Stop:      stop.bat" -ForegroundColor DarkGray
+if ($Detach) {
+    Write-Host "    Stop:      stop.bat" -ForegroundColor DarkGray
+}
+else {
+    Write-Host "    Stop:      press Ctrl+C (or Q) here, or run stop.bat" -ForegroundColor DarkGray
+}
 Write-Host ""
 
 if (-not $NoBrowser) {
     Start-Process $UiUrl
+}
+
+if ($Detach) {
+    exit 0
+}
+
+# Stay attached: Ctrl+C / Q stops the API and the dashboard. Ctrl+C is read as a normal key
+# (no console signal), so the batch file never asks "Terminate batch job (Y/N)?".
+$interactive = $true
+try {
+    [Console]::TreatControlCAsInput = $true
+}
+catch {
+    $interactive = $false
+}
+
+$stopRequested = $false
+try {
+    while (-not $stopRequested) {
+        if ($interactive) {
+            try {
+                while ([Console]::KeyAvailable) {
+                    $key = [Console]::ReadKey($true)
+                    $ctrlC = ($key.Key -eq [ConsoleKey]::C) -and (($key.Modifiers -band [ConsoleModifiers]::Control) -ne 0)
+                    if ($ctrlC -or $key.Key -eq [ConsoleKey]::Q) {
+                        $stopRequested = $true
+                    }
+                }
+            }
+            catch {
+                $interactive = $false
+            }
+        }
+        if ($stopRequested) { break }
+        # stop.bat from another window (or a crash) ends the servers: nothing left to watch.
+        if (-not (Test-PortOpen 8000) -and -not (Test-PortOpen 5173)) {
+            Write-Host "Servers are no longer running." -ForegroundColor Yellow
+            break
+        }
+        Start-Sleep -Milliseconds 400
+    }
+}
+finally {
+    try { [Console]::TreatControlCAsInput = $false } catch { }
+}
+
+if ($stopRequested) {
+    Write-Host ""
+    Write-Step "Stopping FINAL60"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "stop.ps1")
 }
 
 exit 0

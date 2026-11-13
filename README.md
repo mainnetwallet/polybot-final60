@@ -28,6 +28,8 @@ Paper trading is the default. Live trading is implemented but disabled by defaul
 
 ## Restarting
 
+`start.bat` stays open after startup: press **Ctrl+C** (or **Q**) in that window to stop everything, or run `stop.bat` from another window. Use `start.bat -Detach` to start the servers in the background and get the prompt back immediately.
+
 Running `start.bat` again (even from a new terminal) always does a **fresh restart**: it first stops the previous
 instance (bot stopped gracefully through the API, then only processes that belong to this project folder are killed),
 then starts the API and dashboard again with the current code. After a restart the bot is `STOPPED`; open positions
