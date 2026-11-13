@@ -273,7 +273,7 @@ function PolicyPanel() {
     [
       "Stage 0 (early buy + sell)",
       strategy?.stage0_enabled
-        ? `≤${strategy.stage0_start_seconds}s · ask ${fmtCents(strategy.stage0_min_ask)}–${fmtCents(strategy.stage0_max_ask)} · gap ≥ $${strategy.stage0_min_price_gap_usd} · sell ${fmtCents(strategy.stage0_sell_price_low)} / ${fmtCents(strategy.stage0_sell_price_mid)} / ${fmtCents(strategy.stage0_sell_price)} (buy <${fmtCents(strategy.stage0_mid_from_ask)} / <${fmtCents(strategy.stage0_high_from_ask)} / above)`
+        ? `≤${strategy.stage0_start_seconds}s · ask ${fmtCents(strategy.stage0_min_ask)}–${fmtCents(strategy.stage0_max_ask)} · gap ≥ $${strategy.stage0_min_price_gap_usd} · ${strategy.stage0_take_profit_pct > 0 ? `sell at +${strategy.stage0_take_profit_pct}% (max ${fmtCents(0.99)})` : `sell ${fmtCents(strategy.stage0_sell_price_low)} / ${fmtCents(strategy.stage0_sell_price_mid)} / ${fmtCents(strategy.stage0_sell_price)} (buy <${fmtCents(strategy.stage0_mid_from_ask)} / <${fmtCents(strategy.stage0_high_from_ask)} / above)`}`
         : "off",
     ],
     [

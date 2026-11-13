@@ -42,6 +42,7 @@ OVERRIDABLE_KEYS = (
     "stage0_max_ask",
     "stage0_min_price_gap_usd",
     "stage0_sell_price",
+    "stage0_take_profit_pct",
     "stage0_mid_from_ask",
     "stage0_high_from_ask",
     "stage0_sell_price_low",
@@ -57,6 +58,10 @@ OVERRIDABLE_KEYS = (
     "stage2_stop_loss_pct",
     "stage3_stop_loss_pct",
 )
+
+
+# highest bid a stage 0 percent take-profit waits for (a share pays at most 1.00)
+STAGE0_MAX_TAKE_PROFIT_PRICE = 0.99
 
 
 class RuntimeSettings(BaseModel):
@@ -88,6 +93,9 @@ class RuntimeSettings(BaseModel):
     stage0_max_ask: float = Field(default=0.95, ge=0.01, le=0.999)
     stage0_min_price_gap_usd: float = Field(default=50.0, ge=0.0, le=1_000_000.0)
     stage0_sell_price: float = Field(default=0.98, ge=0.02, le=0.999)
+    # Stage 0 take-profit in percent above the average buy price (0 = off, tiered prices are used).
+    # Off when a RuntimeSettings is built directly; the app's Settings (.env) sets 20.
+    stage0_take_profit_pct: float = Field(default=0.0, ge=0.0, le=500.0)
     stage0_mid_from_ask: float = Field(default=0.70, ge=0.01, le=0.999)
     stage0_high_from_ask: float = Field(default=0.80, ge=0.01, le=0.999)
     stage0_sell_price_low: float = Field(default=0.80, ge=0.02, le=0.999)
@@ -178,9 +186,15 @@ class RuntimeSettings(BaseModel):
         return cost_per_share * (1.0 - pct / 100.0)
 
     def stage0_sell_price_for(self, cost_per_share: float | None) -> float:
-        """Take-profit sell price for shares stage 0 bought at `cost_per_share` (unknown -> highest tier)."""
+        """Take-profit sell price for shares stage 0 bought at `cost_per_share` (unknown -> highest tier).
+
+        With `stage0_take_profit_pct` > 0 it is cost * (1 + pct / 100), capped at STAGE0_MAX_TAKE_PROFIT_PRICE
+        (a share cannot be sold above 1.00). Otherwise the three price tiers apply.
+        """
         if cost_per_share is None:
             return self.stage0_sell_price
+        if self.stage0_take_profit_pct > 0 and cost_per_share > 0:
+            return min(cost_per_share * (1.0 + self.stage0_take_profit_pct / 100.0), STAGE0_MAX_TAKE_PROFIT_PRICE)
         if cost_per_share + 1e-9 < self.stage0_mid_from_ask:
             return self.stage0_sell_price_low
         if cost_per_share + 1e-9 < self.stage0_high_from_ask:

@@ -89,6 +89,16 @@ const FIELDS: FieldSpec[] = [
     suffix: "USD",
   },
   {
+    key: "stage0_take_profit_pct",
+    label: "Stage 0: take-profit",
+    hint: "Stage 0 shares are sold once the best bid is this many percent above the average buy price (default 20), capped at bid 0.99. 0 = off: the tiered sell prices below are used.",
+    kind: "number",
+    step: "1",
+    min: "0",
+    max: "500",
+    suffix: "%",
+  },
+  {
     key: "stage0_sell_price",
     label: "Stage 0: sell at (high tier)",
     hint: "Sell price for shares bought at the high-tier border or above (default 0.80+ buy → 0.98). Must be higher than the max ask.",

@@ -1463,6 +1463,7 @@ class TradingBot:
                 "stage0_min_ask": config.stage0_min_ask,
                 "stage0_max_ask": config.stage0_max_ask,
                 "stage0_min_price_gap_usd": config.stage0_min_price_gap_usd,
+                "stage0_take_profit_pct": config.stage0_take_profit_pct,
                 "stage0_sell_price": config.stage0_sell_price,
                 "stage0_mid_from_ask": config.stage0_mid_from_ask,
                 "stage0_high_from_ask": config.stage0_high_from_ask,

@@ -61,6 +61,7 @@ class SettingsPatch(BaseModel):
     stage0_max_ask: float | None = Field(default=None, ge=0.01, le=0.999)
     stage0_min_price_gap_usd: float | None = Field(default=None, ge=0, le=1_000_000)
     stage0_sell_price: float | None = Field(default=None, ge=0.02, le=0.999)
+    stage0_take_profit_pct: float | None = Field(default=None, ge=0, le=500)
     stage0_mid_from_ask: float | None = Field(default=None, ge=0.01, le=0.999)
     stage0_high_from_ask: float | None = Field(default=None, ge=0.01, le=0.999)
     stage0_sell_price_low: float | None = Field(default=None, ge=0.02, le=0.999)

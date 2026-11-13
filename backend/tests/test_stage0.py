@@ -672,3 +672,28 @@ async def test_bot_stage1_buys_in_final_window_then_sells_at_95():
     snap = await bot.snapshot()
     assert snap["strategy"]["stage1_sell_price"] == 0.95 and snap["strategy"]["stage1_sell_price_high"] == 0.99
     assert snap["strategy"]["stage1_sell_max_buy"] == 0.90 and snap["strategy"]["stage2_sell_price"] == 0.99
+
+
+# ---------------------------------------------------------------- percent take-profit
+def test_stage0_take_profit_percent_sets_the_sell_price_and_caps_at_099():
+    config = make_config(stage0_take_profit_pct=20.0)
+    assert config.stage0_sell_price_for(0.60) == pytest.approx(0.72)
+    assert config.stage0_sell_price_for(0.70) == pytest.approx(0.84)
+    assert config.stage0_sell_price_for(0.80) == pytest.approx(0.96)
+    assert config.stage0_sell_price_for(0.90) == pytest.approx(0.99)  # +20 % would be 1.08: capped
+    assert config.stage0_sell_price_for(None) == config.stage0_sell_price  # unknown cost: old high tier
+    assert make_config(stage0_take_profit_pct=0.0).stage0_sell_price_for(0.70) == 0.90  # off: tiers
+
+
+async def test_stage0_sells_at_plus_20_percent_of_the_buy_price():
+    stack = build_stack(make_config(**STAGE0, stage0_take_profit_pct=20.0, trade_amount_usdc=4.0))
+    market = make_market(remaining=150)
+    books = books_for(market, up_ask=0.70, down_ask=0.10)
+    assert [r.status for r in await _stage0_buy(stack, market, books)] == ["FILLED"]
+    manager = stack["manager"]
+    up = books[market.up_token_id]
+    up.bids = {0.83: 100.0}  # +18.6 %: not yet
+    assert await manager.handle_exits(market, books, "paper", stack["config"]) == []
+    up.bids = {0.84: 100.0}  # exactly +20 %
+    results = await manager.handle_exits(market, books, "paper", stack["config"])
+    assert [(r.status, r.reason) for r in results] == [("FILLED", "stage0_sell")]

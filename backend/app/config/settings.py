@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     #   cost <  stage0_mid_from_ask            -> sell at stage0_sell_price_low  (default 0.60-0.70 buy -> 0.80)
     #   cost <  stage0_high_from_ask           -> sell at stage0_sell_price_mid  (default 0.70-0.80 buy -> 0.90)
     #   cost >= stage0_high_from_ask           -> sell at stage0_sell_price      (default 0.80+ buy      -> 0.98)
+    # Percent take-profit for stage 0: sell once the best bid is this many percent ABOVE the average price
+    # paid per share (cost * (1 + pct / 100)), capped at 0.99 because a share never pays more than 1.00.
+    # 20 = sell at +20 %. 0 = off: the tiered prices above are used instead.
+    stage0_take_profit_pct: float = 20.0
     stage0_mid_from_ask: float = 0.70
     stage0_high_from_ask: float = 0.80
     stage0_sell_price_low: float = 0.80
