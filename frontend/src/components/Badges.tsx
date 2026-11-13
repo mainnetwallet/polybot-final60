@@ -120,7 +120,7 @@ export function StageChip({ stage, action }: { stage?: number | null; action?: s
   return (
     <span
       className={cx("chip", tone)}
-      title={action === "SELL" ? "Stage 0 take-profit sale" : `Entry stage ${stage}`}
+      title={action === "SELL" ? `Stage ${stage} exit sale (take-profit or stop-loss)` : `Entry stage ${stage}`}
     >
       S{stage}
       {action === "SELL" ? " SELL" : ""}

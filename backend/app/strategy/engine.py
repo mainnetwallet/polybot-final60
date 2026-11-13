@@ -7,7 +7,7 @@ Entries are staged. Each stage may place ONE buy per market:
 
 * stage 0 (optional, independent): while stage0_start_seconds (default 200) or fewer remain and the
   final window has NOT started yet, stage0_min_ask (default 0.60) <= best_ask <= stage0_max_ask (default 0.85). The risk manager also
-  demands the BTC price gap (default $100) and the order manager sells the shares again once the
+  demands the BTC price gap (default $50) and the order manager sells the shares again once the
   best bid is the tier's take-profit percentage above the buy price (15 / 10 / 5 % by buy price, capped at 0.99).
 
 * stage 1: inside the final window, best_ask >= trigger_threshold (default 0.80).

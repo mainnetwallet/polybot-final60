@@ -220,7 +220,7 @@ class OrderManager:
     def _key_stage(order_key: str | None) -> int:
         if _SELL_MARK in (order_key or ""):
             match = _SELL_STAGE.search(order_key or "")
-            return int(match.group(1)) if match else 0  # take-profit sells exist for stage 0 and 1
+            return int(match.group(1)) if match else 0  # sell keys end in :sN:sell:<id> (stage 0-3); a sell key without the marker counts as stage 0
         match = _STAGE_SUFFIX.search(order_key or "")
         return int(match.group(1)) if match else 1
 
@@ -389,7 +389,7 @@ class OrderManager:
                 "side": signal.side,
                 "best_ask": signal.best_ask,
                 "notional": config.trade_amount_usdc,
-                "max_price": config.max_execution_price,
+                "max_price": request.max_price,
                 "mode": mode,
                 "order_key": key,
             },
