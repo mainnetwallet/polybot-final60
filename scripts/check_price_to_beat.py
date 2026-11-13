@@ -74,7 +74,3 @@ async def main() -> None:
         print(f"  oldest {iso(ticks[0][0] // 1000)}  newest {iso(ticks[-1][0] // 1000)}")
         at = [t for t in ticks if start * 1000 <= t[0] <= start * 1000 + 1000]
         print("  tick at window start:", at[:1] or "NOT in the history batch")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
