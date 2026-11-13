@@ -69,7 +69,7 @@ export const FIELDS: FieldSpec[] = [
   {
     key: "stage0_min_price_gap_usd",
     label: "Stage 0: min price gap",
-    hint: "BTC must be at least this far beyond the price to beat in the bought direction (UP above, DOWN below). 0 = off. Missing BTC data blocks the buy.",
+    hint: "Buys only if BTC is already this many USD past the price to beat, in the side being bought (UP: above, DOWN: below). 0 = filter off. No BTC data = no buy.",
     kind: "number",
     step: "1",
     min: "0",
