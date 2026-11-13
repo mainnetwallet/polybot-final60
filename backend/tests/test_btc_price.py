@@ -212,7 +212,9 @@ def test_price_to_beat_falls_back_to_nearest_tick_when_the_start_tick_was_missed
 
 
 def test_gap_inputs_return_price_and_beat_when_fresh():
-    start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
+    # start 2s ago so the "fresh" tick below is always newer than the start tick (was flaky when
+    # the test ran inside the first 100 ms of a second)
+    start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None) - timedelta(seconds=2)
     start_ms = int(start.replace(tzinfo=timezone.utc).timestamp() * 1000)
     now_ms = int(time.time() * 1000)
     feed = BtcPriceFeed(Settings(btc_price_enabled=True))

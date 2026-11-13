@@ -177,7 +177,12 @@ class Portfolio:
     DUST_SHARES = 0.01
 
     def apply_sell_report(
-        self, session: Session, mode: str, order: Order, report: ExecutionReport
+        self,
+        session: Session,
+        mode: str,
+        order: Order,
+        report: ExecutionReport,
+        basis: tuple[float, float] | None = None,
     ) -> float:
         """Book a SELL: shrink the position, add the realised PnL, credit the paper balance.
 
@@ -214,9 +219,15 @@ class Portfolio:
         scale = sold / reported if reported > 0 else 0.0
         proceeds = sum(p.price * p.size for p in report.fills) * scale
         sell_fee = sum(p.fee for p in report.fills) * scale
-        fraction = sold / position.size
-        cost_removed = position.cost_basis * fraction
-        buy_fee_removed = position.fees * fraction
+        if basis is not None:
+            # exact cost of the shares being sold (stage 0's own buys), not the position's blended
+            # average: other stages may have added shares to the same position at other prices
+            cost_removed = min(sold * basis[0], position.cost_basis)
+            buy_fee_removed = min(sold * basis[1], position.fees)
+        else:
+            fraction = sold / position.size
+            cost_removed = position.cost_basis * fraction
+            buy_fee_removed = position.fees * fraction
         realized = proceeds - sell_fee - cost_removed - buy_fee_removed
 
         position.size = round(position.size - sold, 10)

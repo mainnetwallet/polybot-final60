@@ -791,7 +791,10 @@ class OrderManager:
                 )
             order.status = next_status
             if is_sell:
-                self._portfolio.apply_sell_report(session, "live", order, report)
+                self._portfolio.apply_sell_report(
+                    session, "live", order, report,
+                    basis=self.stage0_basis(session, "live", order.market_id, order.side),
+                )
             else:
                 self._portfolio.apply_report(session, "live", order, report)
         self._stage0_holdings.pop(("live", order_market_id), None)  # reload what is still held
@@ -843,6 +846,23 @@ class OrderManager:
         if held < SELL_DUST and not in_flight:
             return None
         return Stage0Holding(side=side, token_id=token_id, size=round(held, 10), sell_in_flight=in_flight)
+
+    @staticmethod
+    def stage0_basis(session, mode: str, market_id: str, side: str) -> tuple[float, float] | None:
+        """(cost per share, buy fee per share) of the shares stage 0 bought in this market/side."""
+        buys = [
+            o for o in session.execute(
+                select(Order).where(Order.mode == mode, Order.market_id == market_id, Order.side == side)
+            ).scalars().all()
+            if o.order_key and _SELL_MARK not in o.order_key
+            and OrderManager._key_stage(o.order_key) == 0 and o.filled_size > 0
+        ]
+        shares = sum(o.filled_size for o in buys)
+        if shares <= 0:
+            return None
+        cost = sum(o.filled_size * (o.avg_fill_price or 0.0) for o in buys)
+        fees = sum(o.fee or 0.0 for o in buys)
+        return cost / shares, fees / shares
 
     def load_stage0_holding(self, mode: str, market_id: str) -> Stage0Holding | None:
         with session_scope() as session:
@@ -1021,7 +1041,10 @@ class OrderManager:
             order.exchange_order_id = report.exchange_order_id or order.exchange_order_id
             order.latency_ms = report.latency_ms
             order.error = report.error
-            self._portfolio.apply_sell_report(session, mode, order, report)
+            self._portfolio.apply_sell_report(
+                session, mode, order, report,
+                basis=self.stage0_basis(session, mode, order.market_id, order.side),
+            )
             result = OrderResult(
                 order.id,
                 side,

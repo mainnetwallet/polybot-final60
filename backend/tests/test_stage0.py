@@ -348,3 +348,75 @@ async def test_stage0_retry_loop_stays_awake_right_after_the_buy():
     # the holding registry is not loaded yet, but the bought marker keeps the exit watch active
     assert stack["manager"].has_stage0_holding("paper", market.market_id) is True
     assert stack["manager"].has_stage0_holding("paper", "some-other-market") is False
+
+
+async def test_stage0_sell_only_sells_stage0_shares_not_stage1():
+    """Stage 0 bought UP, then stage 1 bought UP in the final window: 0.98 sells ONLY stage 0's shares."""
+    stack = build_stack(make_config(**STAGE0, trade_amount_usdc=4.0))
+    market = make_market(remaining=150)
+    books = books_for(market, up_ask=0.90, down_ask=0.10)
+    await _stage0_buy(stack, market, books)
+    with session_scope() as session:
+        s0_shares = session.execute(select(Order)).scalar_one().filled_size
+
+    # final window: stage 1 buys UP at 0.85 on top of the stage 0 holding
+    late = make_market(remaining=45)
+    books1 = books_for(late, up_ask=0.85, down_ask=0.15)
+    stage_books(stack, late, books1)
+    evaluation = stack["strategy"].evaluate(late, books1, int(time.time() * 1000), stack["config"])
+    evaluation.signals = [s for s in evaluation.signals if s.stage == 1 and s.side == "UP"]
+    ctx = make_ctx(remaining=45, btc_price=100_150.0, price_to_beat=100_000.0)
+    results = await stack["manager"].handle_event(late, evaluation, books1, "paper", ctx)
+    assert [r.status for r in results] == ["FILLED"]
+    with session_scope() as session:
+        s1_order = session.execute(select(Order).order_by(Order.id.desc())).scalars().first()
+        s1_shares = s1_order.filled_size
+        position = session.execute(select(Position)).scalar_one()
+        assert abs(position.size - (s0_shares + s1_shares)) < 1e-6
+
+    # bid reaches 0.98: only the stage 0 shares (whole cents) are sold, stage 1 shares stay held
+    books1[late.up_token_id].bids = {0.98: 100.0}
+    results = await stack["manager"].handle_exits(late, books1, "paper", stack["config"])
+    assert [r.status for r in results] == ["FILLED"]
+    with session_scope() as session:
+        sell = session.execute(select(Order).order_by(Order.id.desc())).scalars().first()
+        position = session.execute(select(Position)).scalar_one()
+    assert stack["manager"]._key_action(sell.order_key) == "SELL"
+    assert abs(sell.filled_size - int(s0_shares * 100) / 100) < 1e-6
+    assert abs(position.size - (s0_shares + s1_shares - sell.filled_size)) < 1e-6
+    assert position.status == "open" and position.size >= s1_shares - 1e-6
+    # nothing more is sold for the stage 1 shares
+    assert await stack["manager"].handle_exits(late, books1, "paper", stack["config"]) == []
+
+
+async def test_stage0_sell_pnl_uses_stage0_cost_not_blended_average():
+    stack = build_stack(make_config(**STAGE0, trade_amount_usdc=4.0))
+    market = make_market(remaining=150)
+    books = books_for(market, up_ask=0.90, down_ask=0.10)
+    await _stage0_buy(stack, market, books)
+    with session_scope() as session:
+        s0 = session.execute(select(Order)).scalar_one()
+        s0_cost = s0.filled_size * s0.avg_fill_price
+
+    # stage 1 adds shares at a very different price (0.99) to the same UP position
+    late = make_market(remaining=45)
+    books1 = books_for(late, up_ask=0.99, down_ask=0.01)
+    stage_books(stack, late, books1)
+    evaluation = stack["strategy"].evaluate(late, books1, int(time.time() * 1000), stack["config"])
+    evaluation.signals = [s for s in evaluation.signals if s.stage == 1 and s.side == "UP"]
+    ctx = make_ctx(remaining=45, btc_price=100_150.0, price_to_beat=100_000.0)
+    await stack["manager"].handle_event(late, evaluation, books1, "paper", ctx)
+
+    books1[late.up_token_id].bids = {0.98: 100.0}
+    await stack["manager"].handle_exits(late, books1, "paper", stack["config"])
+    with session_scope() as session:
+        sell = session.execute(select(Order).order_by(Order.id.desc())).scalars().first()
+        position = session.execute(select(Position)).scalar_one()
+        sold = sell.filled_size
+        proceeds = sold * sell.avg_fill_price
+        cost_of_sold = sold * (s0_cost / s0.filled_size if False else s0.avg_fill_price)
+        # realised = sale proceeds - sell fee - exact stage 0 cost - stage 0 buy fee share
+        expected = proceeds - sell.fee - cost_of_sold - s0.fee * (sold / s0.filled_size)
+        assert abs(position.realized_pnl - expected) < 1e-6
+        # the cost still held belongs to the unsold shares (stage 1 + the sub-cent leftover)
+        assert position.cost_basis > 0 and position.status == "open"
