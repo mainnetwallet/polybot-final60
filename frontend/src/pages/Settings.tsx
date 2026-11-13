@@ -6,7 +6,7 @@ import { IconAlert, IconRefresh, IconSearch, IconSettings, IconShield, IconWalle
 import { Modal } from "../components/Modal";
 import { useBot } from "../hooks/BotContext";
 import { cx, fmtUsd } from "../lib/format";
-import { ActionRow, CheckRow, GroupCard, SaveBar, SettingRow, TabBar } from "./settings/components";
+import { ActionRow, CheckRow, GroupCard, SaveControls, SettingRow, TabBar } from "./settings/components";
 import { FIELDS } from "./settings/fields";
 import { fieldsOf, TABS, tabOfField, type TabId } from "./settings/layout";
 import { buildDiff, dirtyKeys, draftFrom, savedValue, validateDraft, type Draft } from "./settings/validate";
@@ -222,7 +222,7 @@ export function Settings() {
     : [];
 
   const executionSection = (
-    <div className="space-y-4">
+    <div className="lg:columns-2 lg:gap-4">
       {!isLive ? (
         <GroupCard
           title="Paper fill model"
@@ -230,7 +230,7 @@ export function Settings() {
           badge={<span className="chip border-sky/25 bg-sky/10 text-sky">Paper only</span>}
         >
           {renderRows(["paper_slippage_bps", "paper_fee_rate"])}
-          <div className="grid gap-3 px-5 py-4 sm:grid-cols-2">
+          <div className="grid gap-3 px-4 py-3 sm:grid-cols-2">
             <div className="rounded-lg border hairline bg-black/20 p-3">
               <div className="label">Fill ratio</div>
               <div className="mono mt-1 text-[13px] text-slate-300">{settings.paper_fill_ratio}</div>
@@ -242,7 +242,7 @@ export function Settings() {
               <div className="mt-1 text-[10px] text-slate-600">Environment-only</div>
             </div>
           </div>
-          <div className="px-5 py-3 text-[10.5px] leading-relaxed text-slate-500">
+          <div className="px-4 py-3 text-[10.5px] leading-relaxed text-slate-500">
             Paper fees use <span className="mono">shares × rate × (price × (1 − price))^exponent</span>. The formula is
             an approximation of Polymarket fees, not an exchange quote.
           </div>
@@ -253,7 +253,7 @@ export function Settings() {
           description="Real fills on Polymarket."
           badge={<span className="chip border-down/25 bg-down/10 text-down">Live mode</span>}
         >
-          <div className="px-5 py-4 text-[11px] leading-relaxed text-slate-500">
+          <div className="px-4 py-3 text-[11px] leading-relaxed text-slate-500">
             Live orders are filled by Polymarket, so the paper slippage and fee simulation do not apply. Fees come from
             the market&apos;s own CLOB parameters. Strategy, exit and risk settings apply to live orders exactly as they
             do in paper mode. Switch to paper mode to edit the paper fill model.
@@ -270,7 +270,7 @@ export function Settings() {
         <CheckRow ok={readiness?.geo_verified ?? false} label="POLYMARKET_GEO_VERIFIED" detail=".env" />
         <CheckRow ok={readiness?.credentials_present ?? false} label="Signing key present" detail="backend only" />
         <CheckRow ok={readiness?.funder_configured ?? false} label="Funded wallet configured" detail=".env" />
-        <div className="flex items-center justify-between gap-3 px-5 py-3.5">
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5">
           <span className="text-[11px] text-slate-500">
             {readiness?.balance != null ? `Collateral ${fmtUsd(readiness.balance)}` : "No live balance loaded"}
           </span>
@@ -285,7 +285,7 @@ export function Settings() {
           </button>
         </div>
         {!readiness?.ready ? (
-          <div className="bg-amber/[0.04] px-5 py-3.5 text-[10.5px] leading-relaxed text-amber/85">
+          <div className="bg-amber/[0.04] px-4 py-2.5 text-[10.5px] leading-relaxed text-amber/85">
             <div className="flex items-center gap-1.5 font-semibold">
               <IconAlert size={11} />
               Live gate blocked
@@ -297,7 +297,7 @@ export function Settings() {
             </ul>
           </div>
         ) : null}
-        <div className="flex items-center gap-1.5 px-5 py-3 text-[10px] text-slate-600">
+        <div className="flex items-center gap-1.5 px-4 py-3 text-[10px] text-slate-600">
           <IconAlert size={10} />
           Private keys are read by the backend only and never serialized to this dashboard.
         </div>
@@ -306,7 +306,7 @@ export function Settings() {
   );
 
   const maintenanceSection = (
-    <div className="space-y-4">
+    <div className="lg:columns-2 lg:gap-4">
       <GroupCard title="Daily counters" description="Safe to use while the bot is running.">
         <ActionRow
           tone="amber"
@@ -366,8 +366,8 @@ export function Settings() {
         </ActionRow>
       </GroupCard>
 
-      <section className="panel overflow-hidden border-down/30">
-        <header className="border-b border-down/20 bg-down/[0.05] px-5 py-3">
+      <section className="panel mb-4 break-inside-avoid overflow-hidden !rounded-xl border-down/30">
+        <header className="border-b border-down/20 bg-down/[0.05] px-4 py-2.5">
           <h3 className="text-[13px] font-semibold tracking-tight text-down">Danger zone</h3>
         </header>
         <ActionRow
@@ -398,85 +398,89 @@ export function Settings() {
   );
 
   return (
-    <div className="mx-auto max-w-[1100px]">
-      <section className="panel p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/8 bg-white/[0.03] text-slate-400">
-              <IconSettings size={18} />
+    <div className="mx-auto max-w-[1280px]">
+      <header className="sticky top-0 z-30 mb-4 overflow-hidden rounded-2xl border hairline bg-ink-900/90 shadow-[0_14px_34px_-18px_rgba(0,0,0,0.9)] backdrop-blur-xl">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/8 bg-white/[0.03] text-slate-400">
+              <IconSettings size={16} />
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-[15px] font-semibold tracking-tight text-slate-100">Runtime configuration</h2>
+                <h2 className="text-[14px] font-semibold tracking-tight text-slate-100">Settings</h2>
                 {snapshot ? <ModeBadge mode={snapshot.bot.mode} size="sm" /> : null}
                 <StatusPill running={snapshot ? running : null} killSwitch={snapshot?.bot.kill_switch ?? null} />
               </div>
-              <p className="mt-1 max-w-[62ch] text-[11px] leading-relaxed text-slate-500">
-                Saved changes apply immediately to the running bot in both paper and live mode. Secrets and live
-                enablement remain environment-only.
+              <p className="hidden text-[10.5px] text-slate-500 xl:block">
+                Changes apply to the running bot immediately. Secrets and live enablement stay environment-only.
               </p>
             </div>
           </div>
 
-          <div className="relative w-full lg:w-72">
-            <IconSearch size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
-            <input
-              className="input !pl-9"
-              type="search"
-              placeholder="Search settings…"
-              aria-label="Search settings"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
+          <div className="ml-auto flex flex-wrap items-center gap-3">
+            <div className="relative w-full sm:w-56">
+              <IconSearch size={12} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-600" />
+              <input
+                className="input input-sm !pl-8"
+                type="search"
+                placeholder="Search settings…"
+                aria-label="Search settings"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </div>
+            <SaveControls count={dirty.size} errors={errorCount} saving={saving} onSave={() => void save()} onRevert={revertAll} />
           </div>
         </div>
 
-        {running && !searching ? (
-          <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber/20 bg-amber/[0.05] px-3 py-2 text-[11px] text-amber/90">
-            <IconAlert size={12} />
-            The bot is running. Saved strategy and risk changes take effect on the next evaluation.
+        {!searching ? (
+          <div className="border-t hairline bg-black/10">
+            <TabBar
+              tabs={TABS}
+              active={tab}
+              onChange={setTab}
+              editedCount={(id) => countIn(id, dirty)}
+              errorCount={(id) => countIn(id, Object.keys(errors))}
+            />
           </div>
         ) : null}
-      </section>
+      </header>
+
+      {running && !searching ? (
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber/20 bg-amber/[0.05] px-3 py-1.5 text-[11px] text-amber/90">
+          <IconAlert size={12} />
+          The bot is running. Saved strategy and risk changes take effect on the next evaluation.
+        </div>
+      ) : null}
 
       {saveError ? (
-        <div className="mt-4 flex items-center gap-2 rounded-xl border border-down/25 bg-down/[0.07] px-4 py-3 text-[12px] text-down">
-          <IconAlert size={14} />
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-down/25 bg-down/[0.07] px-3 py-2 text-[12px] text-down">
+          <IconAlert size={13} />
           {saveError}
         </div>
       ) : null}
 
-      {!searching ? (
-        <div className="mt-4">
-          <TabBar
-            tabs={TABS}
-            active={tab}
-            onChange={setTab}
-            editedCount={(id) => countIn(id, dirty)}
-            errorCount={(id) => countIn(id, Object.keys(errors))}
-          />
-        </div>
-      ) : null}
-
-      <div className="mt-4 space-y-4">
+      <div>
         {searching ? (
           <>
-            <div className="px-1 text-[11px] text-slate-500">
+            <div className="mb-3 px-1 text-[11px] text-slate-500">
               {matches.length} {matches.length === 1 ? "setting matches" : "settings match"}{" "}
               <span className="mono text-slate-300">&ldquo;{query.trim()}&rdquo;</span>
             </div>
             {matches.length === 0 ? (
               <div className="panel p-10 text-center text-[12px] text-slate-500">No settings found.</div>
             ) : (
-              TABS.map((item) => {
-                const keys = item.groups.flatMap((group) => group.keys).filter((key) => matches.some((m) => m.key === key));
-                if (!keys.length) return null;
-                return (
-                  <GroupCard key={item.id} title={item.title} description={item.description} badge={groupBadge(keys)}>
-                    {renderRows(keys)}
-                  </GroupCard>
-                );
-              })
+              <div className="lg:columns-2 lg:gap-4">
+                {TABS.map((item) => {
+                  const keys = item.groups.flatMap((group) => group.keys).filter((key) => matches.some((m) => m.key === key));
+                  if (!keys.length) return null;
+                  return (
+                    <GroupCard key={item.id} title={item.title} description={item.description} badge={groupBadge(keys)}>
+                      {renderRows(keys)}
+                    </GroupCard>
+                  );
+                })}
+              </div>
             )}
           </>
         ) : activeTab.id === "execution" ? (
@@ -485,28 +489,28 @@ export function Settings() {
           maintenanceSection
         ) : (
           <>
-            <div className="px-1">
-              <h2 className="text-[14px] font-semibold tracking-tight text-slate-100">{activeTab.title}</h2>
-              <p className="mt-0.5 text-[11.5px] text-slate-500">{activeTab.description}</p>
+            <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-1">
+              <h2 className="text-[13px] font-semibold tracking-tight text-slate-100">{activeTab.title}</h2>
+              <p className="text-[11px] text-slate-500">{activeTab.description}</p>
             </div>
-            {activeTab.groups.map((group) => (
-              <GroupCard key={group.title} title={group.title} description={group.description} badge={groupBadge(group.keys)}>
-                {renderRows(group.keys)}
-              </GroupCard>
-            ))}
-            {activeTab.id === "entry" ? (
-              <div className="rounded-xl border border-sky/15 bg-sky/[0.04] px-4 py-3 text-[11px] leading-relaxed text-sky/80">
-                The trigger is an activation threshold. The submitted price is always the live ask, capped by the max
-                execution price
-                {snapshot ? ` (trigger currently $${snapshot.strategy.trigger_threshold.toFixed(2)})` : ""}. It is never
-                placed as a limit.
-              </div>
-            ) : null}
+            <div className="lg:columns-2 lg:gap-4">
+              {activeTab.groups.map((group) => (
+                <GroupCard key={group.title} title={group.title} description={group.description} badge={groupBadge(group.keys)}>
+                  {renderRows(group.keys)}
+                </GroupCard>
+              ))}
+              {activeTab.id === "entry" ? (
+                <div className="mb-4 break-inside-avoid rounded-xl border border-sky/15 bg-sky/[0.04] px-4 py-2.5 text-[10.5px] leading-relaxed text-sky/80">
+                  The trigger is an activation threshold. The submitted price is always the live ask, capped by the max
+                  execution price
+                  {snapshot ? ` (trigger currently $${snapshot.strategy.trigger_threshold.toFixed(2)})` : ""}. It is never
+                  placed as a limit.
+                </div>
+              ) : null}
+            </div>
           </>
         )}
       </div>
-
-      <SaveBar count={dirty.size} errors={errorCount} saving={saving} onSave={() => void save()} onRevert={revertAll} />
 
       <Modal
         open={defaultsOpen}
