@@ -201,12 +201,14 @@ export function SaveControls({
   saving,
   onSave,
   onRevert,
+  onResetDefaults,
 }: {
   count: number;
   errors: number;
   saving: boolean;
   onSave: () => void;
   onRevert: () => void;
+  onResetDefaults?: () => void;
 }) {
   return (
     <div className="flex items-center gap-2">
@@ -225,6 +227,18 @@ export function SaveControls({
         <IconClose size={11} />
         Discard
       </button>
+      {onResetDefaults ? (
+        <button
+          type="button"
+          className="btn !px-3 !py-1.5 !text-[12px]"
+          disabled={saving}
+          onClick={onResetDefaults}
+          title="Delete all saved overrides and use the .env values"
+        >
+          <IconRefresh size={11} />
+          Reset
+        </button>
+      ) : null}
       <button
         type="button"
         className="btn btn-primary !px-3.5 !py-1.5 !text-[12px]"

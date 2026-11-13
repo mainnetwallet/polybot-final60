@@ -429,7 +429,14 @@ export function Settings() {
                 onChange={(event) => setQuery(event.target.value)}
               />
             </div>
-            <SaveControls count={dirty.size} errors={errorCount} saving={saving} onSave={() => void save()} onRevert={revertAll} />
+            <SaveControls
+              count={dirty.size}
+              errors={errorCount}
+              saving={saving}
+              onSave={() => void save()}
+              onRevert={revertAll}
+              onResetDefaults={() => setDefaultsOpen(true)}
+            />
           </div>
         </div>
 

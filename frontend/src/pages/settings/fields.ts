@@ -175,7 +175,7 @@ export const FIELDS: FieldSpec[] = [
   {
     key: "stage0_stop_loss_pct",
     label: "Stage 0: stop-loss",
-    hint: "Stage 0 shares are sold at the market once the best bid is this many percent below the average buy price (default 20). 0 = off.",
+    hint: "Stage 0 shares are sold at the market once the best bid is this many percent below the average buy price (default 50). 0 = off.",
     kind: "number",
     step: "1",
     min: "0",
@@ -195,7 +195,7 @@ export const FIELDS: FieldSpec[] = [
   {
     key: "stage2_stop_loss_pct",
     label: "Stage 2: stop-loss",
-    hint: "Stage 2 shares are sold at the market once the best bid is this many percent below the average buy price (default 15). 0 = off.",
+    hint: "Stage 2 shares are sold at the market once the best bid is this many percent below the average buy price (default 9). 0 = off.",
     kind: "number",
     step: "1",
     min: "0",
@@ -205,7 +205,7 @@ export const FIELDS: FieldSpec[] = [
   {
     key: "stage3_stop_loss_pct",
     label: "Stage 3: stop-loss",
-    hint: "Stage 3 shares are sold at the market once the best bid is this many percent below the average buy price (default 15). 0 = off. Stage 3 has no take-profit.",
+    hint: "Stage 3 shares are sold at the market once the best bid is this many percent below the average buy price (default 5). 0 = off. Stage 3 has no take-profit.",
     kind: "number",
     step: "1",
     min: "0",
