@@ -28,6 +28,14 @@ from app.strategy.types import Signal, StrategyEvaluation
 logger = logging.getLogger(__name__)
 
 ACTIVE_STATUSES = ("PENDING", "SUBMITTED", "PARTIALLY_FILLED")
+
+
+def _book_top_asks(book: OrderBook | None, n: int = 3) -> dict | None:
+    """Cheapest ``n`` ask levels plus book age, for failed-order diagnostics."""
+    if book is None:
+        return None
+    levels = [[price, size] for price, size in book.level_prices()[:n]]
+    return {"asks": levels, "age_ms": round(book.age_ms()) if book.updated_at_ms else None}
 TERMINAL_EMPTY = ("REJECTED", "CANCELED", "EXPIRED")
 ExecutorProvider = Callable[[str], ExecutionEngine]
 SubmissionAllowed = Callable[[str], bool]
@@ -323,6 +331,7 @@ class OrderManager:
             mode=mode,
         )
 
+        book_before = _book_top_asks(books.get(signal.token_id))
         report: ExecutionReport
         try:
             executor = self._executor_provider(mode)
@@ -347,7 +356,20 @@ class OrderManager:
                 if len(self._stage1_remaining) > 500:
                     self._stage1_remaining.clear()
                 self._stage1_remaining[(mode, market.market_id)] = signal.remaining_seconds
-        self._record_order_result(result, report, signal, mode)
+        self._record_order_result(
+            result,
+            report,
+            signal,
+            mode,
+            diagnostics={
+                "book_at_submit": book_before,
+                "book_after": _book_top_asks(books.get(signal.token_id)),
+                "max_price": request.max_price,
+                "stage": signal.stage,
+                "remaining_seconds": signal.remaining_seconds,
+                "attempt": attempts + 1,
+            },
+        )
         return result
 
     def _find_duplicate(self, session, mode: str, signal: Signal, policy: str) -> Order | None:
@@ -454,7 +476,12 @@ class OrderManager:
         return result
 
     def _record_order_result(
-        self, result: OrderResult, report: ExecutionReport, signal: Signal, mode: str
+        self,
+        result: OrderResult,
+        report: ExecutionReport,
+        signal: Signal,
+        mode: str,
+        diagnostics: dict | None = None,
     ) -> None:
         decision = "submitted" if result.status in {"SUBMITTED", "PARTIALLY_FILLED", "FILLED"} else f"failed_{result.status.lower()}"
         self._log_trigger_once(signal, decision, f"order {result.status}", mode)
@@ -477,7 +504,14 @@ class OrderManager:
                 "ERROR",
                 "error",
                 f"order {report.status}: {report.error or 'rejected'}",
-                payload={"order_id": result.order_id},
+                payload={
+                    "order_id": result.order_id,
+                    "side": signal.side,
+                    "signal_ask": signal.best_ask,
+                    "latency_ms": report.latency_ms,
+                    "exchange_response": report.raw,
+                    **(diagnostics or {}),
+                },
                 mode=mode,
             )
 
