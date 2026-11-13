@@ -128,7 +128,7 @@ async def test_stop_loss_off_holds_the_position_whatever_the_bid_does():
 
 # ---------------------------------------------------------------- exit speed
 def test_exit_retry_gap_is_short_by_default():
-    assert Settings().exit_retry_gap_ms == 150
+    assert Settings().exit_retry_gap_ms == 50
 
 
 async def test_failed_exit_sell_is_retried_on_the_exit_gap_not_the_entry_gap():
@@ -166,7 +166,7 @@ async def test_failed_exit_sell_is_retried_on_the_exit_gap_not_the_entry_gap():
     assert calls["n"] == 2
 
 
-async def test_retry_loop_wakes_every_150ms_while_shares_are_held():
+async def test_retry_loop_wakes_every_50ms_while_shares_are_held():
     market = make_market(remaining=150)
     bot = _running_bot(market, btc=(99_850.0, 100_000.0, ""))  # BTC is $150 BELOW the price to beat
     bot.data._books = dict(books_for(market, up_ask=0.40, down_ask=0.80))
@@ -174,7 +174,7 @@ async def test_retry_loop_wakes_every_150ms_while_shares_are_held():
     assert bot._retry_timing() == (0.5, 500)  # nothing held: the normal safety-net cadence
 
     await _event(bot, market)  # stage 0 buys DOWN
-    assert bot._retry_timing() == (0.15, 150)  # shares held: exits are re-checked fast
+    assert bot._retry_timing() == (0.05, 50)  # shares held: exits are re-checked fast
 
 
 async def test_stopped_out_stage_is_not_bought_again_in_the_same_market():

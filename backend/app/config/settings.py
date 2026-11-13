@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     entry_retry_gap_ms: int = 250
     # Gap between two sell attempts of the same exit (take-profit / stop-loss) when the previous
     # FOK sell did not fill. Kept short: an exit must not wait a full second for the next try.
-    exit_retry_gap_ms: int = 150
+    exit_retry_gap_ms: int = 50
     max_open_positions: int = 1
     # Price-to-beat filter: a buy needs the current BTC price at least this many USD beyond the
     # price to beat in the bought direction (UP: current >= beat + gap, DOWN: current <= beat - gap).

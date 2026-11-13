@@ -125,6 +125,8 @@ class TradingBot:
         self._tick_pending = False
         self._trade_task: asyncio.Task | None = None
         self._trade_dirty = False
+        self._exit_dirty = False
+        self._exit_task: asyncio.Task | None = None
         # market_id -> {"attempts": int, "next_at": monotonic seconds}
         self._redeem_queue: dict[str, dict] = {}
         self._redeem_notice_logged: set[str] = set()
@@ -354,6 +356,11 @@ class TradingBot:
         now_ms = int(time.time() * 1000)
         self._last_book_event_ms = now_ms
 
+        # Exits first, straight from the book event: a stop-loss / take-profit never waits for the
+        # strategy evaluation or for the trading worker to finish an entry.
+        if self._status == "RUNNING" and self.orders.exit_check_needed(self._mode, market_id):
+            self._dispatch_exits()
+
         evaluation = self.strategy.evaluate(market, self.data.books, now_ms, config)
         self._evaluation = evaluation
         self._schedule_tick()
@@ -371,6 +378,34 @@ class TradingBot:
             if now_ms - last_persist >= self.settings.ws_price_persist_interval_ms:
                 self._last_price_persist_ms[side] = now_ms
                 self._schedule_background(self._persist_price, market_id, side, book.snapshot())
+
+    def _dispatch_exits(self) -> None:
+        """Wake the exit worker; book events that arrive while it is busy are coalesced into one more pass."""
+        self._exit_dirty = True
+        task = self._exit_task
+        if task is None or task.done():
+            self._exit_task = asyncio.create_task(self._exit_worker(), name="exit-worker")
+
+    async def _exit_worker(self) -> None:
+        try:
+            while self._exit_dirty:
+                self._exit_dirty = False
+                market = self._market
+                if market is None or self._status != "RUNNING":
+                    return
+                if not self.orders.exit_check_needed(self._mode, market.market_id):
+                    return
+                results = await self.orders.handle_exits(
+                    market, self.data.books, self._mode, self.runtime.get()
+                )
+                for result in results:
+                    if result.status not in {"SKIPPED", "BLOCKED"}:
+                        self._last_order = result.as_dict()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("exit worker failed")
+            self.logs.log("ERROR", "error", f"exit worker failed: {exc}", mode=self._mode)
 
     def _dispatch_trading(self) -> None:
         """Wake the trading worker; events that arrive while it is busy are coalesced into one more pass."""
@@ -915,8 +950,8 @@ class TradingBot:
     # FOK sell did not fill, never waits for the next book event or for a half-second tick.
     RETRY_TICK_S = 0.5
     RETRY_QUIET_MS = 500
-    EXIT_RETRY_TICK_S = 0.15
-    EXIT_RETRY_QUIET_MS = 150
+    EXIT_RETRY_TICK_S = 0.05
+    EXIT_RETRY_QUIET_MS = 50
 
     def _retry_timing(self) -> tuple[float, int]:
         market = self._market

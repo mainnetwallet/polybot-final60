@@ -120,6 +120,8 @@ class ClobMarketDataClient:
                             {
                                 "assets_ids": [up_token, down_token],
                                 "type": "market",
+                                # official flag: also stream best_bid_ask (top-of-book change) events
+                                "custom_feature_enabled": True,
                             }
                         )
                     )

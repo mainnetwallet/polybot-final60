@@ -43,7 +43,7 @@ _SELL_STAGE = re.compile(r":s(\d+):sell:")
 # Stage 0 take-profit SELL orders carry this marker in their order key.
 _SELL_MARK = ":sell:"
 # With the short exit retry gap this still covers the whole final window.
-MAX_SELL_ATTEMPTS = 150
+MAX_SELL_ATTEMPTS = 450
 SELL_DUST = 0.01
 # Entry stages whose shares are watched for an exit: stages 0-2 have a take-profit sell, and every
 # stage (0-3) has a stop-loss sell (stage 3 has no take-profit, it is held to settlement otherwise).
@@ -115,6 +115,9 @@ class OrderManager:
         self._logs = logs
         self._submission_allowed = submission_allowed or (lambda _mode: True)
         self._lock = asyncio.Lock()
+        # One lock per exit stage: a stop-loss must not queue behind an entry order (self._lock)
+        # or behind another stage's sell that is still waiting for the exchange.
+        self._exit_locks: dict[int, asyncio.Lock] = {stage: asyncio.Lock() for stage in EXIT_STAGES}
         self._trigger_seen: set[tuple[str, str, str, int]] = set()
         self._trigger_market: str | None = None
         self._retry_after: dict[int, float] = {}
@@ -960,10 +963,11 @@ class OrderManager:
         shares, and a stop-loss (percent below the buy price) for the shares of every stage 0-3."""
         if market.remaining_seconds() <= 0:
             return []
-        results: list[OrderResult] = []
-        for stage in EXIT_STAGES:
-            results.extend(await self._handle_stage_exit(market, books, mode, config, stage))
-        return results
+        # Stages run side by side: a slow sell of one stage must not delay another stage's stop-loss.
+        per_stage = await asyncio.gather(
+            *(self._handle_stage_exit(market, books, mode, config, stage) for stage in EXIT_STAGES)
+        )
+        return [result for stage_results in per_stage for result in stage_results]
 
     async def _handle_stage_exit(
         self, market: MarketInfo, books: dict[str, OrderBook], mode: str, config, stage: int
@@ -972,7 +976,7 @@ class OrderManager:
         reaches it, or at the market once the best bid falls to its stop-loss level."""
         reg_key = (mode, market.market_id)
         holdings = self._holdings(stage)
-        async with self._lock:
+        async with self._exit_locks[stage]:
             if not self._submission_allowed(mode):
                 return []
             if reg_key not in holdings:
@@ -1023,8 +1027,10 @@ class OrderManager:
 
             book_before = _bids_snapshot()  # the book the exit decision was taken on
             key = f"{mode}:{market.market_id}:{holding.side}:s{stage}{_SELL_MARK}{uuid.uuid4().hex[:8]}"
-            order_id = await asyncio.to_thread(
-                self._reserve_sell_order, mode, market, holding, key, sell_size, bid, kind
+            # The order row is written while the sell is on its way to the exchange, not before it:
+            # no database round trip sits between the exit decision and the order.
+            reserve_task = asyncio.ensure_future(
+                asyncio.to_thread(self._reserve_sell_order, mode, market, holding, key, sell_size, bid, kind)
             )
             stop_note = (
                 f" (stop-loss: bid <= {stop_price:.3f}, {config.stop_loss_pct_for(stage):g}% under cost)"
@@ -1077,6 +1083,7 @@ class OrderManager:
                         else f"{type(exc).__name__}: {exc}"
                     ),
                 )
+            order_id = await reserve_task
             result = await asyncio.to_thread(
                 self._finalize_sell_order,
                 order_id,
@@ -1089,6 +1096,9 @@ class OrderManager:
             holdings[reg_key] = await asyncio.to_thread(
                 self.load_stage0_holding, mode, market.market_id, stage
             )
+            if isinstance(report.raw, dict) and report.raw.get("http_status") == 429:
+                # Rate limited by the CLOB (Retry-After): do not hammer it, wait ~250 ms for this exit.
+                self._last_sell_ms[sell_key] = clock.now_ms() + 200
             if report.fills:
                 self._sell_attempts.pop(sell_key, None)
                 self._logs.log(

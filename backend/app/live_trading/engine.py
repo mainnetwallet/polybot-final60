@@ -151,6 +151,9 @@ class LiveExecutionEngine(ExecutionEngine):
         self._client = None
         self._lock = asyncio.Lock()
         self._order_lock = asyncio.Lock()
+        # Sells (take-profit / stop-loss) have their own lock so a buy that is waiting for the
+        # exchange never holds a stop-loss back.
+        self._sell_lock = asyncio.Lock()
         self._orders_allowed = False
         self._balance_hint = balance_hint
         # token_id -> (fee rate, exponent) as published by the CLOB market info (``fd``).
@@ -277,7 +280,7 @@ class LiveExecutionEngine(ExecutionEngine):
     async def place_sell(self, request: SellRequest) -> ExecutionReport:
         if not self._orders_allowed:
             return ExecutionReport(status="REJECTED", error="new live orders are blocked")
-        async with self._order_lock:
+        async with self._sell_lock:
             if not self._orders_allowed:
                 return ExecutionReport(status="REJECTED", error="new live orders are blocked")
             try:

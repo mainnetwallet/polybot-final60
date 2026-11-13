@@ -403,7 +403,7 @@ Strategy and risk defaults:
 | `TRADE_AMOUNT_USDC` | `1.0` | Requested notional per trade |
 | `STALE_DATA_MAX_AGE_MS` | `2000` | Maximum book age for a buy (exits do not check it) |
 | `ENTRY_MAX_ATTEMPTS` / `ENTRY_RETRY_GAP_MS` | `15` / `250` | Per stage and market: max tries for a failed/cancelled entry, and minimum gap between tries |
-| `EXIT_RETRY_GAP_MS` | `150` | Minimum gap between two sell attempts of the same take-profit / stop-loss |
+| `EXIT_RETRY_GAP_MS` | `50` | Minimum gap between two sell attempts of the same take-profit / stop-loss |
 | `MAX_OPEN_POSITIONS` | `1` | Concurrent position cap per market (stage 2/3 may add to a side already held) |
 | `DUPLICATE_POLICY` | `one_per_market` | `one_per_market`, `one_per_side`, `allow` |
 | `CONFLICT_POLICY` | `up_first` | `up_first`, `down_first`, `highest_ask`, `block_both` |
