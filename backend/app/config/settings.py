@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     stage0_start_seconds: int = 200
     stage0_min_ask: float = 0.60
     stage0_max_ask: float = 0.95
-    stage0_min_price_gap_usd: float = 100.0
+    stage0_min_price_gap_usd: float = 50.0
     stage0_sell_price: float = 0.98
     # Tiered take-profit: the sell price depends on what stage 0 actually paid per share.
     #   cost <  stage0_mid_from_ask            -> sell at stage0_sell_price_low  (default 0.60-0.70 buy -> 0.80)

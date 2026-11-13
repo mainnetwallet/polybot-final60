@@ -1,4 +1,4 @@
-"""Stage 0: early entry (200s -> final window, ask <= 0.95, BTC gap >= $100) + take-profit sell at 0.98."""
+"""Stage 0: early entry (200s -> final window, ask <= 0.95, BTC gap >= $50) + take-profit sell at 0.98."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from .helpers import (
     stage_books,
 )
 
-STAGE0 = dict(stage0_enabled=True)  # window 200s -> 60s (the test final window), ask <= .95, gap $100, sell .98
+STAGE0 = dict(stage0_enabled=True)  # window 200s -> 60s (the test final window), ask <= .95, gap $50, sell .98
 
 
 def evaluate(remaining: float, up: float, down: float, **config):
@@ -87,7 +87,7 @@ def test_risk_approves_stage0_with_gap():
 
 def test_risk_blocks_small_gap_and_wrong_direction():
     config = make_config(**STAGE0)
-    small = make_ctx(remaining=150, btc_price=100_050.0, price_to_beat=100_000.0)
+    small = make_ctx(remaining=150, btc_price=100_030.0, price_to_beat=100_000.0)
     assert RiskManager().check(_signal(), small, config).reason == "price_gap_too_small"
     wrong = make_ctx(remaining=150, btc_price=99_850.0, price_to_beat=100_000.0)
     assert RiskManager().check(_signal(), wrong, config).reason == "price_gap_too_small"
@@ -319,7 +319,7 @@ async def test_bot_buys_stage0_on_gap_side_only_then_sells_at_98():
 
 async def test_bot_stage0_needs_gap_and_stops_in_final_window():
     market = make_market(remaining=150)
-    bot = _running_bot(market, btc=(100_050.0, 100_000.0, ""))  # only $50 beyond: below the $100 gap
+    bot = _running_bot(market, btc=(100_030.0, 100_000.0, ""))  # only $30 beyond: below the $50 gap
     bot.data._books = dict(books_for(market, up_ask=0.90, down_ask=0.10))
     await _event(bot, market)
     with session_scope() as session:
@@ -447,19 +447,19 @@ import pytest  # noqa: E402
 @pytest.mark.parametrize(
     "btc, up_ask, down_ask, expected",
     [
-        (100_100.0, 0.70, 0.30, "UP"),    # exactly +100 above the price to beat -> UP
+        (100_050.0, 0.70, 0.30, "UP"),    # exactly +50 above the price to beat -> UP
         (100_250.0, 0.70, 0.30, "UP"),    # +250
-        (100_099.0, 0.70, 0.30, None),    # +99: gap too small
-        (99_900.0, 0.30, 0.70, "DOWN"),   # exactly -100 below the price to beat -> DOWN
+        (100_049.0, 0.70, 0.30, None),    # +49: gap too small
+        (99_950.0, 0.30, 0.70, "DOWN"),   # exactly -50 below the price to beat -> DOWN
         (99_750.0, 0.30, 0.70, "DOWN"),   # -250
-        (99_901.0, 0.30, 0.70, None),     # -99: gap too small
+        (99_951.0, 0.30, 0.70, None),     # -49: gap too small
         (100_150.0, 0.96, 0.70, None),    # UP has the gap but its ask is above .95; DOWN has no gap
         (99_850.0, 0.70, 0.96, None),     # DOWN has the gap but its ask is above .95; UP has no gap
         (100_150.0, 0.55, 0.45, None),    # UP has the gap but its ask is below .60
         (100_000.0, 0.70, 0.70, None),    # no gap at all, both asks in range
     ],
 )
-async def test_bot_stage0_buys_up_above_plus100_and_down_below_minus100(btc, up_ask, down_ask, expected):
+async def test_bot_stage0_buys_up_above_plus50_and_down_below_minus50(btc, up_ask, down_ask, expected):
     market = make_market(remaining=150)
     bot = _running_bot(market, btc=(btc, 100_000.0, ""))  # (BTC price, price to beat)
     bot.data._books = dict(books_for(market, up_ask=up_ask, down_ask=down_ask))

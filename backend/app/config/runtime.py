@@ -86,7 +86,7 @@ class RuntimeSettings(BaseModel):
     stage0_start_seconds: int = Field(default=200, ge=1, le=300)
     stage0_min_ask: float = Field(default=0.60, ge=0.01, le=0.999)
     stage0_max_ask: float = Field(default=0.95, ge=0.01, le=0.999)
-    stage0_min_price_gap_usd: float = Field(default=100.0, ge=0.0, le=1_000_000.0)
+    stage0_min_price_gap_usd: float = Field(default=50.0, ge=0.0, le=1_000_000.0)
     stage0_sell_price: float = Field(default=0.98, ge=0.02, le=0.999)
     stage0_mid_from_ask: float = Field(default=0.70, ge=0.01, le=0.999)
     stage0_high_from_ask: float = Field(default=0.80, ge=0.01, le=0.999)
