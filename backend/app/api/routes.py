@@ -109,6 +109,10 @@ def build_router(
         except (ValidationError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @router.post("/settings/reset")
+    async def reset_settings_route() -> dict:
+        return await bot.reset_settings()
+
     @router.get("/orders")
     async def orders(
         mode: str | None = Query(default=None),

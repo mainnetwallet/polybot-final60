@@ -222,6 +222,25 @@ def test_settings_patch_and_validation():
         assert bad_window.status_code in {400, 422}
 
 
+def test_settings_reset_restores_env_defaults():
+    with TestClient(create_app()) as client:
+        from app.config.settings import get_settings
+
+        env = get_settings()
+        saved = client.patch(
+            "/api/settings", json={"trigger_threshold": 0.77, "trade_amount_usdc": 3.5}
+        )
+        assert saved.status_code == 200
+        assert client.get("/api/settings").json()["trigger_threshold"] == 0.77
+
+        reset = client.post("/api/settings/reset")
+        assert reset.status_code == 200
+        after = client.get("/api/settings").json()
+        assert after["trigger_threshold"] == reset.json()["trigger_threshold"]
+        assert after["trigger_threshold"] == env.trigger_threshold
+        assert after["trade_amount_usdc"] == env.trade_amount_usdc
+
+
 def test_settings_never_expose_secrets():
     with TestClient(create_app()) as client:
         bot = client.app.state.bot

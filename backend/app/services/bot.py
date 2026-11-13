@@ -1676,6 +1676,21 @@ class TradingBot:
         await self._broadcast_state()
         return updated.model_dump()
 
+    async def reset_settings(self) -> dict:
+        """Remove all dashboard overrides; the .env defaults apply immediately (paper and live)."""
+        async with self._lock:
+            with session_scope() as session:
+                restored = self.runtime.reset(session)
+            self.orders.reset_trigger_cache()
+            self.logs.log(
+                "WARNING",
+                "settings",
+                "settings reset to .env defaults",
+                mode=self._mode,
+            )
+        await self._broadcast_state()
+        return restored.model_dump()
+
     async def reset_paper_account(self, balance: float) -> dict:
         if self._status == "RUNNING":
             raise BotError("stop the bot before resetting the paper account")

@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config.settings import Settings
@@ -258,4 +258,13 @@ class SettingsService:
                 row.value = value
             self._overrides[key] = value
         session.commit()
+        return self.get()
+
+    def reset(self, session: Session) -> RuntimeSettings:
+        """Drop every dashboard override so the .env values apply again."""
+        from app.database.models import BotSetting
+
+        session.execute(delete(BotSetting).where(BotSetting.key.in_(OVERRIDABLE_KEYS)))
+        session.commit()
+        self._overrides = {}
         return self.get()

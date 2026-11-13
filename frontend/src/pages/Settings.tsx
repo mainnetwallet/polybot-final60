@@ -402,6 +402,55 @@ const FIELDS: FieldSpec[] = [
   },
 ];
 
+// Sections are grouped by key (not by array position), so adding a field never lands in the wrong card.
+const STRATEGY_KEYS = [
+  "trigger_threshold",
+  "final_window_seconds",
+  "stage2_seconds",
+  "stage2_threshold",
+  "stage3_seconds",
+  "stage3_threshold",
+  "min_price_gap_usd",
+  "stage2_min_price_gap_usd",
+  "stage3_min_price_gap_usd",
+  "duplicate_policy",
+  "conflict_policy",
+];
+const STAGE0_KEYS = [
+  "stage0_enabled",
+  "stage0_start_seconds",
+  "stage0_min_ask",
+  "stage0_max_ask",
+  "stage0_min_price_gap_usd",
+  "stage0_mid_from_ask",
+  "stage0_high_from_ask",
+  "stage0_take_profit_pct_low",
+  "stage0_take_profit_pct_mid",
+  "stage0_take_profit_pct_high",
+];
+const EXIT_KEYS = [
+  "stage1_sell_enabled",
+  "stage1_sell_max_buy",
+  "stage1_sell_price",
+  "stage1_sell_price_high",
+  "stage2_sell_enabled",
+  "stage2_sell_price",
+  "stage0_stop_loss_pct",
+  "stage1_stop_loss_pct",
+  "stage2_stop_loss_pct",
+  "stage3_stop_loss_pct",
+];
+const RISK_KEYS = [
+  "trade_amount_usdc",
+  "max_execution_price",
+  "max_daily_loss",
+  "daily_profit_target",
+  "max_trades_per_day",
+  "max_open_positions",
+  "stale_data_max_age_ms",
+];
+const PAPER_KEYS = ["paper_slippage_bps", "paper_fee_rate"];
+
 function draftFrom(settings: SettingsState): Record<string, string> {
   const draft: Record<string, string> = {};
   for (const field of FIELDS) {
@@ -485,6 +534,8 @@ export function Settings() {
   const [serverOpen, setServerOpen] = useState(false);
   const [serverPhrase, setServerPhrase] = useState("");
   const [serverBusy, setServerBusy] = useState(false);
+  const [defaultsOpen, setDefaultsOpen] = useState(false);
+  const [defaultsBusy, setDefaultsBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -597,6 +648,25 @@ export function Settings() {
     }
   };
 
+  const confirmDefaultsReset = async () => {
+    setDefaultsBusy(true);
+    setError(null);
+    try {
+      const restored = await api.resetSettings();
+      setSettings(restored);
+      setDraft(draftFrom(restored));
+      setResetValue(String(restored.paper_starting_balance));
+      setDefaultsOpen(false);
+      notify("success", "Settings reset", "All overrides removed. The .env defaults are active now (paper and live).");
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Settings reset failed";
+      setError(message);
+      notify("error", "Reset failed", message);
+    } finally {
+      setDefaultsBusy(false);
+    }
+  };
+
   const confirmReset = async () => {
     const balance = Number(resetValue);
     if (!Number.isFinite(balance) || balance <= 0) return;
@@ -643,9 +713,14 @@ export function Settings() {
     );
   }
 
-  const strategyFields = FIELDS.slice(0, 4);
-  const riskFields = FIELDS.slice(4, 11);
-  const paperFields = FIELDS.slice(11);
+  const isLive = snapshot?.bot.mode === "live";
+  const pick = (keys: string[]) =>
+    keys.map((key) => FIELDS.find((field) => field.key === key)).filter((field): field is FieldSpec => !!field);
+  const strategyFields = pick(STRATEGY_KEYS);
+  const stage0Fields = pick(STAGE0_KEYS);
+  const exitFields = pick(EXIT_KEYS);
+  const riskFields = pick(RISK_KEYS);
+  const paperFields = pick(PAPER_KEYS);
 
   return (
     <div className="space-y-4">
@@ -657,12 +732,16 @@ export function Settings() {
           <div>
             <div className="text-[13px] font-semibold text-slate-100">Runtime configuration</div>
             <div className="mt-0.5 text-[11px] text-slate-500">
-              Validated overrides persist in bot_settings. Secrets and live enablement remain environment-only.
+              Saved changes apply immediately to the running bot in both paper and live mode. Secrets and live enablement remain environment-only.
             </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
           {dirty ? <span className="chip border-amber/30 bg-amber/10 text-amber">Unsaved changes</span> : null}
+          <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => setDefaultsOpen(true)}>
+            <IconRefresh size={13} />
+            Reset to .env defaults
+          </button>
           <button
             type="button"
             className="btn btn-ghost"
@@ -710,7 +789,37 @@ export function Settings() {
         </section>
 
         <section className="panel p-5 xl:col-span-6">
-          <div className="label">Risk & execution</div>
+          <div className="label">Stage 0</div>
+          <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Early buy + take-profit</div>
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            {stage0Fields.map((field) => (
+              <Field
+                key={field.key}
+                spec={field}
+                value={draft[field.key] ?? ""}
+                onChange={(value) => setDraft((prev) => ({ ...prev, [field.key]: value }))}
+              />
+            ))}
+          </div>
+        </section>
+
+        <section className="panel p-5 xl:col-span-6">
+          <div className="label">Exits</div>
+          <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Take-profit &amp; stop-loss</div>
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            {exitFields.map((field) => (
+              <Field
+                key={field.key}
+                spec={field}
+                value={draft[field.key] ?? ""}
+                onChange={(value) => setDraft((prev) => ({ ...prev, [field.key]: value }))}
+              />
+            ))}
+          </div>
+        </section>
+
+        <section className="panel p-5 xl:col-span-6">
+          <div className="label">Risk &amp; execution</div>
           <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Guardrails</div>
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
             {riskFields.map((field) => (
@@ -724,14 +833,15 @@ export function Settings() {
           </div>
         </section>
 
-        <section className="panel p-5 xl:col-span-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="label">Paper simulation</div>
-              <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Fill model</div>
+        {!isLive ? (
+          <section className="panel p-5 xl:col-span-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="label">Paper simulation</div>
+                <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Fill model</div>
+              </div>
+              <span className="chip border-sky/25 bg-sky/10 text-sky">Paper only</span>
             </div>
-            <span className="chip border-sky/25 bg-sky/10 text-sky">Paper only</span>
-          </div>
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
             {paperFields.map((field) => (
               <Field
@@ -741,22 +851,40 @@ export function Settings() {
                 onChange={(value) => setDraft((prev) => ({ ...prev, [field.key]: value }))}
               />
             ))}
-            <div className="rounded-lg border hairline bg-black/20 p-3">
-              <div className="label">Fill ratio</div>
-              <div className="mono mt-1 text-[13px] text-slate-300">{settings.paper_fill_ratio}</div>
-              <div className="mt-1 text-[10px] text-slate-600">Environment-only</div>
-            </div>
-            <div className="rounded-lg border hairline bg-black/20 p-3">
-              <div className="label">Fee exponent</div>
-              <div className="mono mt-1 text-[13px] text-slate-300">{settings.paper_fee_exponent}</div>
-              <div className="mt-1 text-[10px] text-slate-600">Environment-only</div>
-            </div>
           </div>
-          <div className="mt-4 text-[10.5px] leading-relaxed text-slate-500">
-            Paper fees use <span className="mono">shares × rate × (price × (1 − price))^exponent</span>. The fee
-            formula is an approximation of Polymarket fees, not an exchange quote.
-          </div>
-        </section>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div className="rounded-lg border hairline bg-black/20 p-3">
+                <div className="label">Fill ratio</div>
+                <div className="mono mt-1 text-[13px] text-slate-300">{settings.paper_fill_ratio}</div>
+                <div className="mt-1 text-[10px] text-slate-600">Environment-only</div>
+              </div>
+              <div className="rounded-lg border hairline bg-black/20 p-3">
+                <div className="label">Fee exponent</div>
+                <div className="mono mt-1 text-[13px] text-slate-300">{settings.paper_fee_exponent}</div>
+                <div className="mt-1 text-[10px] text-slate-600">Environment-only</div>
+              </div>
+            </div>
+            <div className="mt-4 text-[10.5px] leading-relaxed text-slate-500">
+              Paper fees use <span className="mono">shares × rate × (price × (1 − price))^exponent</span>. The fee
+              formula is an approximation of Polymarket fees, not an exchange quote.
+            </div>
+          </section>
+        ) : (
+          <section className="panel p-5 xl:col-span-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="label">Live execution</div>
+                <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Real fills</div>
+              </div>
+              <span className="chip border-down/25 bg-down/10 text-down">Live mode</span>
+            </div>
+            <div className="mt-4 text-[11px] leading-relaxed text-slate-500">
+              Live orders are filled by Polymarket, so the paper slippage and fee simulation do not apply here.
+              Fees come from the market&apos;s own CLOB parameters. The strategy, exit and risk settings on this
+              page apply to live orders exactly as they do in paper mode.
+            </div>
+          </section>
+        )}
 
         <section className="panel p-5 xl:col-span-6">
           <div className="flex items-center justify-between">
@@ -805,6 +933,7 @@ export function Settings() {
           </div>
         </section>
 
+        {!isLive ? (
         <section className="panel border-down/20 p-5 xl:col-span-12">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-3">
@@ -845,6 +974,7 @@ export function Settings() {
             <div className="mt-3 text-[10.5px] text-amber/80">Stop the bot before resetting the paper account.</div>
           ) : null}
         </section>
+        ) : null}
 
         <section className="panel border-amber/20 p-5 xl:col-span-12">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -897,6 +1027,40 @@ export function Settings() {
           ) : null}
         </section>
       </div>
+
+      <Modal
+        open={defaultsOpen}
+        onClose={() => setDefaultsOpen(false)}
+        eyebrow="Settings"
+        title="Reset settings to .env defaults?"
+        subtitle="Every value you changed on this page is discarded."
+        footer={
+          <>
+            <button type="button" className="btn" onClick={() => setDefaultsOpen(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={defaultsBusy}
+              onClick={() => void confirmDefaultsReset()}
+            >
+              {defaultsBusy ? "Resetting…" : "Reset to defaults"}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-[12px] leading-relaxed text-slate-400">
+          <p>
+            The saved overrides are deleted and the values from <span className="mono">.env</span> take over
+            right away, even while the bot is running. Orders, positions, balance and history are not touched.
+          </p>
+          <div className="flex items-center gap-2 rounded-lg border border-amber/20 bg-amber/[0.06] px-3 py-2 text-[11px] text-amber/90">
+            <IconAlert size={13} />
+            Strategy and risk limits change immediately for the active mode.
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={dailyOpen}

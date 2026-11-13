@@ -70,6 +70,8 @@ export const api = {
       body: JSON.stringify(changes),
     }),
 
+  resetSettings: () => request<SettingsState>("/api/settings/reset", { method: "POST" }),
+
   orders: (mode: Mode, limit = 100) =>
     request<OrderRow[]>(`/api/orders?mode=${mode}&limit=${limit}`),
   positions: (mode: Mode, limit = 100) =>
