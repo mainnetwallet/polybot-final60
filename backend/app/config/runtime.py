@@ -110,7 +110,7 @@ class RuntimeSettings(BaseModel):
     stage2_sell_enabled: bool = False
     stage2_sell_price: float = Field(default=0.99, ge=0.02, le=0.999)
     # Stop-loss in percent below the average buy price (0 = off). Off when a RuntimeSettings is built
-    # directly; the app's Settings (.env) sets 20 for stage 0 and 15 for stages 1-3.
+    # directly; the app's Settings (.env) sets 50 / 15 / 9 / 5 for stages 0 / 1 / 2 / 3.
     stage0_stop_loss_pct: float = Field(default=0.0, ge=0.0, le=99.0)
     stage1_stop_loss_pct: float = Field(default=0.0, ge=0.0, le=99.0)
     stage2_stop_loss_pct: float = Field(default=0.0, ge=0.0, le=99.0)
