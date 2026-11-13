@@ -83,6 +83,12 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Minimal public liveness probe for Render / UptimeRobot / cron-job.org pings. It never touches
+    # the bot, DB or auth and leaks nothing (use /api/health for the detailed status).
+    @app.api_route("/healthz", methods=["GET", "HEAD"], include_in_schema=False)
+    async def healthz() -> dict:
+        return {"status": "ok"}
+
     app.include_router(build_auth_router(auth))
     app.include_router(build_router(bot, runtime, settings, analytics, auth))
     app.include_router(build_ws_router(hub, bot.snapshot, settings.api_token, auth))

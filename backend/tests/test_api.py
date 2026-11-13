@@ -51,6 +51,14 @@ def test_health_and_state():
         assert state["account"]["balance"] >= 0
 
 
+def test_healthz_is_public_minimal_and_supports_head():
+    with TestClient(create_app()) as client:
+        get = client.get("/healthz")
+        assert get.status_code == 200
+        assert get.json() == {"status": "ok"}
+        assert client.head("/healthz").status_code == 200
+
+
 def test_live_mode_requires_confirmation_and_updates_backend():
     with TestClient(create_app()) as client:
         bot = client.app.state.bot
