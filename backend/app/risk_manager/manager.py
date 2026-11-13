@@ -43,32 +43,19 @@ class RiskContext:
 class RiskManager:
     @staticmethod
     def _check_stage_chain(signal: Signal, ctx: RiskContext, config: RuntimeSettings) -> RiskDecision | None:
-        """Chained entries per market (always on).
+        """Entry timing per stage (always on). Stages are independent: no stage needs another one.
 
-        * stage 1: can only buy while MORE than stage3_seconds (30s) remain. Once that is over
-          without a stage 1 buy, stages 1 and 2 stay off for this market.
-        * stage 2: only if stage 1 bought while MORE than stage2_seconds (50s) remained.
-        * stage 3: independent, it buys whenever its own rules are met (stage 1 / 2 not required).
+        * stage 1: can only buy while MORE than stage3_seconds (30s) remain; this is its own cutoff.
+        * stage 2 and stage 3: buy whenever their own rules (time, ask, price gap, ...) are met,
+          whether or not stage 1 (or 2) bought or was stopped out.
         """
         if signal.stage == 1:
             if not ctx.stage1_bought and ctx.remaining_seconds <= config.stage3_seconds:
                 return RiskDecision(
                     False,
                     "stage1_missed",
-                    f"stage 1 did not buy before the last {config.stage3_seconds}s; stage 1 and 2 are off this market",
+                    f"stage 1 did not buy before the last {config.stage3_seconds}s; stage 1 is off this market",
                 )
-            return None
-        if signal.stage != 2:
-            return None  # stage 3 is independent
-        if not ctx.stage1_bought:
-            return RiskDecision(False, "stage1_not_bought", "stage 2 needs stage 1 to have bought first")
-        if ctx.stage1_remaining is None or ctx.stage1_remaining <= config.stage2_seconds:
-            when = "at an unknown time" if ctx.stage1_remaining is None else f"with {ctx.stage1_remaining:.0f}s left"
-            return RiskDecision(
-                False,
-                "stage1_too_late",
-                f"stage 2 needs stage 1 to buy before {config.stage2_seconds}s remained (it bought {when})",
-            )
         return None
 
     @staticmethod

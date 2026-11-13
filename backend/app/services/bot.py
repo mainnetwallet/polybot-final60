@@ -29,6 +29,7 @@ from app.paper_trading.engine import PaperExecutionEngine
 from app.portfolio.analytics import AnalyticsService
 from app.portfolio.service import Portfolio
 from app.risk_manager.manager import RiskContext, RiskManager
+from app.services.order_outcomes import stage_outcomes
 from app.strategy.engine import FinalWindowStrategy
 from app.strategy.types import StrategyEvaluation
 
@@ -1526,18 +1527,20 @@ class TradingBot:
                 ).scalars().all()
             }
 
+            market_ids = {o.market_id for o in rows}
+            market_orders = session.execute(
+                select(Order).where(Order.mode == mode, Order.market_id.in_(market_ids))
+            ).scalars().all() if market_ids else []
+            stage_results = stage_outcomes(
+                market_orders, positions, self.orders._key_stage, self.orders._key_action
+            )
+
             def outcome(o: Order) -> tuple[str | None, float | None]:
                 # No fill -> nothing to win or lose. A SELL row is the exit itself, not a bet.
+                # Every stage is judged on its own shares (own sells, own cost), never on the whole position.
                 if (o.filled_size or 0) <= 0 or self.orders._key_action(o.order_key) == "SELL":
                     return None, None
-                pos = positions.get((o.market_id, o.side))
-                if pos is None:
-                    return None, None
-                if pos.status != "closed":
-                    return "OPEN", None
-                if pos.resolution is None:  # closed by a take-profit sale, not by settlement
-                    return ("WIN" if pos.realized_pnl > 0 else "LOSS"), pos.realized_pnl
-                return ("WIN" if pos.resolution == o.side else "LOSS"), pos.realized_pnl
+                return stage_results.get((o.market_id, o.side, self.orders._key_stage(o.order_key)), (None, None))
 
             return [
                 {

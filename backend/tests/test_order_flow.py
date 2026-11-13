@@ -455,10 +455,12 @@ async def test_price_gap_blocks_order_until_btc_is_far_enough_from_price_to_beat
     assert len(_orders()) == 1
 
 
-async def test_chain_gap_met_in_last_30s_buys_only_stage3():
-    # gap rule blocks until 25s left: stage 1 missed its 30s deadline and stage 2 needs stage 1,
-    # but stage 3 is independent and buys as soon as its rules are met
-    stack = build_stack(make_config(min_price_gap_usd=20.0, stage3_min_price_gap_usd=30.0))
+async def test_chain_gap_met_in_last_30s_buys_stage2_and_stage3_independently():
+    # gap rule blocks until 25s left: stage 1 missed its 30s deadline, but stages 2 and 3 do not need
+    # stage 1 and each buys as soon as its own rules are met
+    stack = build_stack(
+        make_config(min_price_gap_usd=20.0, stage2_min_price_gap_usd=25.0, stage3_min_price_gap_usd=30.0)
+    )
     market = make_market(remaining=25)
     books = books_for(market, up_ask=0.93, down_ask=0.05)
     weak = make_ctx(remaining=25, btc_price=100_005.0, price_to_beat=100_000.0)
@@ -467,10 +469,9 @@ async def test_chain_gap_met_in_last_30s_buys_only_stage3():
     strong = make_ctx(remaining=25, btc_price=100_030.0, price_to_beat=100_000.0)
     _, results = await _submit(stack, market, books, ctx=strong)
     reasons = sorted(r.reason for r in results)
-    assert reasons == ["stage1_missed", "stage1_not_bought", "submitted"]
+    assert reasons == ["stage1_missed", "submitted", "submitted"]
     orders = _orders()
-    assert len(orders) == 1
-    assert orders[0].order_key.endswith(":s3")
+    assert sorted(o.order_key.rsplit(":", 1)[-1] for o in orders) == ["s2", "s3"]
 
 
 async def test_chain_full_sequence_three_buys_in_one_market():
@@ -507,7 +508,7 @@ async def test_chain_full_sequence_three_buys_in_one_market():
     assert len(_orders()) == 3
 
 
-async def test_chain_stage1_late_blocks_stage2_but_not_stage3():
+async def test_chain_stage1_late_does_not_block_stage2_or_stage3():
     from .helpers import stage_books
 
     config = make_config(
@@ -525,20 +526,20 @@ async def test_chain_stage1_late_blocks_stage2_but_not_stage3():
         ctx = make_ctx(remaining=58 - offset_s, balance=10.0, **ctx_kwargs)
         return await manager.handle_event(market, evaluation, books, "paper", ctx)
 
-    # ask only reaches the trigger at 40s left (rule not met earlier): stage 1 buys late,
-    # stage 2 must NOT fire in the same pass, stage 3 waits for the 30s mark
+    # ask only reaches the trigger at 40s left (rule not met earlier): stage 1 and stage 2 both buy,
+    # each on its own rules; stage 3 waits for the 30s mark
     results = await step(18, 0.93)
-    assert sorted(r.reason for r in results) == ["stage1_too_late", "submitted"]
-    assert len(_orders()) == 1
+    assert sorted(r.reason for r in results) == ["submitted", "submitted"]
+    assert len(_orders()) == 2
     s1 = manager.stage1_remaining("paper", market.market_id)
     assert s1 == pytest.approx(40, abs=2)
 
     held = dict(open_positions=1, exposed_sides=frozenset({"UP"}), stage1_bought=True, stage1_remaining=s1)
-    results = await step(24, 0.93, **held)  # 34s left: stage 2 still refused
-    assert "stage1_too_late" in [r.reason for r in results]
+    results = await step(24, 0.93, **held)  # 34s left: stage 1 and 2 already bought
+    assert [r.reason for r in results] == ["duplicate", "duplicate"]
     results = await step(30, 0.94, **held)  # 28s left: stage 3 buys
     assert any(r.status == "FILLED" for r in results)
-    assert len(_orders()) == 2
+    assert len(_orders()) == 3
 
 
 async def _timeline(stack, market, config, steps):
@@ -592,26 +593,26 @@ async def test_timeline_gap_met_early_gives_three_buys():
     assert _keys() == ["s1", "s2", "s3"]
 
 
-async def test_timeline_stage1_late_skips_stage2_but_stage3_buys():
+async def test_timeline_stage1_late_still_lets_stage2_and_stage3_buy():
     config = _timeline_config()
     stack = build_stack(config)
     market = make_market(remaining=78)
     await _timeline(stack, market, config, [
         (0, 0.93, 3),
         (30, 0.93, 3),    # 48s: gap not met -> nothing
-        (38, 0.93, 30),   # 40s: gap met -> stage 1 (late), stage 2 refused
-        (44, 0.93, 30),   # 34s: still no stage 2
+        (38, 0.93, 30),   # 40s: gap met -> stage 1 (late) and stage 2 buy on their own rules
+        (44, 0.93, 30),   # 34s: nothing new
         (52, 0.95, 30),   # 26s: stage 3
     ])
-    assert _keys() == ["s1", "s3"]
+    assert _keys() == ["s1", "s2", "s3"]
 
 
-async def test_timeline_gap_only_met_in_last_30s_gives_stage3_only():
+async def test_timeline_gap_only_met_in_last_30s_gives_stage2_and_stage3():
     config = _timeline_config()
     stack = build_stack(config)
     market = make_market(remaining=78)
     await _timeline(stack, market, config, [(0, 0.93, 3), (40, 0.93, 3), (54, 0.95, 30)])
-    assert _keys() == ["s3"]
+    assert _keys() == ["s2", "s3"]  # stage 1 missed its cutoff, stages 2 and 3 do not need it
 
 
 async def test_timeline_gap_never_met_gives_no_buy():

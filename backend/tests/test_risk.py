@@ -207,26 +207,23 @@ def _chain_ctx(remaining, bought=False, s1_remaining=None):
     )
 
 
-def test_stage1_can_buy_until_the_last_30_seconds_then_stage1_and_2_stay_off():
+def test_stage1_can_buy_until_the_last_30_seconds_then_only_stage1_stays_off():
     risk, config = RiskManager(), _chain_config()
     assert risk.check(_side("UP"), _chain_ctx(55), config).approved is True
     assert risk.check(_side("UP"), _chain_ctx(35), config).approved is True  # late, still stage 1
     assert risk.check(_side("UP"), _chain_ctx(30), config).reason == "stage1_missed"
-    # stage 2 needs stage 1, so it stays off too
-    assert risk.check(_side("UP", stage=2, ask=0.93), _chain_ctx(25), config).reason == "stage1_not_bought"
-    # stage 3 does not need stage 1: its own rules decide
+    # stages 2 and 3 do not need stage 1: their own rules decide
+    assert risk.check(_side("UP", stage=2, ask=0.93), _chain_ctx(25), config).approved is True
     assert risk.check(_side("UP", stage=3, ask=0.93), _chain_ctx(25), config).approved is True
 
 
-def test_stage2_needs_stage1_bought_before_the_50s_mark():
+def test_stage2_does_not_need_stage1():
     risk, config = RiskManager(), _chain_config()
     s2 = _side("UP", stage=2, ask=0.93)
+    assert risk.check(s2, _chain_ctx(45), config).approved is True  # stage 1 never bought
     assert risk.check(s2, _chain_ctx(45, bought=True, s1_remaining=62), config).approved is True
-    assert risk.check(s2, _chain_ctx(45, bought=True, s1_remaining=50.5), config).approved is True
-    late = risk.check(s2, _chain_ctx(35, bought=True, s1_remaining=40), config)  # stage 1 bought at 40s
-    assert late.reason == "stage1_too_late"
-    unknown = risk.check(s2, _chain_ctx(45, bought=True, s1_remaining=None), config)
-    assert unknown.reason == "stage1_too_late"  # e.g. after a restart: fail closed
+    assert risk.check(s2, _chain_ctx(35, bought=True, s1_remaining=40), config).approved is True
+    assert risk.check(s2, _chain_ctx(45, bought=True, s1_remaining=None), config).approved is True
 
 
 def test_stage3_is_independent_of_stage1_and_stage2():

@@ -257,3 +257,33 @@ async def test_bot_stops_out_stage0_reports_a_loss_and_does_not_rebuy():
     await _event(bot, market)  # nothing more happens in this market
     with session_scope() as session:
         assert len(session.execute(select(Order)).scalars().all()) == 2
+
+
+async def test_stage_1_2_3_in_one_market_each_stops_out_alone():
+    """All three add-on stages hold the same side; every stop-loss sells only its own shares."""
+    stack = build_stack(make_config(**STAGE0, **STOPS, trade_amount_usdc=4.0, paper_starting_balance=30.0))
+    manager = stack["manager"]
+    m1, m2, m3 = make_market(remaining=55), make_market(remaining=40), make_market(remaining=25)
+    # stage 1 bought at 0.90 (stop 0.765), stage 2 at 0.95 (stop 0.8075), stage 3 at 0.92 (stop 0.782)
+    for market, stage, ask, ctx in (
+        (m1, 1, 0.90, {}),
+        (m2, 2, 0.95, dict(stage1_bought=True, stage1_remaining=55.0)),
+        (m3, 3, 0.92, {}),
+    ):
+        books = books_for(market, up_ask=ask, down_ask=0.04)
+        assert [r.status for r in await _stage_buy(stack, market, books, stage, **ctx)] == ["FILLED"]
+    books = books_for(m3, up_ask=0.92, down_ask=0.04)
+
+    def bid(price):
+        books[m3.up_token_id].bids = {price: 100.0}
+        return manager.handle_exits(m3, books, "paper", stack["config"])
+
+    assert await bid(0.85) == []  # above every stop
+    assert [r.reason for r in await bid(0.80)] == ["stage2_stop_loss"]  # only stage 2 (stop 0.8075)
+    assert await bid(0.80) == []  # stage 1 (0.765) and stage 3 (0.782) keep their shares
+    assert [r.reason for r in await bid(0.78)] == ["stage3_stop_loss"]
+    assert [r.reason for r in await bid(0.70)] == ["stage1_stop_loss"]
+    with session_scope() as session:
+        position = session.execute(select(Position)).scalar_one()
+    assert position.size < 0.03  # only sub-cent rounding dust of the three stages is left to settle
+    assert all(manager.load_stage0_holding("paper", m1.market_id, st) is None for st in (1, 2, 3))
