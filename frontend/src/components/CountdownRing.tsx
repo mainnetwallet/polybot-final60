@@ -6,7 +6,28 @@ interface CountdownRingProps {
   finalWindow: number;
   duration: number | null;
   armed: boolean;
+  stage0Enabled?: boolean;
+  stage0Start?: number;
+  stage2Seconds?: number;
+  stage3Seconds?: number;
   size?: number;
+}
+
+/** Which entry stage is live right now, from the seconds left in the market. */
+export function activeStageLabel(
+  remaining: number,
+  finalWindow: number,
+  stage0Enabled: boolean,
+  stage0Start: number,
+  stage2Seconds: number,
+  stage3Seconds: number,
+): string {
+  if (remaining <= 0) return "EXPIRED";
+  if (remaining <= stage3Seconds) return "STAGE 3";
+  if (remaining <= stage2Seconds) return "STAGE 2";
+  if (remaining <= finalWindow) return "STAGE 1";
+  if (stage0Enabled && remaining <= stage0Start) return "STAGE 0";
+  return "WAITING";
 }
 
 export function CountdownRing({
@@ -15,23 +36,20 @@ export function CountdownRing({
   finalWindow,
   duration,
   armed,
+  stage0Enabled = false,
+  stage0Start = 0,
+  stage2Seconds = 50,
+  stage3Seconds = 30,
   size = 176,
 }: CountdownRingProps) {
   const radius = 54;
   const circumference = 2 * Math.PI * radius;
-  const shown = inWindow && remaining !== null
-    ? Math.max(0, remaining)
-    : remaining === null
-      ? null
-      : Math.max(0, remaining - finalWindow);
+  // The ring counts the whole market down (e.g. 300 -> 0); the label says which stage is running.
+  const shown = remaining === null ? null : Math.max(0, remaining);
 
   let progress = 0;
-  if (remaining !== null) {
-    if (inWindow) {
-      progress = clamp(remaining / Math.max(1, finalWindow), 0, 1);
-    } else if (duration && duration > finalWindow) {
-      progress = clamp((duration - remaining) / (duration - finalWindow), 0, 1);
-    }
+  if (remaining !== null && duration && duration > 0) {
+    progress = clamp(remaining / duration, 0, 1);
   }
 
   const tone = inWindow
@@ -42,7 +60,10 @@ export function CountdownRing({
       ? "text-slate-600"
       : "text-sky";
 
-  const label = remaining === null ? "NO ACTIVE MARKET" : inWindow ? "FINAL WINDOW" : "TO FINAL WINDOW";
+  const label =
+    remaining === null
+      ? "NO ACTIVE MARKET"
+      : activeStageLabel(remaining, finalWindow, stage0Enabled, stage0Start, stage2Seconds, stage3Seconds);
 
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }}>
@@ -69,7 +90,7 @@ export function CountdownRing({
           {shown === null ? "—" : Math.ceil(shown)}
         </div>
         <div className="mt-1 text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-600">
-          {inWindow ? "seconds left" : "seconds"}
+          seconds left
         </div>
       </div>
     </div>
