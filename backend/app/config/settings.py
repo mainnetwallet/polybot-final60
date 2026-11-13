@@ -114,11 +114,13 @@ class Settings(BaseSettings):
     stage0_take_profit_pct_mid: float = 10.0
     stage0_take_profit_pct_high: float = 5.0
     # Stage 1 take-profit: stage 1 shares are sold again as soon as the best bid reaches a price that
-    # depends on what they cost per share: cost <= stage1_sell_max_buy -> stage1_sell_price (0.95),
-    # cost above it -> stage1_sell_price_high (0.99).
+    # depends on what they cost per share:
+    #   cost <= stage1_sell_max_buy (0.86) -> cost * (1 + stage1_take_profit_pct / 100), i.e. +10 %
+    #                                         (capped at 0.99; 0 = no take-profit for these shares)
+    #   cost above it                      -> stage1_sell_price_high (0.99).
     stage1_sell_enabled: bool = True
-    stage1_sell_max_buy: float = 0.90
-    stage1_sell_price: float = 0.95
+    stage1_sell_max_buy: float = 0.86
+    stage1_take_profit_pct: float = 10.0
     stage1_sell_price_high: float = 0.99
     # Stage 2 take-profit: stage 2 shares are sold as soon as the best bid reaches stage2_sell_price.
     stage2_sell_enabled: bool = True

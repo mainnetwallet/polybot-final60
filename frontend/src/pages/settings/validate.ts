@@ -49,14 +49,9 @@ const CROSS_RULES: CrossRule[] = [
     message: "Mid tier border must not be higher than the high tier border.",
   },
   {
-    keys: ["stage1_sell_price", "stage1_sell_max_buy"],
-    broken: (d) => n(d, "stage1_sell_price") <= n(d, "stage1_sell_max_buy"),
-    message: "Sell price must be higher than the stage 1 cheap-buy limit.",
-  },
-  {
-    keys: ["stage1_sell_price_high", "stage1_sell_price"],
-    broken: (d) => n(d, "stage1_sell_price_high") < n(d, "stage1_sell_price"),
-    message: "High sell price must not be lower than the stage 1 sell price.",
+    keys: ["stage1_sell_price_high", "stage1_sell_max_buy"],
+    broken: (d) => n(d, "stage1_sell_price_high") <= n(d, "stage1_sell_max_buy"),
+    message: "High sell price must be higher than the stage 1 cheap-buy limit.",
   },
   {
     keys: ["stage2_sell_price", "stage2_threshold"],

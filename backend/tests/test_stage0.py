@@ -475,15 +475,15 @@ async def test_bot_stage0_buys_up_above_plus80_and_down_below_minus80(btc, up_as
 
 
 # ---------------------------------------------------------------- stage 1 / stage 2 take-profit
-STAGE1_SELL = dict(stage1_sell_enabled=True)  # cost <= 0.90 -> sold at 0.95, dearer -> sold at 0.99
+STAGE1_SELL = dict(stage1_sell_enabled=True)  # cost <= 0.86 -> sold at +10 %, dearer -> sold at 0.99
 STAGE2_SELL = dict(stage2_sell_enabled=True)  # sold at 0.99
 
 
 def test_stage1_and_stage2_sell_price_rules():
     config = make_config(**STAGE1_SELL, **STAGE2_SELL)
-    for cost in (0.80, 0.85, 0.90):
-        assert config.stage1_sell_price_for(cost) == 0.95
-    for cost in (0.91, 0.93, 0.99):
+    for cost in (0.80, 0.85, 0.86):
+        assert config.stage1_sell_price_for(cost) == pytest.approx(cost * 1.10)
+    for cost in (0.87, 0.93, 0.99):
         assert config.stage1_sell_price_for(cost) == 0.99
     assert config.stage1_sell_price_for(None) == 0.99  # unknown cost: highest price, never sells too early
     assert config.stage2_sell_price_for(0.92) == 0.99 and config.stage2_sell_price_for(None) == 0.99
@@ -509,9 +509,10 @@ async def _stage1_buy(stack, market, books, side="UP"):
 
 @pytest.mark.parametrize(
     "buy_ask, too_low, sold_at",
-    [(0.80, 0.94, 0.95), (0.85, 0.94, 0.95), (0.90, 0.94, 0.95), (0.93, 0.98, 0.99), (0.95, 0.98, 0.99)],
+    # 0.80 -> +10 % = 0.88, 0.85 -> 0.935 (bid 0.94), 0.86 -> 0.946 (bid 0.95); dearer than 0.86 -> 0.99
+    [(0.80, 0.87, 0.88), (0.85, 0.93, 0.94), (0.86, 0.94, 0.95), (0.90, 0.98, 0.99), (0.95, 0.98, 0.99)],
 )
-async def test_stage1_sells_at_95_when_bought_up_to_90_else_at_99(buy_ask, too_low, sold_at):
+async def test_stage1_sells_at_10_percent_when_bought_up_to_86_else_at_99(buy_ask, too_low, sold_at):
     stack = build_stack(make_config(**STAGE0, **STAGE1_SELL, trade_amount_usdc=4.0))
     market = make_market(remaining=55)
     books = books_for(market, up_ask=buy_ask, down_ask=0.05)
@@ -619,7 +620,7 @@ async def test_stage1_sell_does_not_break_the_stage_chain():
     assert len(buys) == 1
 
 
-async def test_bot_stage1_buys_in_final_window_then_sells_at_95():
+async def test_bot_stage1_buys_in_final_window_then_sells_at_10_percent_profit():
     market = make_market(remaining=55)
     bot = _running_bot(market, btc=(100_150.0, 100_000.0, ""))  # BTC $150 above the price to beat
     books = books_for(market, up_ask=0.85, down_ask=0.10)
@@ -629,19 +630,33 @@ async def test_bot_stage1_buys_in_final_window_then_sells_at_95():
         orders = session.execute(select(Order)).scalars().all()
     assert [(bot.orders._key_stage(o.order_key), o.side, o.status) for o in orders] == [(1, "UP", "FILLED")]
 
-    books[market.up_token_id].bids = {0.94: 100.0}
+    # bought at 0.85 (<= 0.86): +10 % -> sell once the best bid is 0.935 or more
+    books[market.up_token_id].bids = {0.93: 100.0}
     await _event(bot, market)
     with session_scope() as session:
-        assert len(session.execute(select(Order)).scalars().all()) == 1  # bid below .95: still held
+        assert len(session.execute(select(Order)).scalars().all()) == 1  # bid below 0.935: still held
 
-    books[market.up_token_id].bids = {0.95: 100.0}
+    books[market.up_token_id].bids = {0.94: 100.0}
     await _event(bot, market)
     rows = await bot.recent_orders("paper")
     stage1_rows = [r for r in rows if r["stage"] == 1]
     assert sorted((r["action"], r["status"]) for r in stage1_rows) == [("BUY", "FILLED"), ("SELL", "FILLED")]
     snap = await bot.snapshot()
-    assert snap["strategy"]["stage1_sell_price"] == 0.95 and snap["strategy"]["stage1_sell_price_high"] == 0.99
-    assert snap["strategy"]["stage1_sell_max_buy"] == 0.90 and snap["strategy"]["stage2_sell_price"] == 0.99
+    assert "stage1_sell_price" not in snap["strategy"] and snap["strategy"]["stage1_sell_price_high"] == 0.99
+    assert snap["strategy"]["stage1_sell_max_buy"] == 0.86 and snap["strategy"]["stage1_take_profit_pct"] == 10.0
+    assert snap["strategy"]["stage2_sell_price"] == 0.99
+
+
+def test_stage1_cheap_buys_sell_at_10_percent_profit():
+    config = make_config(stage1_sell_enabled=True, stage1_sell_max_buy=0.86, stage1_take_profit_pct=10.0)
+    assert config.stage1_sell_price_for(0.81) == pytest.approx(0.891)
+    assert config.stage1_sell_price_for(0.80) == pytest.approx(0.88)
+    assert config.stage1_sell_price_for(0.86) == pytest.approx(0.946)  # the limit itself is still "cheap"
+    assert config.stage1_sell_price_for(0.87) == 0.99  # dearer than 0.86: the high fixed price
+    assert config.stage1_sell_price_for(None) == 0.99
+    # 0 % = no take-profit for cheap buys (held to settlement / stop-loss); dearer buys keep the 0.99 sell
+    none = make_config(stage1_sell_enabled=True, stage1_sell_max_buy=0.86, stage1_take_profit_pct=0.0)
+    assert none.stage1_sell_price_for(0.81) is None and none.stage1_sell_price_for(0.90) == 0.99
 
 
 # ---------------------------------------------------------------- tiered percent take-profit

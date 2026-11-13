@@ -67,7 +67,7 @@ class SettingsPatch(BaseModel):
     stage0_take_profit_pct_high: float | None = Field(default=None, ge=0, le=500)
     stage1_sell_enabled: bool | None = None
     stage1_sell_max_buy: float | None = Field(default=None, ge=0.01, le=0.999)
-    stage1_sell_price: float | None = Field(default=None, ge=0.02, le=0.999)
+    stage1_take_profit_pct: float | None = Field(default=None, ge=0.0, le=500.0)
     stage1_sell_price_high: float | None = Field(default=None, ge=0.02, le=0.999)
     stage2_sell_enabled: bool | None = None
     stage2_sell_price: float | None = Field(default=None, ge=0.02, le=0.999)

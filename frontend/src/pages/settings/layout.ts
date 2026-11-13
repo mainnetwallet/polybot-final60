@@ -79,7 +79,7 @@ export const TABS: TabSpec[] = [
     groups: [
       {
         title: "Stage 1 take-profit",
-        keys: ["stage1_sell_enabled", "stage1_sell_max_buy", "stage1_sell_price", "stage1_sell_price_high"],
+        keys: ["stage1_sell_enabled", "stage1_sell_max_buy", "stage1_take_profit_pct", "stage1_sell_price_high"],
       },
       { title: "Stage 2 take-profit", keys: ["stage2_sell_enabled", "stage2_sell_price"] },
       {

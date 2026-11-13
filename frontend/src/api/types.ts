@@ -54,7 +54,7 @@ export interface StrategyState {
   stage0_take_profit_pct_high: number;
   stage1_sell_enabled: boolean;
   stage1_sell_max_buy: number;
-  stage1_sell_price: number;
+  stage1_take_profit_pct: number;
   stage1_sell_price_high: number;
   stage2_sell_enabled: boolean;
   stage2_sell_price: number;
@@ -254,7 +254,7 @@ export interface SettingsState {
   stage0_take_profit_pct_high: number;
   stage1_sell_enabled: boolean;
   stage1_sell_max_buy: number;
-  stage1_sell_price: number;
+  stage1_take_profit_pct: number;
   stage1_sell_price_high: number;
   stage2_sell_enabled: boolean;
   stage2_sell_price: number;

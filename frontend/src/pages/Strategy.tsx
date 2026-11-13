@@ -279,7 +279,7 @@ function PolicyPanel() {
     [
       "Stage 1 take-profit",
       strategy?.stage1_sell_enabled
-        ? `bought ≤${fmtCents(strategy.stage1_sell_max_buy)} → sell ${fmtCents(strategy.stage1_sell_price)} · above → sell ${fmtCents(strategy.stage1_sell_price_high)}`
+        ? `bought ≤${fmtCents(strategy.stage1_sell_max_buy)} → sell ${strategy.stage1_take_profit_pct > 0 ? `+${strategy.stage1_take_profit_pct}%` : "hold"} · above → sell ${fmtCents(strategy.stage1_sell_price_high)}`
         : "off",
     ],
     [

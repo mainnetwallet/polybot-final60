@@ -48,7 +48,7 @@ OVERRIDABLE_KEYS = (
     "stage0_take_profit_pct_high",
     "stage1_sell_enabled",
     "stage1_sell_max_buy",
-    "stage1_sell_price",
+    "stage1_take_profit_pct",
     "stage1_sell_price_high",
     "stage2_sell_enabled",
     "stage2_sell_price",
@@ -102,8 +102,10 @@ class RuntimeSettings(BaseModel):
     stage0_take_profit_pct_mid: float = Field(default=10.0, ge=0.0, le=500.0)
     stage0_take_profit_pct_high: float = Field(default=5.0, ge=0.0, le=500.0)
     stage1_sell_enabled: bool = False
-    stage1_sell_max_buy: float = Field(default=0.90, ge=0.01, le=0.999)
-    stage1_sell_price: float = Field(default=0.95, ge=0.02, le=0.999)
+    stage1_sell_max_buy: float = Field(default=0.86, ge=0.01, le=0.999)
+    # Stage 1 take-profit in percent above the average buy price for shares that cost up to
+    # stage1_sell_max_buy (0 = no take-profit for those shares: held to settlement / stop-loss).
+    stage1_take_profit_pct: float = Field(default=10.0, ge=0.0, le=500.0)
     stage1_sell_price_high: float = Field(default=0.99, ge=0.02, le=0.999)
     stage2_sell_enabled: bool = False
     stage2_sell_price: float = Field(default=0.99, ge=0.02, le=0.999)
@@ -134,10 +136,8 @@ class RuntimeSettings(BaseModel):
             raise ValueError("stage0_min_ask must be <= stage0_max_ask")
         if self.stage0_mid_from_ask > self.stage0_high_from_ask:
             raise ValueError("stage0_mid_from_ask must be <= stage0_high_from_ask")
-        if self.stage1_sell_price <= self.stage1_sell_max_buy:
-            raise ValueError("stage1_sell_price must be greater than stage1_sell_max_buy")
-        if self.stage1_sell_price_high < self.stage1_sell_price:
-            raise ValueError("stage1_sell_price_high must be >= stage1_sell_price")
+        if self.stage1_sell_price_high <= self.stage1_sell_max_buy:
+            raise ValueError("stage1_sell_price_high must be greater than stage1_sell_max_buy")
         if self.stage2_sell_price <= self.stage2_threshold:
             raise ValueError("stage2_sell_price must be greater than stage2_threshold")
         return self
@@ -145,15 +145,22 @@ class RuntimeSettings(BaseModel):
     def stage1_sell_price_for(self, cost_per_share: float | None) -> float | None:
         """Take-profit price for stage 1 shares bought at `cost_per_share`; None = take-profit is off.
 
-        Paid up to stage1_sell_max_buy (default 0.90) -> stage1_sell_price (0.95); paid more ->
-        stage1_sell_price_high (0.99). Unknown cost uses the high price, so it never sells too early.
+        Paid up to stage1_sell_max_buy -> cost * (1 + stage1_take_profit_pct / 100), capped at
+        STAGE0_MAX_TAKE_PROFIT_PRICE (a percentage of 0 means no take-profit for these shares: None);
+        paid more -> stage1_sell_price_high (0.99). Unknown cost uses the high price, so it never
+        sells too early.
         """
         if not self.stage1_sell_enabled:
             return None
         if cost_per_share is None:
             return self.stage1_sell_price_high
         if cost_per_share <= self.stage1_sell_max_buy + 1e-6:
-            return self.stage1_sell_price
+            if self.stage1_take_profit_pct <= 0 or cost_per_share <= 0:
+                return None
+            return min(
+                round(cost_per_share * (1.0 + self.stage1_take_profit_pct / 100.0), 6),
+                STAGE0_MAX_TAKE_PROFIT_PRICE,
+            )
         return self.stage1_sell_price_high
 
     def stage2_sell_price_for(self, cost_per_share: float | None) -> float | None:
