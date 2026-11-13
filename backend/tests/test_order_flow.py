@@ -455,15 +455,22 @@ async def test_price_gap_blocks_order_until_btc_is_far_enough_from_price_to_beat
     assert len(_orders()) == 1
 
 
-async def test_chain_gap_met_late_buys_only_stage1_then_stage3_next_event():
-    # gap rule blocks until 25s left: stage 1 must be refused at <=30s, so nothing buys at all
+async def test_chain_gap_met_in_last_30s_buys_only_stage3():
+    # gap rule blocks until 25s left: stage 1 missed its 30s deadline and stage 2 needs stage 1,
+    # but stage 3 is independent and buys as soon as its rules are met
     stack = build_stack(make_config(min_price_gap_usd=20.0))
     market = make_market(remaining=25)
     books = books_for(market, up_ask=0.93, down_ask=0.05)
+    weak = make_ctx(remaining=25, btc_price=100_005.0, price_to_beat=100_000.0)
+    _, results = await _submit(stack, market, books, ctx=weak)
+    assert _orders() == []
     strong = make_ctx(remaining=25, btc_price=100_030.0, price_to_beat=100_000.0)
     _, results = await _submit(stack, market, books, ctx=strong)
-    assert {r.reason for r in results} == {"stage1_missed", "stage1_not_bought"}
-    assert _orders() == []
+    reasons = sorted(r.reason for r in results)
+    assert reasons == ["stage1_missed", "stage1_not_bought", "submitted"]
+    orders = _orders()
+    assert len(orders) == 1
+    assert orders[0].order_key.endswith(":s3")
 
 
 async def test_chain_full_sequence_three_buys_in_one_market():

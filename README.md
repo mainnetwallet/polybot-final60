@@ -396,7 +396,7 @@ Strategy and risk defaults:
 | `LIVE_TRADING_ENABLED` | `false` | Master live switch |
 | `POLYMARKET_GEO_VERIFIED` | `false` | Set true only after verifying eligibility |
 
-Stage chain (always on, not configurable): stage 1 must buy first, and only while more than `STAGE3_SECONDS` remain (otherwise nothing buys that market); stage 2 needs stage 1 to have bought *before* `STAGE2_SECONDS` remained; stage 3 needs stage 1 to have bought (stage 2 not required). Up to 3 buys per 5m market.
+Stage chain (always on, not configurable): stage 1 can only buy while more than `STAGE3_SECONDS` remain (after that, stages 1 and 2 are off for the market); stage 2 needs stage 1 to have bought *before* `STAGE2_SECONDS` remained; stage 3 is independent and buys whenever its own rules (ask, price gap, ...) are met. Up to 3 buys per 5m market.
 
 Other `.env` keys (all present in `.env.example`):
 
