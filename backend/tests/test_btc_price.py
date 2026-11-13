@@ -196,14 +196,14 @@ def test_price_to_beat_is_the_first_tick_at_or_after_the_window_start_not_the_ne
     assert feed.snapshot(market)["price_to_beat"] == 71_794.38
 
 
-def test_price_to_beat_falls_back_to_nearest_tick_when_the_start_tick_was_missed():
+def test_price_to_beat_stays_missing_when_the_start_tick_was_missed():
     start = datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None)
     start_ms = int(start.replace(tzinfo=timezone.utc).timestamp() * 1000)
     feed = BtcPriceFeed(Settings())
     market = _market(start)
     feed.handle_message(_frame(start_ms - 300, 71_000.0))
     feed.handle_message(_frame(start_ms + 2_000, 71_010.0))  # stream moved on without an at/after-start tick
-    assert feed.snapshot(market)["price_to_beat"] == 71_000.0
+    assert feed.snapshot(market)["price_to_beat"] is None  # no neighbouring-tick guess
 
 
 def test_gap_inputs_return_price_and_beat_when_fresh():

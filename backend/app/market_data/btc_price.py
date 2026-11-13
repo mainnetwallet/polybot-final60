@@ -178,16 +178,7 @@ class BtcPriceFeed:
             if start_ms <= ts_ms <= start_ms + RTDS_OPEN_TOLERANCE_MS and (best is None or ts_ms < best[0]):
                 best = (ts_ms, price)
         if best is None:
-            latest = self._latest
-            if latest is None or latest[0] <= start_ms + RTDS_OPEN_TOLERANCE_MS:
-                return None  # the at/after-start tick may still arrive: wait for it instead of guessing
-            # that tick was missed (e.g. a gap in the stream): fall back to the nearest tick, if close enough
-            for ts_ms, price in self._ticks:
-                distance = abs(ts_ms - start_ms)
-                if distance <= RTDS_OPEN_TOLERANCE_MS and (best is None or distance < abs(best[0] - start_ms)):
-                    best = (ts_ms, price)
-        if best is None:
-            return None
+            return None  # never guess from a neighbouring tick: wait for it or for Gamma's official value
         found = (best[1], "polymarket-rtds")
         self._rtds_opens[market.market_id] = found
         while len(self._rtds_opens) > 24:
