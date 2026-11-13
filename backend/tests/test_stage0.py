@@ -439,3 +439,32 @@ def test_risk_blocks_stage0_ask_below_minimum():
     low = RiskManager().check(replace(signal, best_ask=0.55), good, config)
     assert low.approved is False and low.reason == "stage0_ask_too_low"
     assert RiskManager().check(replace(signal, best_ask=0.60), good, config).approved
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "btc, up_ask, down_ask, expected",
+    [
+        (100_100.0, 0.70, 0.30, "UP"),    # exactly +100 above the price to beat -> UP
+        (100_250.0, 0.70, 0.30, "UP"),    # +250
+        (100_099.0, 0.70, 0.30, None),    # +99: gap too small
+        (99_900.0, 0.30, 0.70, "DOWN"),   # exactly -100 below the price to beat -> DOWN
+        (99_750.0, 0.30, 0.70, "DOWN"),   # -250
+        (99_901.0, 0.30, 0.70, None),     # -99: gap too small
+        (100_150.0, 0.96, 0.70, None),    # UP has the gap but its ask is above .95; DOWN has no gap
+        (99_850.0, 0.70, 0.96, None),     # DOWN has the gap but its ask is above .95; UP has no gap
+        (100_150.0, 0.55, 0.45, None),    # UP has the gap but its ask is below .60
+        (100_000.0, 0.70, 0.70, None),    # no gap at all, both asks in range
+    ],
+)
+async def test_bot_stage0_buys_up_above_plus100_and_down_below_minus100(btc, up_ask, down_ask, expected):
+    market = make_market(remaining=150)
+    bot = _running_bot(market, btc=(btc, 100_000.0, ""))  # (BTC price, price to beat)
+    bot.data._books = dict(books_for(market, up_ask=up_ask, down_ask=down_ask))
+
+    await _event(bot, market)
+    with session_scope() as session:
+        orders = session.execute(select(Order)).scalars().all()
+    assert [o.side for o in orders] == ([expected] if expected else [])
