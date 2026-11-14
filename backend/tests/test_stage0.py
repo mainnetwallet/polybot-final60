@@ -312,7 +312,9 @@ async def test_bot_buys_stage0_on_gap_side_only_then_sells_at_plus_5_percent():
         ("BUY", 0, "FILLED"), ("SELL", 0, "FILLED"),
     ]
     buy = next(r for r in rows if r["action"] == "BUY")
-    assert buy["result"] == "WIN" and buy["result_pnl"] > 0
+    sell = next(r for r in rows if r["action"] == "SELL")
+    assert buy["result"] is None and buy["result_pnl"] is None  # a BUY row stays blank
+    assert sell["result"] == "WIN" and sell["result_pnl"] > 0  # the exit carries the result
     snap = await bot.snapshot()
     assert snap["positions"] == []  # closed by the sale, nothing waits for settlement
     assert snap["account"]["balance"] > 10.0 - 1e-9

@@ -29,7 +29,7 @@ from app.paper_trading.engine import PaperExecutionEngine
 from app.portfolio.analytics import AnalyticsService
 from app.portfolio.service import Portfolio
 from app.risk_manager.manager import RiskContext, RiskManager
-from app.services.order_outcomes import sell_outcomes, stage_outcomes
+from app.services.order_outcomes import sell_outcomes
 from app.strategy.engine import FinalWindowStrategy
 from app.strategy.types import StrategyEvaluation
 
@@ -1615,31 +1615,18 @@ class TradingBot:
             rows = session.execute(
                 select(Order).where(Order.mode == mode).order_by(Order.id.desc()).limit(limit)
             ).scalars().all()
-            positions = {
-                (p.market_id, p.side): p
-                for p in session.execute(
-                    select(Position).where(Position.mode == mode)
-                ).scalars().all()
-            }
-
             market_ids = {o.market_id for o in rows}
             market_orders = session.execute(
                 select(Order).where(Order.mode == mode, Order.market_id.in_(market_ids))
             ).scalars().all() if market_ids else []
-            stage_results = stage_outcomes(
-                market_orders, positions, self.orders._key_stage, self.orders._key_action
-            )
-
             exit_results = sell_outcomes(market_orders, self.orders._key_stage, self.orders._key_action)
 
             def outcome(o: Order) -> tuple[str | None, float | None]:
-                # No fill -> nothing to win or lose. A SELL row shows what that exit itself realised
-                # (take-profit or stop-loss), so no filled row is left without a result.
-                if (o.filled_size or 0) <= 0:
+                # Only a filled SELL row has a result: what that exit (take-profit or stop-loss) itself
+                # realised. A BUY row stays blank, its outcome is shown on the SELL row.
+                if (o.filled_size or 0) <= 0 or self.orders._key_action(o.order_key) != "SELL":
                     return None, None
-                if self.orders._key_action(o.order_key) == "SELL":
-                    return exit_results.get(o.id, (None, None))
-                return stage_results.get((o.market_id, o.side, self.orders._key_stage(o.order_key)), (None, None))
+                return exit_results.get(o.id, (None, None))
 
             return [
                 {

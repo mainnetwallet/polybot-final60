@@ -300,7 +300,9 @@ async def test_bot_stops_out_stage0_reports_a_loss_and_does_not_rebuy():
         ("SELL", 0, "FILLED"),
     ]
     buy = next(r for r in rows if r["action"] == "BUY")
-    assert buy["result"] == "LOSS" and buy["result_pnl"] < 0
+    sell = next(r for r in rows if r["action"] == "SELL")
+    assert buy["result"] is None and buy["result_pnl"] is None  # a BUY row stays blank
+    assert sell["result"] == "LOSS" and sell["result_pnl"] < 0  # the stop-loss exit carries the result
     snap = await bot.snapshot()
     assert snap["positions"] == []
     assert snap["account"]["balance"] < 10.0
