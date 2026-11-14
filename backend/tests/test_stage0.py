@@ -332,7 +332,7 @@ async def test_bot_buys_stage0_on_gap_side_only_then_sells_at_plus_5_percent():
     assert snap["account"]["balance"] > 10.0 - 1e-9
     strategy = snap["strategy"]
     assert (strategy["stage0_take_profit_pct_low"], strategy["stage0_take_profit_pct_mid"], strategy["stage0_take_profit_pct_high"]) == (15.0, 10.0, 5.0)
-    assert strategy["stage0_max_ask"] == 0.99
+    assert strategy["stage0_max_ask"] == 0.94
 
 
 async def test_bot_stage0_needs_gap_and_stops_in_final_window():
@@ -471,8 +471,8 @@ import pytest  # noqa: E402
         (99_920.0, 0.30, 0.70, "DOWN"),   # exactly -80 below the price to beat -> DOWN
         (99_750.0, 0.30, 0.70, "DOWN"),   # -250
         (99_921.0, 0.30, 0.70, None),     # -79: gap too small
-        (100_150.0, 0.995, 0.70, None),   # UP has the gap but its ask is above the .99 limit; DOWN has no gap
-        (99_850.0, 0.70, 0.995, None),    # DOWN has the gap but its ask is above the .99 limit; UP has no gap
+        (100_150.0, 0.95, 0.70, None),    # UP has the gap but its ask is above the .94 limit; DOWN has no gap
+        (99_850.0, 0.70, 0.95, None),     # DOWN has the gap but its ask is above the .94 limit; UP has no gap
         (100_150.0, 0.55, 0.45, None),    # UP has the gap but its ask is below .60
         (100_000.0, 0.70, 0.70, None),    # no gap at all, both asks in range
     ],
@@ -691,9 +691,9 @@ def test_stage0_take_profit_tiers_15_10_5_by_buy_price():
     assert make_config(stage0_take_profit_pct_high=50.0).stage0_sell_price_for(0.85) == 0.99  # capped at 0.99
 
 
-def test_stage0_defaults_are_max_ask_99_and_tiers_15_10_5():
+def test_stage0_defaults_are_max_ask_94_and_tiers_15_10_5():
     fields = Settings.model_fields
-    assert fields["stage0_max_ask"].default == 0.99
+    assert fields["stage0_max_ask"].default == 0.94
     assert fields["stage0_high_buy_after_pct"].default == 50.0
     assert (fields["stage0_mid_from_ask"].default, fields["stage0_high_from_ask"].default) == (0.70, 0.80)
     assert [fields[f"stage0_take_profit_pct_{t}"].default for t in ("low", "mid", "high")] == [15.0, 10.0, 5.0]

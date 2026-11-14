@@ -101,7 +101,7 @@ class Settings(BaseSettings):
     stage0_start_seconds: int = 200
     stage0_end_seconds: int = 100
     stage0_min_ask: float = 0.60
-    stage0_max_ask: float = 0.99
+    stage0_max_ask: float = 0.94
     stage0_min_price_gap_usd: float = 80.0
     # Take-profit for stage 0: sell once the best bid is this many percent ABOVE the average price paid per
     # share (cost * (1 + pct / 100), capped at 0.99). The percentage depends on what stage 0 paid per share:
