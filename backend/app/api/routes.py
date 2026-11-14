@@ -140,6 +140,10 @@ def build_router(
     ) -> list[dict]:
         return await bot.recent_orders(_mode(mode), limit)
 
+    @router.get("/stage-results")
+    async def stage_results(mode: str | None = Query(default=None)) -> dict:
+        return await bot.stage_results(_mode(mode))
+
     @router.get("/positions")
     async def positions(
         mode: str | None = Query(default=None),

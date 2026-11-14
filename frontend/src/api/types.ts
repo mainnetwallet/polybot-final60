@@ -96,6 +96,21 @@ export interface PositionRow {
   closed_at: string | null;
 }
 
+export interface StageResultRow {
+  stage: number;
+  wins: number;
+  losses: number;
+  trades: number;
+  win_rate: number | null;
+  pnl: number;
+}
+
+export interface StageResults {
+  mode: Mode;
+  stages: StageResultRow[];
+  total: { wins: number; losses: number; trades: number; win_rate: number | null; pnl: number };
+}
+
 export interface SellableHolding {
   market_id: string;
   side: Side;

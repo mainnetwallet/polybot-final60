@@ -7,6 +7,7 @@ import type {
   SettingsState,
   Side,
   Snapshot,
+  StageResults,
   TriggerRow,
 } from "./types";
 
@@ -102,6 +103,7 @@ export const api = {
 
   orders: (mode: Mode, limit = 100) =>
     request<OrderRow[]>(`/api/orders?mode=${mode}&limit=${limit}`),
+  stageResults: (mode: Mode) => request<StageResults>(`/api/stage-results?mode=${mode}`),
   positions: (mode: Mode, limit = 100) =>
     request<PositionRow[]>(`/api/positions?mode=${mode}&limit=${limit}`),
   analytics: (mode: Mode) => request<Analytics>(`/api/analytics?mode=${mode}`),
