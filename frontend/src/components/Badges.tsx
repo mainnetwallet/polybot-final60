@@ -162,11 +162,19 @@ export function ResultChip({ result, pnl }: { result?: string | null; pnl?: numb
       ? "border-up/30 bg-up/10 text-up"
       : result === "LOSS"
         ? "border-down/30 bg-down/10 text-down"
-        : "border-amber/30 bg-amber/10 text-amber";
+        : result === "BUY"
+          ? "border-sky/30 bg-sky/10 text-sky"
+          : "border-amber/30 bg-amber/10 text-amber";
   const label = result === "OPEN" ? "PENDING" : result;
   const sign = pnl != null && pnl > 0 ? "+" : "";
+  const title =
+    result === "BUY"
+      ? "Entry filled. The WIN/LOSS result is shown on the SELL row."
+      : pnl != null
+        ? `Realized P&L ${sign}$${pnl.toFixed(2)}`
+        : "Waiting for market settlement";
   return (
-    <span className={cx("chip", tone)} title={pnl != null ? `Realized P&L ${sign}$${pnl.toFixed(2)}` : "Waiting for market settlement"}>
+    <span className={cx("chip", tone)} title={title}>
       {label}
       {pnl != null ? ` ${sign}$${pnl.toFixed(2)}` : ""}
     </span>

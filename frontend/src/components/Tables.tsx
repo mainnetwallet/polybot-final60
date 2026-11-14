@@ -60,7 +60,7 @@ export function OrdersTable({
                   <StatusChip status={order.status} action={order.action} reason={order.reason} />
                 </td>
                 <td>
-                  <ResultChip result={order.result} pnl={order.result_pnl} />
+                  <ResultChip result={order.action === "BUY" && order.filled_size > 0 ? "BUY" : order.result} pnl={order.result_pnl} />
                 </td>
                 <td className="mono text-right text-slate-300">{fmtUsd(order.requested_notional)}</td>
                 <td className="mono text-right text-slate-300">{fmtCents(price)}</td>
