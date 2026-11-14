@@ -111,7 +111,7 @@ class RuntimeSettings(BaseModel):
     # Stage 1 take-profit in percent above the average buy price for shares that cost up to
     # stage1_sell_max_buy (0 = no take-profit for those shares: held to settlement / stop-loss).
     stage1_take_profit_pct: float = Field(default=8.0, ge=0.0, le=500.0)
-    stage1_sell_price_high: float = Field(default=0.98, ge=0.02, le=0.999)
+    stage1_sell_price_high: float = Field(default=0.99, ge=0.02, le=0.999)
     stage2_sell_enabled: bool = False
     stage2_sell_price: float = Field(default=0.99, ge=0.02, le=0.999)
     # Stop-loss in percent below the average buy price (0 = off). Off when a RuntimeSettings is built

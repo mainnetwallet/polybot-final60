@@ -25,12 +25,11 @@ os.environ["RESOLUTION_POLL_SECONDS"] = "3600"
 for _stage in range(4):
     os.environ[f"STAGE{_stage}_STOP_LOSS_PCT"] = "0"
 os.environ["STAGE0_HIGH_BUY_STOP_LOSS_PCT"] = "0"
-# The app defaults moved on (stage 0 min ask .69 / gap 70, stage 1 take-profit 8 % / sell .98); the bot-level
+# The app defaults moved on (stage 0 min ask .69 / gap 70, stage 1 take-profit 8 %); the bot-level
 # tests were written against the older values, so they stay pinned here. Default tests read Settings.model_fields.
 os.environ["STAGE0_MIN_ASK"] = "0.60"
 os.environ["STAGE0_MIN_PRICE_GAP_USD"] = "80"
 os.environ["STAGE1_TAKE_PROFIT_PCT"] = "10"
-os.environ["STAGE1_SELL_PRICE_HIGH"] = "0.99"
 
 import pytest  # noqa: E402
 

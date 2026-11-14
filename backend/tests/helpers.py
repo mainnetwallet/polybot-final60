@@ -76,12 +76,11 @@ def make_config(**overrides) -> RuntimeSettings:
         live_trading_enabled=False,
         live_credentials_present=False,
         geo_verified=False,
-        # The app defaults moved on (stage 0 min ask .69 / gap 70, stage 1 take-profit 8 % / sell .98);
+        # The app defaults moved on (stage 0 min ask .69 / gap 70, stage 1 take-profit 8 %);
         # the behaviour tests keep the values they were written against and set their own where it matters.
         stage0_min_ask=0.60,
         stage0_min_price_gap_usd=80.0,
         stage1_take_profit_pct=10.0,
-        stage1_sell_price_high=0.99,
     )
     values.update(overrides)
     return RuntimeSettings(**values)

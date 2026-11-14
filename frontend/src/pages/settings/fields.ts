@@ -171,7 +171,7 @@ export const FIELDS: FieldSpec[] = [
   {
     key: "stage1_sell_price_high",
     label: "Stage 1: sell at (dearer buy)",
-    hint: "Sell price for stage 1 shares bought above the limit (default 0.98).",
+    hint: "Sell price for stage 1 shares bought above the limit (default 0.99).",
     kind: "number",
     step: "0.01",
     min: "0.02",
