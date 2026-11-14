@@ -407,7 +407,7 @@ function PositionPanel({ orders }: { orders: OrderRow[] }) {
           hint="Filled buys of the live market appear here, one row per stage."
         />
       ) : (
-        <div className="space-y-2.5">
+        <div className="scrollbar max-h-[22rem] space-y-2.5 overflow-y-auto pr-1">
           {rows.map((row) => (
             <div
               key={row.key}
