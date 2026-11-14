@@ -233,3 +233,40 @@ def test_stage3_is_independent_of_stage1_and_stage2():
     assert risk.check(s3, _chain_ctx(25, bought=True, s1_remaining=70), config).approved is True
     assert risk.check(s3, _chain_ctx(25, bought=True, s1_remaining=40), config).approved is True  # stage 2 skipped
     assert risk.check(s3, _chain_ctx(25, bought=True, s1_remaining=None), config).approved is True
+
+
+def _stage_signal(stage: int, ask: float) -> Signal:
+    return Signal(
+        market_id="0xmarket",
+        side="UP",
+        token_id="up-token",
+        best_ask=ask,
+        ask_size=100.0,
+        remaining_seconds=25.0,
+        threshold=0.75,
+        observed_at_ms=1,
+        book_age_ms=50,
+        stage=stage,
+    )
+
+
+def test_stage2_and_3_use_their_own_threshold_below_trigger():
+    # stage 2/3 thresholds below trigger_threshold must not be overridden by the trigger threshold
+    config = make_config(trigger_threshold=0.80, stage2_threshold=0.75, stage3_threshold=0.75)
+    for stage in (2, 3):
+        decision = RiskManager().check(_stage_signal(stage, 0.77), make_ctx(remaining=25.0), config)
+        assert decision.approved is True, (stage, decision)
+
+
+def test_stage2_and_3_still_blocked_below_their_own_threshold():
+    config = make_config(trigger_threshold=0.80, stage2_threshold=0.90, stage3_threshold=0.90)
+    for stage in (2, 3):
+        decision = RiskManager().check(_stage_signal(stage, 0.85), make_ctx(remaining=25.0), config)
+        assert decision.approved is False
+        assert decision.reason == "below_threshold"
+
+
+def test_stage1_still_uses_trigger_threshold():
+    config = make_config(trigger_threshold=0.80, stage2_threshold=0.75)
+    decision = RiskManager().check(_stage_signal(1, 0.77), make_ctx(remaining=25.0), config)
+    assert decision.reason == "below_threshold"
