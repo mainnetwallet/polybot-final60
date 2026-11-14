@@ -80,6 +80,7 @@ function statusTone(status: string): string {
     case "armed":
       return "border-sky/30 bg-sky/10 text-sky";
     case "REJECTED":
+    case "CANCELED":
     case "CANCELLED":
     case "FAILED":
     case "EXPIRED":
@@ -111,17 +112,24 @@ export function StatusChip({
   reason?: string | null;
 }) {
   const label = status.replace(/_/g, " ");
-  // Orders: tag the status with what kind of order it is (BUY / SELL / STOP LOSS / TAKE PROFIT).
+  // Orders: tag the status with what kind of order it is (BUY / STOP LOSS / TAKE PROFIT).
   let kind: string | null = null;
+  let exitTone: string | null = null;
   if (action === "BUY") {
     kind = "BUY";
   } else if (action === "SELL") {
-    if (reason?.endsWith("_stop_loss")) kind = "STOP LOSS";
-    else if (reason?.endsWith("_take_profit")) kind = "TAKE PROFIT";
-    else kind = "SELL";
+    if (reason?.endsWith("_stop_loss")) {
+      kind = "STOP LOSS";
+      exitTone = "border-rose-400/40 bg-rose-400/15 text-rose-300"; // red
+    } else if (reason?.endsWith("_take_profit")) {
+      kind = "TAKE PROFIT";
+      exitTone = "border-lime-400/40 bg-lime-400/15 text-lime-300"; // lime green
+    }
   }
+  // A filled exit gets its own color per kind; every other status keeps the normal status color.
+  const tone = status === "FILLED" && exitTone ? exitTone : statusTone(status);
   return (
-    <span className={cx("chip", statusTone(status))}>
+    <span className={cx("chip", tone)}>
       {kind ? `${kind} ${label}` : label}
     </span>
   );
