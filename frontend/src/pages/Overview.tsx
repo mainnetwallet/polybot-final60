@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { api } from "../api/client";
-import { ModeBadge, SideBadge } from "../components/Badges";
+import type { OrderRow, PositionRow, SellableHolding, StrategyState } from "../api/types";
+import { ModeBadge, SideBadge, StageChip } from "../components/Badges";
 import { CountdownRing } from "../components/CountdownRing";
 import { EmptyState } from "../components/EmptyState";
 import {
@@ -192,6 +193,8 @@ function MarketPanel() {
         />
       )}
 
+      <StrategyStateBlock strategy={strategy} />
+
       <div className="mt-5 grid grid-cols-2 gap-3 border-t hairline pt-4 sm:grid-cols-4">
         <div>
           <div className="label">Market remaining</div>
@@ -303,44 +306,36 @@ function AccountPanel() {
   );
 }
 
-function StrategyPulse() {
-  const { snapshot } = useBot();
-  const strategy = snapshot?.strategy;
-  const armed = (strategy?.up_armed || strategy?.down_armed) ?? false;
-  const phase = !strategy
-    ? "WAIT"
-    : strategy.in_window
-      ? armed
-        ? "TRIGGER"
-        : "MONITOR"
-      : "OBSERVE";
+/** Ask-trigger state: phase, UP/DOWN ask vs. threshold, engine reason. Lives inside the active-market panel. */
+function StrategyStateBlock({ strategy }: { strategy: StrategyState }) {
+  const armed = strategy.up_armed || strategy.down_armed;
+  const phase = strategy.in_window ? (armed ? "TRIGGER" : "MONITOR") : "OBSERVE";
 
   return (
-    <section className="panel p-5 xl:col-span-4">
-      <PanelHead
-        label="Strategy state"
-        title="Configured ask-trigger strategy"
-        right={
-          <span
-            className={cx(
-              "chip",
-              phase === "TRIGGER"
-                ? "border-up/30 bg-up/10 text-up"
-                : phase === "MONITOR"
-                  ? "border-amber/30 bg-amber/10 text-amber"
-                  : "border-white/10 bg-white/5 text-slate-400",
-            )}
-          >
-            {phase}
-          </span>
-        }
-      />
+    <div className="mt-5 border-t hairline pt-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <div className="label">Strategy state</div>
+          <div className="mt-1 text-[12px] text-slate-400">Configured ask-trigger strategy</div>
+        </div>
+        <span
+          className={cx(
+            "chip",
+            phase === "TRIGGER"
+              ? "border-up/30 bg-up/10 text-up"
+              : phase === "MONITOR"
+                ? "border-amber/30 bg-amber/10 text-amber"
+                : "border-white/10 bg-white/5 text-slate-400",
+          )}
+        >
+          {phase}
+        </span>
+      </div>
 
-      <div className="space-y-2.5">
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
         {(["UP", "DOWN"] as const).map((side) => {
-          const ask = side === "UP" ? strategy?.up_ask : strategy?.down_ask;
-          const isArmed = side === "UP" ? strategy?.up_armed : strategy?.down_armed;
-          const threshold = strategy?.trigger_threshold ?? null;
+          const ask = side === "UP" ? strategy.up_ask : strategy.down_ask;
+          const isArmed = side === "UP" ? strategy.up_armed : strategy.down_armed;
           return (
             <div
               key={side}
@@ -358,7 +353,7 @@ function StrategyPulse() {
                 <span className="mono text-[13px] text-slate-300">{fmtCents(ask)}</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="mono text-[10px] text-slate-600">≥ {fmtCents(threshold)}</span>
+                <span className="mono text-[10px] text-slate-600">≥ {fmtCents(strategy.trigger_threshold)}</span>
                 {isArmed ? (
                   <span className={cx("chip", side === "UP" ? "border-up/30 bg-up/10 text-up" : "border-down/30 bg-down/10 text-down")}>
                     <IconZap size={9} />
@@ -373,26 +368,170 @@ function StrategyPulse() {
         })}
       </div>
 
-      <div className="mt-4 rounded-lg border hairline bg-black/20 px-3 py-2.5">
+      <div className="mt-3 rounded-lg border hairline bg-black/20 px-3 py-2.5">
         <div className="label">Engine reason</div>
         <div className="mt-1 text-[12px] leading-relaxed text-slate-300">
-          {strategy ? humanizeReason(strategy.reason, strategy.final_window_seconds) : "Connecting to strategy engine"}
+          {humanizeReason(strategy.reason, strategy.final_window_seconds)}
         </div>
-        {strategy?.remaining_seconds !== null && strategy?.remaining_seconds !== undefined ? (
+        {strategy.remaining_seconds !== null && strategy.remaining_seconds !== undefined ? (
           <div className="mono mt-1.5 text-[10.5px] text-slate-600">
             T-{fmtNum(Math.max(0, strategy.remaining_seconds), 0)}s · window {strategy.final_window_seconds}s
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
 
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        <span className="chip border-white/8 bg-white/[0.03] text-slate-500">
-          {strategy?.duplicate_policy.replace(/_/g, " ") ?? "—"}
-        </span>
-        <span className="chip border-white/8 bg-white/[0.03] text-slate-500">
-          {strategy?.conflict_policy.replace(/_/g, " ") ?? "—"}
-        </span>
-      </div>
+type StageHolding = {
+  key: string;
+  side: "UP" | "DOWN";
+  stage: number | null;
+  size: number;
+  entry: number | null;
+  bid: number | null;
+  pnl: number | null;
+  holding: SellableHolding | null;
+};
+
+/** Volume-weighted entry price of the filled BUY orders of one stage of one market side. */
+function stageEntryPrice(orders: OrderRow[], marketId: string, side: string, stage: number): number | null {
+  let cost = 0;
+  let qty = 0;
+  for (const o of orders) {
+    if (o.market_id !== marketId || o.side !== side || o.action !== "BUY" || !(o.filled_size > 0)) continue;
+    if ((o.stage ?? 0) !== stage) continue;
+    const price = o.avg_fill_price ?? o.submitted_price ?? o.requested_price;
+    cost += price * o.filled_size;
+    qty += o.filled_size;
+  }
+  return qty > 0 ? cost / qty : null;
+}
+
+/** Everything held in the live market, one row per stage (a stage held on its own stays its own row), each with a Sell button. */
+function PositionPanel({ orders }: { orders: OrderRow[] }) {
+  const { snapshot, sellNow } = useBot();
+  const [selling, setSelling] = useState<Set<string>>(new Set());
+  if (!snapshot) return <LoadingPanel className="xl:col-span-4" />;
+
+  const marketId = snapshot.market?.market_id ?? null;
+  const sellable = snapshot.sellable ?? [];
+  const rows: StageHolding[] = [];
+  const open: PositionRow[] = marketId
+    ? snapshot.positions.filter((p) => p.market_id === marketId && p.status === "open" && p.size > 0)
+    : [];
+  for (const p of open) {
+    const bid = (p.side === "UP" ? snapshot.books.up : snapshot.books.down)?.best_bid ?? null;
+    const stages = sellable.filter((h) => h.market_id === p.market_id && h.side === p.side);
+    if (stages.length === 0) {
+      // held, but nothing sellable right now (sell in flight, kill switch, ...): show the whole position
+      rows.push({
+        key: `${p.market_id}:${p.side}`,
+        side: p.side,
+        stage: null,
+        size: p.size,
+        entry: p.avg_price,
+        bid,
+        pnl: p.unrealized_pnl,
+        holding: null,
+      });
+      continue;
+    }
+    for (const h of stages) {
+      const entry = stageEntryPrice(orders, p.market_id, p.side, h.stage);
+      rows.push({
+        key: `${h.market_id}:${h.side}:${h.stage}`,
+        side: p.side,
+        stage: h.stage,
+        size: h.size,
+        entry,
+        bid,
+        pnl: entry !== null && bid !== null ? (bid - entry) * h.size : null,
+        holding: h,
+      });
+    }
+  }
+  rows.sort((x, y) => (x.stage ?? 99) - (y.stage ?? 99) || x.side.localeCompare(y.side));
+
+  const sell = (row: StageHolding) => {
+    if (!row.holding || selling.has(row.key)) return; // only blocks a double click while the request is on its way
+    setSelling((prev) => new Set(prev).add(row.key));
+    void Promise.resolve(sellNow(row.holding)).finally(() =>
+      setSelling((prev) => {
+        const next = new Set(prev);
+        next.delete(row.key);
+        return next;
+      }),
+    );
+  };
+
+  return (
+    <section className="panel p-5 xl:col-span-4">
+      <PanelHead
+        label="Position"
+        title="Held in this market"
+        right={
+          <span className="chip border-white/8 bg-white/[0.03] text-slate-500">
+            <IconLayers size={10} />
+            {rows.length}
+          </span>
+        }
+      />
+
+      {rows.length === 0 ? (
+        <EmptyState
+          icon={<IconLayers size={24} />}
+          title="No open position"
+          hint="Filled buys of the live market appear here, one row per stage."
+        />
+      ) : (
+        <div className="space-y-2.5">
+          {rows.map((row) => (
+            <div
+              key={row.key}
+              className={cx(
+                "rounded-lg border px-3 py-2.5",
+                row.side === "UP" ? "border-up/20 bg-up/[0.04]" : "border-down/20 bg-down/[0.04]",
+              )}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <StageChip stage={row.stage} />
+                  <SideBadge side={row.side} size="sm" />
+                  <span className="mono text-[12px] text-slate-300">{fmtNum(row.size, 2)} sh</span>
+                </div>
+                {row.holding ? (
+                  <button
+                    type="button"
+                    onClick={() => sell(row)}
+                    disabled={selling.has(row.key)}
+                    title={`Sell ${fmtNum(row.holding.size, 2)} shares now at the market`}
+                    className="rounded-md border border-rose-400/40 bg-rose-400/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-rose-300 transition hover:bg-rose-400/25 disabled:cursor-wait disabled:opacity-50"
+                  >
+                    {selling.has(row.key) ? "Selling…" : "Sell"}
+                  </button>
+                ) : null}
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-2 text-[11px]">
+                <div>
+                  <div className="label">Entry</div>
+                  <div className="mono mt-0.5 text-slate-300">{fmtCents(row.entry)}</div>
+                </div>
+                <div>
+                  <div className="label">Bid</div>
+                  <div className="mono mt-0.5 text-slate-300">{fmtCents(row.bid)}</div>
+                </div>
+                <div>
+                  <div className="label">PnL</div>
+                  <div className={cx("mono mt-0.5", row.pnl === null ? "text-slate-600" : pnlClass(row.pnl))}>
+                    {row.pnl === null ? "—" : fmtSignedUsd(row.pnl)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -457,7 +596,7 @@ function FeedPanel() {
 }
 
 export function Overview() {
-  const { snapshot, history, dataVersion, sellNow } = useBot();
+  const { snapshot, history, dataVersion } = useBot();
   const mode = snapshot?.bot.mode;
   const orders = useLiveRefresh(
     () => (mode ? api.orders(mode, 40) : Promise.resolve([])),
@@ -465,14 +604,7 @@ export function Overview() {
     dataVersion,
     mode !== undefined,
   );
-  // Newest 8 orders, plus the BUY row of any stage that can still be sold, so no Sell button is pushed out of view.
-  const sellable = snapshot?.sellable ?? [];
-  const visibleOrders = (orders.data ?? []).filter(
-    (order, index) =>
-      index < 8 ||
-      (order.action === "BUY" &&
-        sellable.some((h) => h.market_id === order.market_id && h.side === order.side && h.stage === (order.stage ?? 0))),
-  );
+  const visibleOrders = (orders.data ?? []).slice(0, 8);
   const config = snapshot?.config ?? {};
   const stale = typeof config.stale_data_max_age_ms === "number" ? config.stale_data_max_age_ms : null;
 
@@ -502,7 +634,7 @@ export function Overview() {
         staleAfterMs={stale}
         className="xl:col-span-4"
       />
-      <StrategyPulse />
+      <PositionPanel orders={orders.data ?? []} />
       <FeedPanel />
 
       <section className="panel overflow-hidden xl:col-span-8">
@@ -519,8 +651,6 @@ export function Overview() {
           <OrdersTable
             orders={visibleOrders}
             emptyHint="Triggers that qualify create order records."
-            sellable={sellable}
-            onSell={sellNow}
           />
         ) : (
           <LoadingPanel className="m-4" />
