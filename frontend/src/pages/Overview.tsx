@@ -177,31 +177,6 @@ function MarketPanel() {
       )}
 
       <TriggerRows strategy={strategy} />
-
-      <div className="mt-5 grid grid-cols-2 gap-3 border-t hairline pt-4 sm:grid-cols-4">
-        <div>
-          <div className="label">Market remaining</div>
-          <div className="mono mt-1 text-[14px] text-slate-200">
-            {remaining !== null ? `${Math.max(0, Math.ceil(remaining))}s` : "—"}
-          </div>
-        </div>
-        <div>
-          <div className="label">Final window</div>
-          <div className="mono mt-1 text-[14px] text-slate-200">{finalWindow}s</div>
-        </div>
-        <div>
-          <div className="label">Conflict policy</div>
-          <div className="mt-1 text-[12px] capitalize text-slate-300">
-            {strategy.conflict_policy.replace(/_/g, " ")}
-          </div>
-        </div>
-        <div>
-          <div className="label">Duplicate policy</div>
-          <div className="mt-1 text-[12px] capitalize text-slate-300">
-            {strategy.duplicate_policy.replace(/_/g, " ")}
-          </div>
-        </div>
-      </div>
     </section>
   );
 }
