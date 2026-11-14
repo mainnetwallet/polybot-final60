@@ -969,55 +969,92 @@ class OrderManager:
         )
         return [result for stage_results in per_stage for result in stage_results]
 
+    async def manual_sell(
+        self, market: MarketInfo, books: dict[str, OrderBook], mode: str, config, side: str, stage: int
+    ) -> OrderResult:
+        """Operator "sell now": sell everything `stage` still holds on `side` at the market, right away.
+
+        No confirmation, no retry gap and no take-profit / stop-loss condition: it only needs shares
+        to sell and a bid. Not blocked by a risk halt, since selling only reduces exposure.
+        """
+        if stage not in EXIT_STAGES:
+            return OrderResult(None, side, "BLOCKED", "unknown_stage")
+        if market.remaining_seconds() <= 0:
+            return OrderResult(None, side, "BLOCKED", "market_ended")
+        results = await self._handle_stage_exit(market, books, mode, config, stage, manual_side=side)
+        return results[0] if results else OrderResult(None, side, "BLOCKED", "no_holding")
+
     async def _handle_stage_exit(
-        self, market: MarketInfo, books: dict[str, OrderBook], mode: str, config, stage: int
+        self,
+        market: MarketInfo,
+        books: dict[str, OrderBook],
+        mode: str,
+        config,
+        stage: int,
+        manual_side: str | None = None,
     ) -> list[OrderResult]:
         """Sell the shares `stage` bought in this market: at its take-profit price once the best bid
-        reaches it, or at the market once the best bid falls to its stop-loss level."""
+        reaches it, or at the market once the best bid falls to its stop-loss level.
+        With `manual_side` set it is the operator's "sell now": sold at the market, no condition."""
+        manual = manual_side is not None
         reg_key = (mode, market.market_id)
         holdings = self._holdings(stage)
         async with self._exit_locks[stage]:
-            if not self._submission_allowed(mode):
+            if not manual and not self._submission_allowed(mode):
                 return []
-            if reg_key not in holdings:
+            if manual or reg_key not in holdings:
+                # a manual sell always reads what is really held, never a cached value
                 holdings[reg_key] = await asyncio.to_thread(
                     self.load_stage0_holding, mode, market.market_id, stage
                 )
             holding = holdings[reg_key]
-            if holding is None or holding.sell_in_flight:
+            if manual and (holding is None or holding.side != manual_side):
+                return [OrderResult(None, manual_side, "BLOCKED", "no_holding")]
+            if holding is None:
                 return []
+            if holding.sell_in_flight:
+                return [OrderResult(None, holding.side, "BLOCKED", "sell_in_flight")] if manual else []
             sell_size = _floor_shares(holding.size)
             if sell_size < SELL_DUST:
                 holdings[reg_key] = None
-                return []
+                return [OrderResult(None, holding.side, "BLOCKED", "no_holding")] if manual else []
             book = books.get(holding.token_id)
             bid = book.best_bid if book is not None else None
-            if stage == 0:
-                sell_price = config.stage0_sell_price_for(holding.cost)
-            elif stage == 1:
-                sell_price = config.stage1_sell_price_for(holding.cost)
-            elif stage == 2:
-                sell_price = config.stage2_sell_price_for(holding.cost)
+            if manual:
+                if bid is None:
+                    return [OrderResult(None, holding.side, "BLOCKED", "no_bid")]
+                stop_price = None
+                kind, floor = "manual", STOP_LOSS_FLOOR  # market sell: no price floor
+                sell_key = None
+                attempts = 0
+                now_ms = clock.now_ms()
             else:
-                sell_price = None  # stage 3 has no take-profit: held to settlement unless its stop-loss fires
-            stop_price = config.stop_loss_price_for(stage, holding.cost)
-            if bid is None:
-                return []
-            if stop_price is not None and bid <= stop_price + 1e-9:
-                kind, floor = "stop_loss", STOP_LOSS_FLOOR
-            elif sell_price is not None and bid + 1e-9 >= sell_price:
-                kind, floor = "take_profit", sell_price
-            else:
-                return []  # neither exit is due (or both are switched off): held to settlement
-            sell_key = (mode, market.market_id, stage, kind)
-            attempts = self._sell_attempts.get(sell_key, 0)
-            if attempts >= MAX_SELL_ATTEMPTS:
-                return [OrderResult(None, holding.side, "BLOCKED", "max_sell_attempts")]
-            now_ms = clock.now_ms()
-            if now_ms - self._last_sell_ms.get(sell_key, 0) < self._exit_retry_gap_ms:
-                return []
-            self._sell_attempts[sell_key] = attempts + 1
-            self._last_sell_ms[sell_key] = now_ms
+                if stage == 0:
+                    sell_price = config.stage0_sell_price_for(holding.cost)
+                elif stage == 1:
+                    sell_price = config.stage1_sell_price_for(holding.cost)
+                elif stage == 2:
+                    sell_price = config.stage2_sell_price_for(holding.cost)
+                else:
+                    sell_price = None  # stage 3 has no take-profit: held to settlement unless its stop-loss fires
+                stop_price = config.stop_loss_price_for(stage, holding.cost)
+                if bid is None:
+                    return []
+                if stop_price is not None and bid <= stop_price + 1e-9:
+                    kind, floor = "stop_loss", STOP_LOSS_FLOOR
+                elif sell_price is not None and bid + 1e-9 >= sell_price:
+                    kind, floor = "take_profit", sell_price
+                else:
+                    return []  # neither exit is due (or both are switched off): held to settlement
+                sell_key = (mode, market.market_id, stage, kind)
+                attempts = self._sell_attempts.get(sell_key, 0)
+                if attempts >= MAX_SELL_ATTEMPTS:
+                    return [OrderResult(None, holding.side, "BLOCKED", "max_sell_attempts")]
+                now_ms = clock.now_ms()
+                if now_ms - self._last_sell_ms.get(sell_key, 0) < self._exit_retry_gap_ms:
+                    return []
+                self._sell_attempts[sell_key] = attempts + 1
+                self._last_sell_ms[sell_key] = now_ms
 
             def _bids_snapshot() -> dict:
                 return {
@@ -1040,7 +1077,7 @@ class OrderManager:
             self._logs.log(
                 "WARNING" if kind == "stop_loss" else "INFO",
                 "order_submit",
-                f"S{stage} {'STOP-LOSS ' if kind == 'stop_loss' else ''}marketable SELL "
+                f"S{stage} {'STOP-LOSS ' if kind == 'stop_loss' else 'MANUAL ' if kind == 'manual' else ''}marketable SELL "
                 f"{holding.side} {sell_size:.2f} shares at bid {bid:.3f}{stop_note}",
                 payload={
                     "market_id": market.market_id,
@@ -1091,16 +1128,17 @@ class OrderManager:
                 holding.side,
                 mode,
                 stage,
-                f"stage{stage}_stop_loss" if kind == "stop_loss" else None,
+                f"stage{stage}_stop_loss" if kind == "stop_loss" else f"stage{stage}_manual" if manual else None,
             )
             holdings[reg_key] = await asyncio.to_thread(
                 self.load_stage0_holding, mode, market.market_id, stage
             )
-            if isinstance(report.raw, dict) and report.raw.get("http_status") == 429:
+            if sell_key is not None and isinstance(report.raw, dict) and report.raw.get("http_status") == 429:
                 # Rate limited by the CLOB (Retry-After): do not hammer it, wait ~250 ms for this exit.
                 self._last_sell_ms[sell_key] = clock.now_ms() + 200
             if report.fills:
-                self._sell_attempts.pop(sell_key, None)
+                if sell_key is not None:
+                    self._sell_attempts.pop(sell_key, None)
                 self._logs.log(
                     "INFO",
                     "fill",

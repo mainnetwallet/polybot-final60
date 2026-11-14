@@ -5,6 +5,7 @@ import type {
   OrderRow,
   PositionRow,
   SettingsState,
+  Side,
   Snapshot,
   TriggerRow,
 } from "./types";
@@ -77,6 +78,12 @@ export const api = {
     request<Snapshot>("/api/mode", {
       method: "POST",
       body: JSON.stringify({ mode, confirm_live: confirmLive, confirmation_phrase: phrase }),
+    }),
+  /** Instant "sell now" for the shares one stage holds on one side of a market (no confirmation step). */
+  sellNow: (marketId: string, side: Side, stage: number) =>
+    request<Snapshot>("/api/orders/sell", {
+      method: "POST",
+      body: JSON.stringify({ market_id: marketId, side, stage }),
     }),
   killSwitch: (active: boolean) =>
     request<Snapshot>("/api/kill-switch", {

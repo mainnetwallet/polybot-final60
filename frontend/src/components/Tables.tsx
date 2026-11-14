@@ -1,4 +1,5 @@
-import type { OrderRow, PositionRow } from "../api/types";
+import { useState } from "react";
+import type { OrderRow, PositionRow, SellableHolding } from "../api/types";
 import { cx, fmtCents, fmtDateTime, fmtNum, fmtSignedUsd, fmtTime, fmtUsd, pnlClass, shortId } from "../lib/format";
 import { ResultChip, SideBadge, StageChip, StatusChip } from "./Badges";
 import { EmptyState } from "./EmptyState";
@@ -8,11 +9,48 @@ export function OrdersTable({
   orders,
   detailed = false,
   emptyHint,
+  sellable,
+  onSell,
 }: {
   orders: OrderRow[];
   detailed?: boolean;
   emptyHint?: string;
+  /** shares that can be sold right now; with `onSell` this adds a "Sell" button to their BUY row */
+  sellable?: SellableHolding[];
+  /** called the moment the button is clicked: there is no confirmation step */
+  onSell?: (holding: SellableHolding) => Promise<unknown>;
 }) {
+  const [selling, setSelling] = useState<Set<string>>(new Set());
+  const showActions = onSell !== undefined;
+  // One button per stage: it sits on the newest filled BUY row of that stage (rows arrive newest first).
+  const sellRows = new Map<number, SellableHolding>();
+  if (showActions && sellable?.length) {
+    const taken = new Set<string>();
+    for (const order of orders) {
+      if (order.action !== "BUY" || !(order.filled_size > 0)) continue;
+      const holding = sellable.find(
+        (h) => h.market_id === order.market_id && h.side === order.side && h.stage === (order.stage ?? 0),
+      );
+      if (!holding) continue;
+      const key = `${holding.market_id}:${holding.side}:${holding.stage}`;
+      if (taken.has(key)) continue;
+      taken.add(key);
+      sellRows.set(order.id, holding);
+    }
+  }
+  const sell = (holding: SellableHolding) => {
+    const key = `${holding.market_id}:${holding.side}:${holding.stage}`;
+    if (selling.has(key)) return; // only blocks a double click while this request is on its way
+    setSelling((prev) => new Set(prev).add(key));
+    void Promise.resolve(onSell?.(holding)).finally(() =>
+      setSelling((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      }),
+    );
+  };
+
   if (!orders.length) {
     return (
       <EmptyState
@@ -39,11 +77,14 @@ export function OrdersTable({
             <th className="text-right">Filled</th>
             <th className="text-right">Fee</th>
             {detailed ? <th>Exchange ID</th> : null}
+            {showActions ? <th className="text-right">Action</th> : null}
           </tr>
         </thead>
         <tbody>
           {orders.map((order) => {
             const price = order.avg_fill_price ?? order.submitted_price ?? order.requested_price;
+            const holding = sellRows.get(order.id);
+            const holdingKey = holding ? `${holding.market_id}:${holding.side}:${holding.stage}` : "";
             return (
               <tr key={order.id}>
                 <td className="mono text-slate-500">{fmtTime(order.created_at)}</td>
@@ -69,6 +110,21 @@ export function OrdersTable({
                 {detailed ? (
                   <td className="mono text-slate-600" title={order.exchange_order_id ?? order.error ?? ""}>
                     {order.exchange_order_id ? shortId(order.exchange_order_id) : order.error ? "error" : "—"}
+                  </td>
+                ) : null}
+                {showActions ? (
+                  <td className="text-right">
+                    {holding ? (
+                      <button
+                        type="button"
+                        onClick={() => sell(holding)}
+                        disabled={selling.has(holdingKey)}
+                        title={`Sell ${fmtNum(holding.size, 2)} shares now at the market`}
+                        className="rounded-md border border-rose-400/40 bg-rose-400/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-rose-300 transition hover:bg-rose-400/25 disabled:cursor-wait disabled:opacity-50"
+                      >
+                        {selling.has(holdingKey) ? "Selling…" : "Sell"}
+                      </button>
+                    ) : null}
                   </td>
                 ) : null}
               </tr>

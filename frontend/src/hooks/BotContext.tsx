@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { api, apiToken } from "../api/client";
-import type { BookSnapshot, LogRow, Mode, Snapshot } from "../api/types";
+import type { BookSnapshot, LogRow, Mode, SellableHolding, Snapshot } from "../api/types";
 
 export type ActionResult = { ok: boolean; error?: string };
 export type ToastKind = "success" | "error" | "info" | "warning";
@@ -49,6 +49,7 @@ interface BotContextValue {
   stop: () => Promise<ActionResult>;
   switchMode: (mode: Mode, phrase?: string) => Promise<ActionResult>;
   killSwitch: (active: boolean) => Promise<ActionResult>;
+  sellNow: (holding: SellableHolding) => Promise<ActionResult>;
   resetPaper: (balance: number) => Promise<ActionResult>;
   resetDaily: () => Promise<ActionResult>;
   resetServer: (phrase: string) => Promise<ActionResult>;
@@ -393,6 +394,24 @@ export function BotProvider({ children }: { children: ReactNode }) {
     [applySnapshot, notify],
   );
 
+  // Instant manual sell: no confirmation step, the request goes out the moment it is called.
+  const sellNow = useCallback(
+    async (holding: SellableHolding): Promise<ActionResult> => {
+      try {
+        const next = await api.sellNow(holding.market_id, holding.side, holding.stage);
+        applySnapshot(next);
+        notify("success", "Sell sent", `Stage ${holding.stage} ${holding.side} shares sold at the market.`);
+        return { ok: true };
+      } catch (error) {
+        const message = describeError(error);
+        notify("error", "Sell failed", message);
+        void refresh();
+        return { ok: false, error: message };
+      }
+    },
+    [applySnapshot, notify, refresh],
+  );
+
   const resetPaper = useCallback(
     async (balance: number): Promise<ActionResult> => {
       try {
@@ -459,6 +478,7 @@ export function BotProvider({ children }: { children: ReactNode }) {
       stop,
       switchMode,
       killSwitch,
+      sellNow,
       resetPaper,
       resetDaily,
       resetServer,
@@ -479,6 +499,7 @@ export function BotProvider({ children }: { children: ReactNode }) {
       stop,
       switchMode,
       killSwitch,
+      sellNow,
       resetPaper,
       resetDaily,
       resetServer,

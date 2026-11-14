@@ -121,6 +121,9 @@ export function StatusChip({
     if (reason?.endsWith("_stop_loss")) {
       kind = "STOP LOSS";
       exitTone = "border-rose-400/40 bg-rose-400/15 text-rose-300"; // red
+    } else if (reason?.endsWith("_manual")) {
+      kind = "MANUAL SELL";
+      exitTone = "border-amber/40 bg-amber/15 text-amber"; // amber
     } else if (reason?.endsWith("_take_profit")) {
       kind = "TAKE PROFIT";
       exitTone = "border-cyan-400/45 bg-cyan-400/15 text-cyan-300"; // cyan

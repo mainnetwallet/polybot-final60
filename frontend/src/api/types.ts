@@ -96,6 +96,13 @@ export interface PositionRow {
   closed_at: string | null;
 }
 
+export interface SellableHolding {
+  market_id: string;
+  side: Side;
+  stage: number;
+  size: number;
+}
+
 export interface OrderRow {
   id: number;
   market_id: string;
@@ -171,6 +178,8 @@ export interface Snapshot {
   account: AccountState;
   positions: PositionRow[];
   open_orders: OrderRow[];
+  /** shares the operator can sell right now (live market, bot running) */
+  sellable?: SellableHolding[];
   last_order: LastOrder | null;
   market_data: {
     connected: boolean;

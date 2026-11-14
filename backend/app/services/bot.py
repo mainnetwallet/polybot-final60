@@ -24,7 +24,7 @@ from app.market_data.client import ClobMarketDataClient
 from app.market_discovery.service import MarketDiscovery, MarketMonitor
 from app.market_discovery.types import MarketInfo, ResolutionInfo
 from app.monitoring.logs import LogService, Publisher
-from app.order_manager.manager import SELL_DUST, OrderManager
+from app.order_manager.manager import EXIT_STAGES, SELL_DUST, OrderManager, _floor_shares
 from app.paper_trading.engine import PaperExecutionEngine
 from app.portfolio.analytics import AnalyticsService
 from app.portfolio.service import Portfolio
@@ -915,6 +915,47 @@ class TradingBot:
             return result
         return {}
 
+    async def manual_sell(self, market_id: str, side: str, stage: int) -> dict:
+        """Operator "sell now": sell the shares `stage` holds on `side` in the live market at the market.
+
+        Instant and unconfirmed by design: it runs the moment it is called. It is not held back by a
+        risk halt (selling only reduces exposure), but it needs the bot running with an open market.
+        """
+        market = self._market
+        if self._status != "RUNNING" or self._kill_switch:
+            raise BotError("the bot must be running to sell")
+        if market is None or market.market_id != market_id or market.remaining_seconds() <= 0:
+            raise BotError("this market has ended: its shares settle automatically")
+        self.logs.log(
+            "WARNING",
+            "system",
+            f"manual SELL requested: S{stage} {side}",
+            payload={"market_id": market_id, "side": side, "stage": stage, "mode": self._mode},
+            mode=self._mode,
+        )
+        result = await self.orders.manual_sell(
+            market, self.data.books, self._mode, self.runtime.get(), side, stage
+        )
+        reasons = {
+            "no_holding": "nothing left to sell for this order",
+            "sell_in_flight": "a sell for this order is already in progress",
+            "no_bid": "no bid in the order book right now",
+            "market_ended": "this market has ended: its shares settle automatically",
+            "unknown_stage": "unknown stage",
+        }
+        if result.status == "BLOCKED":
+            raise BotError(reasons.get(result.reason, f"sell blocked: {result.reason}"))
+        self._last_order = result.as_dict()
+        self._last_order["ts"] = iso_z(utcnow())
+        if result.latency_ms is not None:
+            self._latencies.append(result.latency_ms)
+        if result.status in {"REJECTED", "CANCELED"} and result.filled_size <= 0:
+            raise BotError(f"sell {result.status.lower()}: {result.error or 'no fill'}")
+        await self._broadcast_state()
+        snapshot = await self.snapshot()
+        snapshot["manual_sell"] = result.as_dict()
+        return snapshot
+
     async def set_kill_switch(self, active: bool) -> dict:
         if active:
             self._kill_switch = True
@@ -1472,6 +1513,35 @@ class TradingBot:
                 }
                 for p in positions
             ]
+            # Shares the operator can sell right now: only the live market, only while the bot runs.
+            sellable_rows: list[dict] = []
+            if (
+                market is not None
+                and market.remaining_seconds() > 0
+                and self._status == "RUNNING"
+                and not self._kill_switch
+            ):
+                for p in positions:
+                    if p.market_id != market.market_id:
+                        continue
+                    for stage in EXIT_STAGES:
+                        held = self.orders.stage0_holding_in_session(
+                            session, self._mode, p.market_id, stage
+                        )
+                        if (
+                            held is not None
+                            and held.side == p.side
+                            and not held.sell_in_flight
+                            and _floor_shares(held.size) >= SELL_DUST
+                        ):
+                            sellable_rows.append(
+                                {
+                                    "market_id": p.market_id,
+                                    "side": p.side,
+                                    "stage": stage,
+                                    "size": _floor_shares(held.size),
+                                }
+                            )
             order_rows = [
                 {
                     "id": o.id,
@@ -1595,6 +1665,7 @@ class TradingBot:
             },
             "positions": position_rows,
             "open_orders": order_rows,
+            "sellable": sellable_rows,
             "last_order": self._last_order,
             "market_data": self.data.status,
             "btc": self.btc.snapshot(market),

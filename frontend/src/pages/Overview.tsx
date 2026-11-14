@@ -457,13 +457,21 @@ function FeedPanel() {
 }
 
 export function Overview() {
-  const { snapshot, history, dataVersion } = useBot();
+  const { snapshot, history, dataVersion, sellNow } = useBot();
   const mode = snapshot?.bot.mode;
   const orders = useLiveRefresh(
-    () => (mode ? api.orders(mode, 8) : Promise.resolve([])),
+    () => (mode ? api.orders(mode, 40) : Promise.resolve([])),
     [mode],
     dataVersion,
     mode !== undefined,
+  );
+  // Newest 8 orders, plus the BUY row of any stage that can still be sold, so no Sell button is pushed out of view.
+  const sellable = snapshot?.sellable ?? [];
+  const visibleOrders = (orders.data ?? []).filter(
+    (order, index) =>
+      index < 8 ||
+      (order.action === "BUY" &&
+        sellable.some((h) => h.market_id === order.market_id && h.side === order.side && h.stage === (order.stage ?? 0))),
   );
   const config = snapshot?.config ?? {};
   const stale = typeof config.stale_data_max_age_ms === "number" ? config.stale_data_max_age_ms : null;
@@ -508,7 +516,12 @@ export function Overview() {
           </span>
         </div>
         {orders.data ? (
-          <OrdersTable orders={orders.data} emptyHint="Triggers that qualify create order records." />
+          <OrdersTable
+            orders={visibleOrders}
+            emptyHint="Triggers that qualify create order records."
+            sellable={sellable}
+            onSell={sellNow}
+          />
         ) : (
           <LoadingPanel className="m-4" />
         )}

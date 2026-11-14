@@ -25,6 +25,12 @@ class ResetPaperRequest(BaseModel):
     confirm: bool = False
 
 
+class ManualSellRequest(BaseModel):
+    market_id: str
+    side: Literal["UP", "DOWN"]
+    stage: int = Field(ge=0, le=3)
+
+
 class ResetDailyRequest(BaseModel):
     confirm: bool = False
 
