@@ -123,7 +123,7 @@ export function StatusChip({
       exitTone = "border-rose-400/40 bg-rose-400/15 text-rose-300"; // red
     } else if (reason?.endsWith("_take_profit")) {
       kind = "TAKE PROFIT";
-      exitTone = "border-lime-400/40 bg-lime-400/15 text-lime-300"; // lime green
+      exitTone = "border-cyan-400/45 bg-cyan-400/15 text-cyan-300"; // cyan
     }
   }
   // A filled exit gets its own color per kind; every other status keeps the normal status color.
