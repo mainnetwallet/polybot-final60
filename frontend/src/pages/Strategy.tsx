@@ -300,6 +300,14 @@ function PolicyPanel() {
         : "—",
     ],
     [
+      "Stage 0 stop-loss (expensive buy)",
+      strategy
+        ? strategy.stage0_high_buy_stop_loss_pct > 0
+          ? `bought ≥${fmtCents(strategy.stage0_high_buy_price)} → ${strategy.stage0_high_buy_stop_loss_pct}%`
+          : "off"
+        : "—",
+    ],
+    [
       "Stage 2 (after stage 1)",
       strategy ? `≤${strategy.stage2_seconds}s · ask ≥ ${fmtCents(strategy.stage2_threshold)}` : "—",
     ],

@@ -34,6 +34,31 @@ def test_stop_loss_price_is_a_percentage_below_the_average_buy_price():
     assert config.stop_loss_price_for(4, 0.90) is None  # not an entry stage
 
 
+def test_stage0_buys_at_90_cents_or_more_use_the_tighter_15_percent_stop():
+    config = make_config(**STOPS, stage0_high_buy_price=0.90, stage0_high_buy_stop_loss_pct=15.0)
+    assert config.stop_loss_price_for(0, 0.89) == pytest.approx(0.712)  # below 0.90: the normal 20 %
+    assert config.stop_loss_price_for(0, 0.90) == pytest.approx(0.765)  # at 0.90: 15 %
+    assert config.stop_loss_price_for(0, 0.94) == pytest.approx(0.799)
+    assert config.stop_loss_pct_for(0, 0.95) == 15.0
+    assert config.stop_loss_pct_for(0, 0.70) == 20.0
+    assert config.stop_loss_pct_for(0) == 20.0  # unknown cost: the normal percentage
+    # the other stages keep their own percentage whatever they paid
+    assert config.stop_loss_price_for(1, 0.95) == pytest.approx(0.8075)
+    # 0 switches the expensive-buy rule off
+    off = make_config(**STOPS, stage0_high_buy_price=0.90, stage0_high_buy_stop_loss_pct=0.0)
+    assert off.stop_loss_price_for(0, 0.94) == pytest.approx(0.752)
+
+
+def test_stage0_expensive_buy_defaults_and_validation():
+    fields = Settings.model_fields
+    assert fields["stage0_high_buy_price"].default == 0.90
+    assert fields["stage0_high_buy_stop_loss_pct"].default == 15.0
+    with pytest.raises(ValueError):
+        make_config(stage0_high_buy_stop_loss_pct=100.0)
+    with pytest.raises(ValueError):
+        make_config(stage0_high_buy_price=1.5)
+
+
 def test_stop_loss_is_off_at_zero_and_when_settings_are_built_directly():
     assert make_config().stop_loss_price_for(0, 0.70) is None
     only_stage1 = make_config(stage0_stop_loss_pct=0.0, stage1_stop_loss_pct=15.0)

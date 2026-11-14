@@ -1070,7 +1070,7 @@ class OrderManager:
                 asyncio.to_thread(self._reserve_sell_order, mode, market, holding, key, sell_size, bid, kind)
             )
             stop_note = (
-                f" (stop-loss: bid <= {stop_price:.3f}, {config.stop_loss_pct_for(stage):g}% under cost)"
+                f" (stop-loss: bid <= {stop_price:.3f}, {config.stop_loss_pct_for(stage, holding.cost):g}% under cost)"
                 if kind == "stop_loss"
                 else ""
             )

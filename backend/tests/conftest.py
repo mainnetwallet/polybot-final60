@@ -24,6 +24,7 @@ os.environ["RESOLUTION_POLL_SECONDS"] = "3600"
 # bot-level test would be stopped out right after its buy. The stop-loss tests switch it on explicitly.
 for _stage in range(4):
     os.environ[f"STAGE{_stage}_STOP_LOSS_PCT"] = "0"
+os.environ["STAGE0_HIGH_BUY_STOP_LOSS_PCT"] = "0"
 
 import pytest  # noqa: E402
 

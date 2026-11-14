@@ -396,6 +396,7 @@ Strategy and risk defaults:
 | `STAGE2_SELL_ENABLED` | `true` | Switches the stage 2 take-profit sell on or off |
 | `STAGE2_SELL_PRICE` | `0.99` | Best bid at which stage 2 sells its shares (must be above `STAGE2_THRESHOLD`) |
 | `STAGE0_STOP_LOSS_PCT` | `50` | Stage 0 stop-loss: sell its shares at the market once the best bid is this many percent below the average buy price (`0` = off) |
+| `STAGE0_HIGH_BUY_PRICE` / `STAGE0_HIGH_BUY_STOP_LOSS_PCT` | `0.90` / `15` | Stage 0 shares bought at this price or higher use this stop-loss percent instead of `STAGE0_STOP_LOSS_PCT` (`0` = off). Stage 0 only buys up to `STAGE0_MAX_ASK`, so raise that too if it is below the price |
 | `STAGE1_STOP_LOSS_PCT` / `STAGE2_STOP_LOSS_PCT` / `STAGE3_STOP_LOSS_PCT` | `15` / `9` / `5` | Same stop-loss for stage 1, 2 and 3 shares (`0` = off for that stage) |
 | `STAGE2_SECONDS` / `STAGE2_THRESHOLD` | `50` / `0.90` | Stage 2 add-on: time left and ask level |
 | `STAGE3_SECONDS` / `STAGE3_THRESHOLD` | `30` / `0.90` | Stage 3 add-on: time left and ask level |

@@ -133,6 +133,10 @@ class Settings(BaseSettings):
     stage1_stop_loss_pct: float = 15.0
     stage2_stop_loss_pct: float = 9.0
     stage3_stop_loss_pct: float = 5.0
+    # Stage 0 shares that cost stage0_high_buy_price (0.90) or more use this tighter stop-loss instead of
+    # stage0_stop_loss_pct. 0 = off (the normal stage 0 stop-loss applies to every buy price).
+    stage0_high_buy_price: float = 0.90
+    stage0_high_buy_stop_loss_pct: float = 15.0
     duplicate_policy: str = "one_per_market"  # one_per_market | one_per_side | allow
     conflict_policy: str = "up_first"  # up_first | down_first | highest_ask | block_both
 

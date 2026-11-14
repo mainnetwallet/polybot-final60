@@ -85,7 +85,14 @@ export const TABS: TabSpec[] = [
       {
         title: "Stop-loss",
         description: "Market sell once the best bid is this many percent below the average buy. 0 = off.",
-        keys: ["stage0_stop_loss_pct", "stage1_stop_loss_pct", "stage2_stop_loss_pct", "stage3_stop_loss_pct"],
+        keys: [
+          "stage0_stop_loss_pct",
+          "stage0_high_buy_price",
+          "stage0_high_buy_stop_loss_pct",
+          "stage1_stop_loss_pct",
+          "stage2_stop_loss_pct",
+          "stage3_stop_loss_pct",
+        ],
       },
     ],
   },

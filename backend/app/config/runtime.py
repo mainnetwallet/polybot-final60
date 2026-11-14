@@ -57,6 +57,8 @@ OVERRIDABLE_KEYS = (
     "stage1_stop_loss_pct",
     "stage2_stop_loss_pct",
     "stage3_stop_loss_pct",
+    "stage0_high_buy_price",
+    "stage0_high_buy_stop_loss_pct",
 )
 
 
@@ -117,6 +119,10 @@ class RuntimeSettings(BaseModel):
     stage1_stop_loss_pct: float = Field(default=0.0, ge=0.0, le=99.0)
     stage2_stop_loss_pct: float = Field(default=0.0, ge=0.0, le=99.0)
     stage3_stop_loss_pct: float = Field(default=0.0, ge=0.0, le=99.0)
+    # Stage 0 shares that cost stage0_high_buy_price or more use stage0_high_buy_stop_loss_pct instead of
+    # stage0_stop_loss_pct (0 = off: no separate percentage for expensive buys).
+    stage0_high_buy_price: float = Field(default=0.90, ge=0.01, le=0.999)
+    stage0_high_buy_stop_loss_pct: float = Field(default=0.0, ge=0.0, le=99.0)
     paper_fill_ratio: float = Field(gt=0.0, le=1.0)
     paper_fee_exponent: float = Field(ge=0.0, le=5.0)
     paper_starting_balance: float = Field(gt=0.0)
@@ -171,8 +177,19 @@ class RuntimeSettings(BaseModel):
         """Take-profit price for stage 2 shares (same price whatever they cost); None = off."""
         return self.stage2_sell_price if self.stage2_sell_enabled else None
 
-    def stop_loss_pct_for(self, stage: int) -> float:
-        """Stop-loss percentage configured for `stage` (0 = off)."""
+    def stop_loss_pct_for(self, stage: int, cost_per_share: float | None = None) -> float:
+        """Stop-loss percentage configured for `stage` (0 = off).
+
+        Stage 0 shares that cost stage0_high_buy_price or more use stage0_high_buy_stop_loss_pct
+        (when it is above 0) instead of stage0_stop_loss_pct.
+        """
+        if (
+            stage == 0
+            and cost_per_share is not None
+            and self.stage0_high_buy_stop_loss_pct > 0
+            and cost_per_share + 1e-9 >= self.stage0_high_buy_price
+        ):
+            return self.stage0_high_buy_stop_loss_pct
         return {
             0: self.stage0_stop_loss_pct,
             1: self.stage1_stop_loss_pct,
@@ -186,7 +203,7 @@ class RuntimeSettings(BaseModel):
         cost * (1 - pct / 100) with the average price paid per share. An unknown cost has no
         reference price, so there is no stop for those shares.
         """
-        pct = self.stop_loss_pct_for(stage)
+        pct = self.stop_loss_pct_for(stage, cost_per_share)
         if pct <= 0 or cost_per_share is None or cost_per_share <= 0:
             return None
         return cost_per_share * (1.0 - pct / 100.0)
