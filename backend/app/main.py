@@ -4,7 +4,10 @@ import logging
 import logging.handlers
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import AuthService, build_auth_router
@@ -92,6 +95,22 @@ def create_app() -> FastAPI:
     app.include_router(build_auth_router(auth))
     app.include_router(build_router(bot, runtime, settings, analytics, auth))
     app.include_router(build_ws_router(hub, bot.snapshot, settings.api_token, auth))
+    # Serve the prebuilt dashboard (backend/app/static, built from frontend/) from the same origin as the
+    # API, so cookies and the WebSocket work without a separate proxy. Registered last: API routes win.
+    static_dir = Path(__file__).resolve().parent / "static"
+    index_file = static_dir / "index.html"
+    if index_file.is_file():
+        static_root = static_dir.resolve()
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def dashboard(full_path: str) -> FileResponse:
+            if full_path.startswith("api/") or full_path == "api":
+                raise HTTPException(status_code=404, detail="Not Found")
+            candidate = (static_dir / full_path).resolve()
+            if full_path and candidate.is_file() and static_root in candidate.parents:
+                return FileResponse(candidate)
+            return FileResponse(index_file)
+
     app.state.bot = bot
     app.state.settings = settings
     app.state.auth = auth
