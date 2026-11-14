@@ -27,6 +27,9 @@ from .helpers import (
 STAGE0 = dict(stage0_enabled=True)  # window 200s -> 60s (the test final window), ask .60-.85, gap $80, take-profit +15 / +10 / +5 %
 
 
+LIMIT_85 = dict(stage0_max_ask=0.85)  # tests about the old .60-.85 band pin it; the default max ask is now .94
+
+
 def evaluate(remaining: float, up: float, down: float, **config):
     market = make_market(remaining=remaining + 1000)
     now_ms = datetime_to_epoch_ms(market.window_end) - int(remaining * 1000)
@@ -45,13 +48,13 @@ def test_stage0_signals_between_200s_and_final_window():
 
 
 def test_stage0_ask_outside_60_85_is_not_a_signal():
-    above = evaluate(150, up=0.86, down=0.14)
+    above = evaluate(150, up=0.86, down=0.14, **LIMIT_85)
     assert above.signals == []  # .86 is above the .85 limit, .14 below the .60 minimum
-    assert evaluate(150, up=0.90, down=0.10).signals == []  # the old .95 range no longer buys
-    assert evaluate(150, up=0.85, down=0.15).signals[0].side == "UP"  # .85 itself is allowed
-    assert evaluate(150, up=0.60, down=0.40).signals[0].side == "UP"  # .60 itself is allowed
-    assert evaluate(150, up=0.59, down=0.41).signals == []  # below the minimum
-    result = evaluate(150, up=0.70, down=0.30)
+    assert evaluate(150, up=0.90, down=0.10, **LIMIT_85).signals == []  # the old .95 range no longer buys
+    assert evaluate(150, up=0.85, down=0.15, **LIMIT_85).signals[0].side == "UP"  # .85 itself is allowed
+    assert evaluate(150, up=0.60, down=0.40, **LIMIT_85).signals[0].side == "UP"  # .60 itself is allowed
+    assert evaluate(150, up=0.59, down=0.41, **LIMIT_85).signals == []  # below the minimum
+    result = evaluate(150, up=0.70, down=0.30, **LIMIT_85)
     assert result.signals[0].threshold == 0.85
 
 
@@ -110,7 +113,7 @@ def test_risk_blocks_small_gap_and_wrong_direction():
 
 
 def test_risk_blocks_without_btc_data_ask_and_window():
-    config = make_config(**STAGE0)
+    config = make_config(**STAGE0, **LIMIT_85)
     ctx = make_ctx(remaining=150)
     assert RiskManager().check(_signal(), ctx, config).reason == "price_gap_unavailable"
     good = make_ctx(remaining=150, btc_price=100_150.0, price_to_beat=100_000.0)
@@ -262,7 +265,7 @@ async def test_stage0_sell_is_never_rebought_and_does_not_count_as_stage1():
 
 
 async def test_stage0_buy_never_pays_above_its_limit():
-    stack = build_stack(make_config(**STAGE0))
+    stack = build_stack(make_config(**STAGE0, **LIMIT_85))
     market = make_market(remaining=150)
     books = books_for(market, up_ask=0.86, down_ask=0.14)  # UP is above the .85 limit
     stage_books(stack, market, books)
@@ -771,3 +774,34 @@ def test_risk_blocks_a_90_plus_stage0_buy_in_the_first_half():
     assert blocked.approved is False and blocked.reason == "stage0_high_buy_too_early"
     assert RiskManager().check(cheap, early, config).approved  # a cheaper ask is fine in the first half
     assert RiskManager().check(replace(expensive, remaining_seconds=140), late, config).approved
+
+
+async def test_partial_retry_waits_for_the_second_half_before_buying_a_90_plus_ask():
+    stack = build_stack(make_config(**STAGE0, **{**HIGH, "stage0_max_ask": 0.94}))
+    manager = stack["manager"]
+
+    # a thin 0.85 book at 180s left: stage 0 buys only part of its order
+    market = make_market(remaining=180)
+    thin = books_for(market, up_ask=0.85, down_ask=0.10, up_size=3.0)
+    assert [r.status for r in await _stage0_buy(stack, market, thin)] == ["PARTIALLY_FILLED"]
+    with session_scope() as session:
+        before = session.execute(select(Order)).scalars().one().filled_size
+
+    # the ask is now 0.92 (a 0.90+ buy) but 180s left is still the first half: the retry must wait
+    manager._retry_after.clear()
+    expensive = books_for(market, up_ask=0.92, down_ask=0.08)
+    stage_books(stack, market, expensive)
+    await manager._retry_partial_orders(market, expensive, "paper", stack["config"])
+    with session_scope() as session:
+        order = session.execute(select(Order)).scalars().one()
+        assert order.status == "PARTIALLY_FILLED" and order.filled_size == before
+
+    # 140s left = second half: the same 0.92 ask now completes the order
+    later = make_market(remaining=140)
+    manager._retry_after.clear()
+    expensive = books_for(later, up_ask=0.92, down_ask=0.08)
+    stage_books(stack, later, expensive)
+    await manager._retry_partial_orders(later, expensive, "paper", stack["config"])
+    with session_scope() as session:
+        order = session.execute(select(Order)).scalars().one()
+        assert order.status == "FILLED" and order.filled_size > before

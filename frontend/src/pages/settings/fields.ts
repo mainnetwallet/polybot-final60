@@ -204,8 +204,8 @@ export const FIELDS: FieldSpec[] = [
   },
   {
     key: "stage0_high_buy_price",
-    label: "Stage 0: expensive buy from",
-    hint: "Stage 0 shares bought at this price or higher use the expensive-buy stop-loss below instead of the normal stage 0 stop-loss (default 0.90). Stage 0 only buys up to its max ask, so raise that too if it is lower.",
+    label: "Stage 0: expensive buy from (entry timing + stop-loss)",
+    hint: "The price (default 0.90) from which a stage 0 buy counts as expensive. It does two things: asks at or above it only buy once the \"expensive buys after\" part of the window has passed, and shares bought at or above it use the expensive-buy stop-loss below instead of the normal stage 0 stop-loss. Stage 0 only buys up to its max ask, so raise that too if it is lower.",
     kind: "number",
     step: "0.01",
     min: "0.01",

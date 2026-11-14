@@ -94,7 +94,7 @@ class RuntimeSettings(BaseModel):
     stage0_start_seconds: int = Field(default=200, ge=1, le=300)
     stage0_end_seconds: int = Field(default=100, ge=0, le=299)
     stage0_min_ask: float = Field(default=0.60, ge=0.01, le=0.999)
-    stage0_max_ask: float = Field(default=0.85, ge=0.01, le=0.999)
+    stage0_max_ask: float = Field(default=0.94, ge=0.01, le=0.999)
     stage0_min_price_gap_usd: float = Field(default=80.0, ge=0.0, le=1_000_000.0)
     # Stage 0 take-profit in percent above the average buy price, by what stage 0 paid per share:
     #   cost <  stage0_mid_from_ask   -> stage0_take_profit_pct_low  (default 0.60-0.70 buy -> +15 %)
