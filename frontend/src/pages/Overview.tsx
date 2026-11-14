@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { api } from "../api/client";
-import { ModeBadge, SideBadge } from "../components/Badges";
+import type { StageResults } from "../api/types";
+import { ModeBadge, SideBadge, StageChip } from "../components/Badges";
 import { CountdownRing } from "../components/CountdownRing";
 import { EmptyState } from "../components/EmptyState";
 import {
@@ -456,6 +457,63 @@ function FeedPanel() {
   );
 }
 
+/** Live WIN / LOSS count and PnL per stage. A trade counts the moment its shares are sold (take-profit, stop-loss or manual sell). */
+function StageResultsPanel({ results }: { results: StageResults | null }) {
+  const total = results?.total;
+  return (
+    <section className="panel overflow-hidden xl:col-span-12">
+      <div className="flex items-center justify-between border-b hairline px-5 py-4">
+        <div>
+          <div className="label">Result</div>
+          <div className="mt-1 text-[14px] font-semibold tracking-tight text-slate-100">Wins &amp; losses by stage</div>
+        </div>
+        <span className="chip border-white/8 bg-white/[0.03] text-slate-400">
+          {total ? (
+            <>
+              <span className="text-up">{total.wins}W</span>
+              <span className="mx-1 text-slate-600">/</span>
+              <span className="text-down">{total.losses}L</span>
+              <span className={cx("ml-2", pnlClass(total.pnl))}>{fmtSignedUsd(total.pnl)}</span>
+            </>
+          ) : (
+            "—"
+          )}
+        </span>
+      </div>
+      {results ? (
+        <div className="grid grid-cols-2 gap-3 p-4 lg:grid-cols-4">
+          {results.stages.map((row) => (
+            <div key={row.stage} className="rounded-lg border border-white/8 bg-white/[0.02] p-3">
+              <div className="flex items-center justify-between">
+                <StageChip stage={row.stage} />
+                <span className="mono text-[11px] text-slate-500">
+                  {row.win_rate === null ? "no exits yet" : `${row.win_rate.toFixed(0)}% win`}
+                </span>
+              </div>
+              <div className="mt-3 flex items-baseline gap-4">
+                <div>
+                  <div className="mono text-[22px] font-semibold leading-none text-up">{row.wins}</div>
+                  <div className="label mt-1">Win</div>
+                </div>
+                <div>
+                  <div className="mono text-[22px] font-semibold leading-none text-down">{row.losses}</div>
+                  <div className="label mt-1">Loss</div>
+                </div>
+              </div>
+              <div className={cx("mono mt-3 text-[13px] font-semibold", pnlClass(row.pnl))}>
+                {fmtSignedUsd(row.pnl)}
+                <span className="ml-1 font-normal text-slate-600">PnL</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <LoadingPanel className="m-4" />
+      )}
+    </section>
+  );
+}
+
 export function Overview() {
   const { snapshot, history, dataVersion, sellNow } = useBot();
   const mode = snapshot?.bot.mode;
@@ -527,12 +585,13 @@ export function Overview() {
             emptyHint="Triggers that qualify create order records."
             sellable={sellable}
             onSell={sellNow}
-            stageResults={stageResults.data}
           />
         ) : (
           <LoadingPanel className="m-4" />
         )}
       </section>
+
+      <StageResultsPanel results={stageResults.data} />
 
       <section className="panel overflow-hidden xl:col-span-12">
         <div className="flex items-center justify-between border-b hairline px-5 py-4">

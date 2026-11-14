@@ -1,24 +1,9 @@
 import { useState } from "react";
-import type { OrderRow, PositionRow, SellableHolding, StageResults } from "../api/types";
+import type { OrderRow, PositionRow, SellableHolding } from "../api/types";
 import { cx, fmtCents, fmtDateTime, fmtNum, fmtSignedUsd, fmtTime, fmtUsd, pnlClass, shortId } from "../lib/format";
 import { ResultChip, SideBadge, StageChip, StatusChip } from "./Badges";
 import { EmptyState } from "./EmptyState";
 import { IconLayers } from "./Icons";
-
-/** Running WIN / LOSS count of one stage (all its finished exits), updated live. */
-function StageTally({ row, stage }: { row?: StageResults["stages"][number]; stage: number }) {
-  if (!row || row.trades === 0) return null;
-  return (
-    <div
-      className="mono mt-0.5 text-[10px] text-slate-500"
-      title={`Stage ${stage}: ${row.wins} wins, ${row.losses} losses, total P&L ${row.pnl >= 0 ? "+" : "-"}$${Math.abs(row.pnl).toFixed(2)}`}
-    >
-      S{stage} <span className="text-up">{row.wins}W</span>
-      <span className="text-slate-600"> / </span>
-      <span className="text-down">{row.losses}L</span>
-    </div>
-  );
-}
 
 export function OrdersTable({
   orders,
@@ -26,7 +11,6 @@ export function OrdersTable({
   emptyHint,
   sellable,
   onSell,
-  stageResults,
 }: {
   orders: OrderRow[];
   detailed?: boolean;
@@ -35,8 +19,6 @@ export function OrdersTable({
   sellable?: SellableHolding[];
   /** called the moment the button is clicked: there is no confirmation step */
   onSell?: (holding: SellableHolding) => Promise<unknown>;
-  /** live WIN / LOSS count per stage; shown in the Result column */
-  stageResults?: StageResults | null;
 }) {
   const [selling, setSelling] = useState<Set<string>>(new Set());
   const showActions = onSell !== undefined;
@@ -89,16 +71,7 @@ export function OrdersTable({
             <th>Side</th>
             <th>Stage</th>
             <th>Status</th>
-            <th>
-              Result
-              {stageResults && stageResults.total.trades > 0 ? (
-                <span className="mono ml-2 text-[10px] font-normal normal-case tracking-normal">
-                  <span className="text-up">{stageResults.total.wins}W</span>
-                  <span className="text-slate-600"> / </span>
-                  <span className="text-down">{stageResults.total.losses}L</span>
-                </span>
-              ) : null}
-            </th>
+            <th>Result</th>
             <th className="text-right">Notional</th>
             <th className="text-right">Price</th>
             <th className="text-right">Filled</th>
@@ -129,9 +102,6 @@ export function OrdersTable({
                 </td>
                 <td>
                   <ResultChip result={order.action === "BUY" && order.filled_size > 0 ? "BUY" : order.result} pnl={order.result_pnl} />
-                  {order.action === "SELL" && order.result && stageResults ? (
-                    <StageTally row={stageResults.stages.find((s) => s.stage === (order.stage ?? 0))} stage={order.stage ?? 0} />
-                  ) : null}
                 </td>
                 <td className="mono text-right text-slate-300">{fmtUsd(order.requested_notional)}</td>
                 <td className="mono text-right text-slate-300">{fmtCents(price)}</td>
