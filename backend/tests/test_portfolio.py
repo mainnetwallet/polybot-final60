@@ -205,3 +205,32 @@ def test_snapshot_unrealized_keeps_pnl_for_settling_position():
         )
         positions = {p.market_id: p for p in portfolio.open_positions(session, "paper")}
         assert positions["market-other"].unrealized_pnl == 0.0
+
+
+def test_trades_today_ignores_canceled_orders_without_fills():
+    stack = build_stack()
+    portfolio = stack["portfolio"]
+    with session_scope() as session:
+        def add(key: str, status: str, filled: float) -> None:
+            session.add(
+                Order(
+                    order_key=key,
+                    client_order_id=key,
+                    mode="paper",
+                    market_id="m",
+                    side="UP",
+                    token_id="token",
+                    status=status,
+                    requested_notional=4.0,
+                    requested_price=0.8,
+                    filled_size=filled,
+                )
+            )
+
+        add("paper:m1:UP", "CANCELED", 0.0)   # FOK not filled -> not a trade
+        add("paper:m2:UP", "EXPIRED", 0.0)    # expired, no fill -> not a trade
+        add("paper:m3:UP", "CANCELED", 2.0)   # IOC partial fill then canceled -> real trade
+        add("paper:m4:UP", "FILLED", 5.0)     # real trade
+        session.flush()
+
+        assert portfolio.trades_today(session, "paper") == 2

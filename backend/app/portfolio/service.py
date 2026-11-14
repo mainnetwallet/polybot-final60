@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, time, timezone
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config.settings import Settings
@@ -332,7 +332,13 @@ class Portfolio:
             select(func.count(Order.id)).where(
                 Order.mode == mode,
                 Order.created_at >= self.daily_floor(session, mode),
-                Order.status.in_(["SUBMITTED", "PARTIALLY_FILLED", "FILLED", "CANCELED", "EXPIRED"]),
+                # A trade is an order that is live on the book or actually filled. CANCELED /
+                # EXPIRED orders only count if they filled something (e.g. a partial IOC fill);
+                # a fully canceled/expired order with no fill is not a trade.
+                or_(
+                    Order.status.in_(["SUBMITTED", "PARTIALLY_FILLED", "FILLED"]),
+                    and_(Order.status.in_(["CANCELED", "EXPIRED"]), Order.filled_size > 0),
+                ),
                 # Stage 0 take-profit SELLs are exits, not entries: they (and their FOK retries)
                 # must not eat the max_trades_per_day cap.
                 Order.order_key.not_like("%:sell:%"),
