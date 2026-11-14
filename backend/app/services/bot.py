@@ -29,7 +29,7 @@ from app.paper_trading.engine import PaperExecutionEngine
 from app.portfolio.analytics import AnalyticsService
 from app.portfolio.service import Portfolio
 from app.risk_manager.manager import RiskContext, RiskManager
-from app.services.order_outcomes import sell_outcomes, stage_stats
+from app.services.order_outcomes import sell_outcomes
 from app.strategy.engine import FinalWindowStrategy
 from app.strategy.types import StrategyEvaluation
 
@@ -1724,27 +1724,6 @@ class TradingBot:
                 }
                 for o in rows
             ]
-
-    async def stage_results(self, mode: str) -> dict:
-        """Live per-stage WIN / LOSS count and PnL, counted when a stage's shares are sold (exit)."""
-        with session_scope() as session:
-            orders = session.execute(
-                select(Order).where(Order.mode == mode, Order.filled_size > 0)
-            ).scalars().all()
-            stages = stage_stats(orders, self.orders._key_stage, self.orders._key_action)
-        total_trades = sum(s["trades"] for s in stages)
-        wins = sum(s["wins"] for s in stages)
-        return {
-            "mode": mode,
-            "stages": stages,
-            "total": {
-                "wins": wins,
-                "losses": sum(s["losses"] for s in stages),
-                "trades": total_trades,
-                "win_rate": round(wins / total_trades * 100.0, 2) if total_trades else None,
-                "pnl": round(sum(s["pnl"] for s in stages), 6),
-            },
-        }
 
     async def recent_positions(self, mode: str, limit: int = 100) -> list[dict]:
         with session_scope() as session:
