@@ -109,6 +109,7 @@ class TradingBot:
         self._last_book_event_ms = 0
         self._last_order: dict | None = None
         self._latencies: deque[float] = deque(maxlen=50)
+        self._background_pushes: set[asyncio.Task] = set()  # state broadcasts running off the request path
         self._live_balance: float | None = None
         self._live_balance_at = 0.0
         self._last_price_persist_ms: dict[str, int] = {}
@@ -695,6 +696,23 @@ class TradingBot:
         except Exception as exc:
             logger.debug("snapshot failed: %s", exc)
 
+    async def _snapshot_and_publish(self) -> dict:
+        """Build the dashboard state once: push it to the open dashboards in the background and hand the
+        same snapshot back, so a reply (e.g. to a manual sell) never waits for a second snapshot or for
+        the websocket fan-out."""
+        snapshot = await self.snapshot()
+
+        async def _push(data: dict) -> None:
+            try:
+                await self.hub.broadcast({"type": "state", "data": data})
+            except Exception as exc:
+                logger.debug("state broadcast failed: %s", exc)
+
+        task = asyncio.ensure_future(_push(dict(snapshot)))
+        self._background_pushes.add(task)
+        task.add_done_callback(self._background_pushes.discard)
+        return snapshot
+
     # ------------------------------------------------------------------
     async def start_bot(self, confirm_live: bool = False, confirmation_phrase: str = "") -> dict:
         async with self._lock:
@@ -951,8 +969,7 @@ class TradingBot:
             self._latencies.append(result.latency_ms)
         if result.status in {"REJECTED", "CANCELED"} and result.filled_size <= 0:
             raise BotError(f"sell {result.status.lower()}: {result.error or 'no fill'}")
-        await self._broadcast_state()
-        snapshot = await self.snapshot()
+        snapshot = await self._snapshot_and_publish()
         snapshot["manual_sell"] = result.as_dict()
         return snapshot
 
@@ -1000,8 +1017,7 @@ class TradingBot:
         for result in sold:
             if result.latency_ms is not None:
                 self._latencies.append(result.latency_ms)
-        await self._broadcast_state()
-        snapshot = await self.snapshot()
+        snapshot = await self._snapshot_and_publish()
         snapshot["manual_sell_all"] = {
             "sold": [r.as_dict() for r in sold],
             "failed": [
