@@ -59,6 +59,7 @@ OVERRIDABLE_KEYS = (
     "stage3_stop_loss_pct",
     "stage0_high_buy_price",
     "stage0_high_buy_stop_loss_pct",
+    "stage0_high_buy_after_pct",
 )
 
 
@@ -123,6 +124,9 @@ class RuntimeSettings(BaseModel):
     # stage0_stop_loss_pct (0 = off: no separate percentage for expensive buys).
     stage0_high_buy_price: float = Field(default=0.90, ge=0.01, le=0.999)
     stage0_high_buy_stop_loss_pct: float = Field(default=0.0, ge=0.0, le=99.0)
+    # Buys at stage0_high_buy_price or more wait until this percent of the stage 0 window (start -> end)
+    # has passed (50 with 200s -> 100s = from 150s left; 0 = the whole window).
+    stage0_high_buy_after_pct: float = Field(default=50.0, ge=0.0, le=100.0)
     paper_fill_ratio: float = Field(gt=0.0, le=1.0)
     paper_fee_exponent: float = Field(ge=0.0, le=5.0)
     paper_starting_balance: float = Field(gt=0.0)
@@ -172,6 +176,15 @@ class RuntimeSettings(BaseModel):
                 STAGE0_MAX_TAKE_PROFIT_PRICE,
             )
         return self.stage1_sell_price_high
+
+    def stage0_high_buy_opens_at(self) -> float:
+        """Seconds left at or below which stage 0 may buy at stage0_high_buy_price or more."""
+        span = max(self.stage0_start_seconds - self.stage0_end_seconds, 0)
+        return self.stage0_start_seconds - span * self.stage0_high_buy_after_pct / 100.0
+
+    def stage0_high_buy_too_early(self, ask: float, remaining_seconds: float) -> bool:
+        """True when `ask` is a high buy (>= stage0_high_buy_price) and its part of the window has not begun."""
+        return ask + 1e-9 >= self.stage0_high_buy_price and remaining_seconds > self.stage0_high_buy_opens_at() + 1e-9
 
     def stage2_sell_price_for(self, cost_per_share: float | None) -> float | None:
         """Take-profit price for stage 2 shares (same price whatever they cost); None = off."""

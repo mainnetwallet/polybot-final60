@@ -77,6 +77,16 @@ export const FIELDS: FieldSpec[] = [
     max: "0.999",
   },
   {
+    key: "stage0_high_buy_after_pct",
+    label: "Stage 0: expensive buys after",
+    hint: "Buys at the expensive-buy price (default 0.90) or more only start once this percent of the stage 0 window (start to end) has passed. 50 with 200s to 100s = from 150s left. 0 = the whole window.",
+    kind: "number",
+    step: "1",
+    min: "0",
+    max: "100",
+    suffix: "%",
+  },
+  {
     key: "stage0_min_price_gap_usd",
     label: "Stage 0: min price gap",
     hint: "Buys only if BTC is already this many USD past the price to beat, in the side being bought (UP: above, DOWN: below). 0 = filter off. No BTC data = no buy.",

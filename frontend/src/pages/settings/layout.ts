@@ -56,7 +56,7 @@ export const TABS: TabSpec[] = [
       {
         title: "Entry band",
         description: "Ask range and BTC gap in which stage 0 may buy.",
-        keys: ["stage0_min_ask", "stage0_max_ask", "stage0_min_price_gap_usd"],
+        keys: ["stage0_min_ask", "stage0_max_ask", "stage0_high_buy_after_pct", "stage0_min_price_gap_usd"],
       },
       {
         title: "Take-profit tiers",

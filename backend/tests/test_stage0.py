@@ -332,7 +332,7 @@ async def test_bot_buys_stage0_on_gap_side_only_then_sells_at_plus_5_percent():
     assert snap["account"]["balance"] > 10.0 - 1e-9
     strategy = snap["strategy"]
     assert (strategy["stage0_take_profit_pct_low"], strategy["stage0_take_profit_pct_mid"], strategy["stage0_take_profit_pct_high"]) == (15.0, 10.0, 5.0)
-    assert strategy["stage0_max_ask"] == 0.85
+    assert strategy["stage0_max_ask"] == 0.99
 
 
 async def test_bot_stage0_needs_gap_and_stops_in_final_window():
@@ -471,8 +471,8 @@ import pytest  # noqa: E402
         (99_920.0, 0.30, 0.70, "DOWN"),   # exactly -80 below the price to beat -> DOWN
         (99_750.0, 0.30, 0.70, "DOWN"),   # -250
         (99_921.0, 0.30, 0.70, None),     # -79: gap too small
-        (100_150.0, 0.86, 0.70, None),    # UP has the gap but its ask is above .85; DOWN has no gap
-        (99_850.0, 0.70, 0.86, None),     # DOWN has the gap but its ask is above .85; UP has no gap
+        (100_150.0, 0.995, 0.70, None),   # UP has the gap but its ask is above the .99 limit; DOWN has no gap
+        (99_850.0, 0.70, 0.995, None),    # DOWN has the gap but its ask is above the .99 limit; UP has no gap
         (100_150.0, 0.55, 0.45, None),    # UP has the gap but its ask is below .60
         (100_000.0, 0.70, 0.70, None),    # no gap at all, both asks in range
     ],
@@ -691,9 +691,10 @@ def test_stage0_take_profit_tiers_15_10_5_by_buy_price():
     assert make_config(stage0_take_profit_pct_high=50.0).stage0_sell_price_for(0.85) == 0.99  # capped at 0.99
 
 
-def test_stage0_defaults_are_max_ask_85_and_tiers_15_10_5():
+def test_stage0_defaults_are_max_ask_99_and_tiers_15_10_5():
     fields = Settings.model_fields
-    assert fields["stage0_max_ask"].default == 0.85
+    assert fields["stage0_max_ask"].default == 0.99
+    assert fields["stage0_high_buy_after_pct"].default == 50.0
     assert (fields["stage0_mid_from_ask"].default, fields["stage0_high_from_ask"].default) == (0.70, 0.80)
     assert [fields[f"stage0_take_profit_pct_{t}"].default for t in ("low", "mid", "high")] == [15.0, 10.0, 5.0]
 
@@ -731,3 +732,42 @@ async def test_stage0_tier_set_to_zero_holds_to_settlement():
     assert [r.status for r in await _stage0_buy(stack, market, books)] == ["FILLED"]
     books[market.up_token_id].bids = {0.99: 100.0}
     assert await stack["manager"].handle_exits(market, books, "paper", stack["config"]) == []
+
+
+# ------------------------------------------------ 0.90+ buys only in the later part of the window
+HIGH = dict(stage0_start_seconds=200, stage0_end_seconds=100, stage0_max_ask=0.99)
+
+
+def test_high_buy_opens_halfway_through_the_stage0_window():
+    config = make_config(**STAGE0, **HIGH)
+    assert config.stage0_high_buy_opens_at() == 150.0  # 50 % of 200s -> 100s
+    assert make_config(**STAGE0, **HIGH, stage0_high_buy_after_pct=0.0).stage0_high_buy_opens_at() == 200.0
+    assert make_config(**STAGE0, **HIGH, stage0_high_buy_after_pct=100.0).stage0_high_buy_opens_at() == 100.0
+
+
+def test_stage0_ask_90_or_more_waits_for_the_second_half_of_the_window():
+    # first half (200s -> 150s): a 0.90+ ask is not a signal, anything cheaper still is
+    assert evaluate(180, up=0.93, down=0.07, **HIGH).signals == []
+    assert evaluate(151, up=0.90, down=0.10, **HIGH).signals == []
+    assert {s.side for s in evaluate(180, up=0.89, down=0.11, **HIGH).signals} == {"UP"}  # 0.85-0.90 buys now
+    # second half (150s -> 100s): the 0.90+ ask buys the moment it is there
+    assert {s.side for s in evaluate(150, up=0.90, down=0.10, **HIGH).signals} == {"UP"}
+    assert {s.side for s in evaluate(120, up=0.97, down=0.03, **HIGH).signals} == {"UP"}
+
+
+def test_high_buy_after_pct_zero_buys_90_plus_in_the_whole_window():
+    assert {s.side for s in evaluate(190, up=0.93, down=0.07, **HIGH, stage0_high_buy_after_pct=0.0).signals} == {"UP"}
+
+
+def test_risk_blocks_a_90_plus_stage0_buy_in_the_first_half():
+    from dataclasses import replace
+
+    config = make_config(**STAGE0, **HIGH)
+    early = make_ctx(remaining=180, btc_price=100_150.0, price_to_beat=100_000.0)
+    late = make_ctx(remaining=140, btc_price=100_150.0, price_to_beat=100_000.0)
+    cheap = _signal(remaining=180, up=0.85)
+    expensive = replace(cheap, best_ask=0.93)
+    blocked = RiskManager().check(expensive, early, config)
+    assert blocked.approved is False and blocked.reason == "stage0_high_buy_too_early"
+    assert RiskManager().check(cheap, early, config).approved  # a cheaper ask is fine in the first half
+    assert RiskManager().check(replace(expensive, remaining_seconds=140), late, config).approved

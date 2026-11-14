@@ -1646,6 +1646,7 @@ class TradingBot:
                 "stage3_stop_loss_pct": config.stage3_stop_loss_pct,
                 "stage0_high_buy_price": config.stage0_high_buy_price,
                 "stage0_high_buy_stop_loss_pct": config.stage0_high_buy_stop_loss_pct,
+                "stage0_high_buy_after_pct": config.stage0_high_buy_after_pct,
                 "conflict_policy": config.conflict_policy,
                 "duplicate_policy": config.duplicate_policy,
             },

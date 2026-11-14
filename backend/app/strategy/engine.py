@@ -6,7 +6,8 @@ Final N seconds (default 80): monitor UP and DOWN best asks.
 Entries are staged. Each stage may place ONE buy per market:
 
 * stage 0 (optional, independent): while more than stage0_end_seconds (default 100) and at most stage0_start_seconds (default 200) remain
-  (independent of the final window), stage0_min_ask (default 0.60) <= best_ask <= stage0_max_ask (default 0.85). The risk manager also
+  (independent of the final window), stage0_min_ask (default 0.60) <= best_ask <= stage0_max_ask (default 0.99). Asks of stage0_high_buy_price (0.90) or more
+  only buy once stage0_high_buy_after_pct (50 %) of the window has passed (150s left). The risk manager also
   demands the BTC price gap (default $50) and the order manager sells the shares again once the
   best bid is the tier's take-profit percentage above the buy price (15 / 10 / 5 % by buy price, capped at 0.99).
 
@@ -101,6 +102,8 @@ class FinalWindowStrategy:
                     continue
                 if ask > config.stage0_max_ask + 1e-9 or ask + 1e-9 < config.stage0_min_ask:
                     continue
+                if config.stage0_high_buy_too_early(ask, remaining):
+                    continue  # a 0.90+ ask only buys in the later part of the stage 0 window
                 signals.append(
                     Signal(
                         market_id=market.market_id,

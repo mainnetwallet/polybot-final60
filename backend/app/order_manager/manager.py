@@ -618,6 +618,8 @@ class OrderManager:
                 continue
             if stage == 0 and book.best_ask + 1e-9 < config.stage0_min_ask:
                 continue
+            if stage == 0 and config.stage0_high_buy_too_early(book.best_ask, market.remaining_seconds()):
+                continue
             spent = filled_size * avg_fill_price
             remaining = requested_notional - spent
             if remaining <= 0.01:

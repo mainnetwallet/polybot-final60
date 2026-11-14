@@ -122,6 +122,13 @@ class RiskManager:
                     "stage0_ask_too_high",
                     f"ask {signal.best_ask:.3f} above the stage 0 limit {config.stage0_max_ask:.3f}",
                 )
+            if config.stage0_high_buy_too_early(signal.best_ask, ctx.remaining_seconds):
+                return RiskDecision(
+                    False,
+                    "stage0_high_buy_too_early",
+                    f"ask {signal.best_ask:.3f} is {config.stage0_high_buy_price:.2f} or more: "
+                    f"stage 0 buys that only from {config.stage0_high_buy_opens_at():g}s left",
+                )
         else:
             # each entry stage has its own ask threshold (stage 1 = trigger_threshold)
             stage_threshold = {

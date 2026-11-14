@@ -101,7 +101,7 @@ class Settings(BaseSettings):
     stage0_start_seconds: int = 200
     stage0_end_seconds: int = 100
     stage0_min_ask: float = 0.60
-    stage0_max_ask: float = 0.85
+    stage0_max_ask: float = 0.99
     stage0_min_price_gap_usd: float = 80.0
     # Take-profit for stage 0: sell once the best bid is this many percent ABOVE the average price paid per
     # share (cost * (1 + pct / 100), capped at 0.99). The percentage depends on what stage 0 paid per share:
@@ -137,6 +137,9 @@ class Settings(BaseSettings):
     # stage0_stop_loss_pct. 0 = off (the normal stage 0 stop-loss applies to every buy price).
     stage0_high_buy_price: float = 0.90
     stage0_high_buy_stop_loss_pct: float = 15.0
+    # Buys at stage0_high_buy_price (0.90) or more are only allowed once this percent of the stage 0 window
+    # (start -> end) has passed: 50 with the 200s -> 100s window = from 150s left. 0 = the whole window.
+    stage0_high_buy_after_pct: float = 50.0
     duplicate_policy: str = "one_per_market"  # one_per_market | one_per_side | allow
     conflict_policy: str = "up_first"  # up_first | down_first | highest_ask | block_both
 
