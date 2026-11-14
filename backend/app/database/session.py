@@ -17,21 +17,24 @@ def get_engine() -> Engine:
     global _engine
     if _engine is None:
         settings = get_settings()
+        is_sqlite = settings.database_url.startswith("sqlite")
         _engine = create_engine(
             settings.database_url,
-            connect_args={"check_same_thread": False, "timeout": 30},
+            connect_args={"check_same_thread": False, "timeout": 30} if is_sqlite else {},
             pool_pre_ping=True,
             future=True,
         )
 
-        @event.listens_for(_engine, "connect")
-        def _sqlite_pragmas(dbapi_connection, _record):  # pragma: no cover - driver hook
-            cursor = dbapi_connection.cursor()
-            cursor.execute("PRAGMA journal_mode=WAL")
-            cursor.execute("PRAGMA synchronous=NORMAL")
-            cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.execute("PRAGMA busy_timeout=30000")
-            cursor.close()
+        if is_sqlite:
+
+            @event.listens_for(_engine, "connect")
+            def _sqlite_pragmas(dbapi_connection, _record):  # pragma: no cover - driver hook
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA synchronous=NORMAL")
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.execute("PRAGMA busy_timeout=30000")
+                cursor.close()
 
     return _engine
 
