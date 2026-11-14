@@ -129,3 +129,66 @@ async def test_manual_sell_sells_only_the_stage_that_was_clicked():
 
     sold0 = await manager.manual_sell(late, books, "paper", stack["config"], "UP", 0)  # now click stage 0
     assert sold0.status == "FILLED" and sold0.filled_size == pytest.approx(stage0_before)
+
+
+async def test_manual_sell_all_sells_every_stage_that_holds_shares_and_skips_empty_ones():
+    from .test_stage0 import _stage_buy
+
+    stack = build_stack(make_config(**STAGE0, trade_amount_usdc=4.0, paper_starting_balance=30.0))
+    manager = stack["manager"]
+    market = make_market(remaining=55)
+    books = books_for(market, up_ask=0.90, down_ask=0.05)
+    # nothing held yet: nothing to sell
+    assert await manager.manual_sell_all(market, books, "paper", stack["config"]) == []
+
+    early = make_market(remaining=150)
+    await _stage0_buy(stack, early, books_for(early, up_ask=0.80, down_ask=0.10))  # stage 0 holds UP
+    assert [r.status for r in await _stage_buy(stack, market, books, 1)] == ["FILLED"]  # stage 1 holds UP too
+    assert manager.load_stage0_holding("paper", market.market_id, 0) is not None
+    assert manager.load_stage0_holding("paper", market.market_id, 1) is not None
+
+    books[market.up_token_id].bids = {0.70: 1000.0}
+    results = await manager.manual_sell_all(market, books, "paper", stack["config"])
+    assert [r.status for r in results] == ["FILLED", "FILLED"]  # stage 0 and stage 1; stages 2/3 hold nothing
+    assert manager.load_stage0_holding("paper", market.market_id, 0) is None
+    assert manager.load_stage0_holding("paper", market.market_id, 1) is None
+    with session_scope() as session:
+        sells = [o for o in session.execute(select(Order)).scalars() if manager._key_action(o.order_key) == "SELL"]
+        assert sorted((manager._key_stage(o.order_key), o.reason) for o in sells) == [
+            (0, "stage0_manual"),
+            (1, "stage1_manual"),
+        ]
+        assert session.execute(select(Position)).scalar_one().status == "closed"
+    # a second click finds nothing
+    assert await manager.manual_sell_all(market, books, "paper", stack["config"]) == []
+
+
+async def test_bot_manual_sell_all_sells_everything_and_errors_when_nothing_is_held_or_stopped():
+    from app.services.bot import BotError
+
+    market = make_market(remaining=150)
+    bot = _running_bot(market, btc=(100_150.0, 100_000.0, ""))
+    with pytest.raises(BotError, match="nothing left"):
+        await bot.manual_sell_all(market.market_id)
+
+    books = books_for(market, up_ask=0.80, down_ask=0.40)
+    bot.data._books = dict(books)
+    await _event(bot, market)  # stage 0 buys UP
+    books[market.up_token_id].bids = {0.78: 100.0}
+    bot.data._books = dict(books)
+
+    bot._risk_halt_reason = "daily_loss_limit"  # a risk halt must not trap the operator in a position
+    snapshot = await bot.manual_sell_all(market.market_id)
+    assert [r["status"] for r in snapshot["manual_sell_all"]["sold"]] == ["FILLED"]
+    assert snapshot["manual_sell_all"]["failed"] == []
+    assert snapshot["sellable"] == []
+    with session_scope() as session:
+        assert session.execute(select(Position)).scalar_one().status == "closed"
+
+    with pytest.raises(BotError, match="nothing left"):
+        await bot.manual_sell_all(market.market_id)
+    with pytest.raises(BotError, match="ended"):
+        await bot.manual_sell_all("some-other-market")
+    bot._status = "STOPPED"
+    with pytest.raises(BotError, match="running"):
+        await bot.manual_sell_all(market.market_id)

@@ -50,6 +50,7 @@ interface BotContextValue {
   switchMode: (mode: Mode, phrase?: string) => Promise<ActionResult>;
   killSwitch: (active: boolean) => Promise<ActionResult>;
   sellNow: (holding: SellableHolding) => Promise<ActionResult>;
+  sellAll: (marketId: string) => Promise<ActionResult>;
   resetPaper: (balance: number) => Promise<ActionResult>;
   resetDaily: () => Promise<ActionResult>;
   resetServer: (phrase: string) => Promise<ActionResult>;
@@ -412,6 +413,34 @@ export function BotProvider({ children }: { children: ReactNode }) {
     [applySnapshot, notify, refresh],
   );
 
+  // Instant "sell all": every stage that holds shares in this market is sold at the market, no confirmation step.
+  const sellAll = useCallback(
+    async (marketId: string): Promise<ActionResult> => {
+      try {
+        const next = await api.sellAll(marketId);
+        applySnapshot(next);
+        const failed = next.manual_sell_all?.failed ?? [];
+        const sold = next.manual_sell_all?.sold ?? [];
+        if (failed.length > 0) {
+          notify(
+            "error",
+            `Sold ${sold.length}, ${failed.length} not sold`,
+            failed.map((f) => `${f.side}: ${f.message}`).join(" · "),
+          );
+        } else {
+          notify("success", "Sell all sent", `${sold.length} stage${sold.length === 1 ? "" : "s"} sold at the market.`);
+        }
+        return { ok: true };
+      } catch (error) {
+        const message = describeError(error);
+        notify("error", "Sell all failed", message);
+        void refresh();
+        return { ok: false, error: message };
+      }
+    },
+    [applySnapshot, notify, refresh],
+  );
+
   const resetPaper = useCallback(
     async (balance: number): Promise<ActionResult> => {
       try {
@@ -479,6 +508,7 @@ export function BotProvider({ children }: { children: ReactNode }) {
       switchMode,
       killSwitch,
       sellNow,
+      sellAll,
       resetPaper,
       resetDaily,
       resetServer,
@@ -500,6 +530,7 @@ export function BotProvider({ children }: { children: ReactNode }) {
       switchMode,
       killSwitch,
       sellNow,
+      sellAll,
       resetPaper,
       resetDaily,
       resetServer,

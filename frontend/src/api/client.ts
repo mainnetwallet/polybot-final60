@@ -85,6 +85,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ market_id: marketId, side, stage }),
     }),
+  /** Instant "sell all": every stage that holds shares in this market is sold at the market (no confirmation step). */
+  sellAll: (marketId: string) =>
+    request<Snapshot>("/api/orders/sell-all", {
+      method: "POST",
+      body: JSON.stringify({ market_id: marketId }),
+    }),
   killSwitch: (active: boolean) =>
     request<Snapshot>("/api/kill-switch", {
       method: "POST",

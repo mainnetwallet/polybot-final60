@@ -956,6 +956,60 @@ class TradingBot:
         snapshot["manual_sell"] = result.as_dict()
         return snapshot
 
+    async def manual_sell_all(self, market_id: str) -> dict:
+        """Operator "sell all": sell the shares of every stage that holds any in the live market, at the market.
+
+        Same rules as `manual_sell` (instant, no confirmation, not held back by a risk halt, needs the bot
+        running with an open market). Stages that hold nothing are skipped; if some stages cannot be sold
+        (no bid, a sell already in progress) the others still go through and the rest is reported back.
+        """
+        market = self._market
+        if self._status != "RUNNING" or self._kill_switch:
+            raise BotError("the bot must be running to sell")
+        if market is None or market.market_id != market_id or market.remaining_seconds() <= 0:
+            raise BotError("this market has ended: its shares settle automatically")
+        self.logs.log(
+            "WARNING",
+            "system",
+            "manual SELL ALL requested",
+            payload={"market_id": market_id, "mode": self._mode},
+            mode=self._mode,
+        )
+        results = await self.orders.manual_sell_all(market, self.data.books, self._mode, self.runtime.get())
+        if not results:
+            raise BotError("nothing left to sell in this market")
+        reasons = {
+            "no_holding": "nothing left to sell",
+            "sell_in_flight": "a sell is already in progress",
+            "no_bid": "no bid in the order book right now",
+            "market_ended": "this market has ended: its shares settle automatically",
+        }
+        def _went_through(r) -> bool:
+            return r.status not in {"BLOCKED", "REJECTED", "CANCELED"} or r.filled_size > 0
+
+        sold = [r for r in results if _went_through(r)]
+        failed = [r for r in results if not _went_through(r)]
+        if not sold:
+            first = failed[0]
+            if first.status == "BLOCKED":
+                raise BotError(reasons.get(first.reason, f"sell blocked: {first.reason}"))
+            raise BotError(f"sell {first.status.lower()}: {first.error or 'no fill'}")
+        last = sold[-1]
+        self._last_order = last.as_dict()
+        self._last_order["ts"] = iso_z(utcnow())
+        for result in sold:
+            if result.latency_ms is not None:
+                self._latencies.append(result.latency_ms)
+        await self._broadcast_state()
+        snapshot = await self.snapshot()
+        snapshot["manual_sell_all"] = {
+            "sold": [r.as_dict() for r in sold],
+            "failed": [
+                {**r.as_dict(), "message": reasons.get(r.reason, r.error or r.status)} for r in failed
+            ],
+        }
+        return snapshot
+
     async def set_kill_switch(self, active: bool) -> dict:
         if active:
             self._kill_switch = True

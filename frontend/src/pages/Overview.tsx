@@ -289,7 +289,7 @@ function stageEntryPrice(orders: OrderRow[], marketId: string, side: string, sta
 
 /** Everything held in the live market, one row per stage (a stage held on its own stays its own row), each with a Sell button. */
 function PositionPanel({ orders }: { orders: OrderRow[] }) {
-  const { snapshot, sellNow } = useBot();
+  const { snapshot, sellNow, sellAll } = useBot();
   const [selling, setSelling] = useState<Set<string>>(new Set());
   if (!snapshot) return <LoadingPanel className="xl:col-span-4" />;
 
@@ -344,16 +344,43 @@ function PositionPanel({ orders }: { orders: OrderRow[] }) {
     );
   };
 
+  const sellableRows = rows.filter((row) => row.holding);
+  const sellingAll = selling.has("__all__");
+  const sellEverything = () => {
+    if (!marketId || sellableRows.length === 0 || sellingAll) return; // only blocks a double click while the request is on its way
+    setSelling((prev) => new Set(prev).add("__all__"));
+    void Promise.resolve(sellAll(marketId)).finally(() =>
+      setSelling((prev) => {
+        const next = new Set(prev);
+        next.delete("__all__");
+        return next;
+      }),
+    );
+  };
+
   return (
     <section className="panel p-5 xl:col-span-4">
       <PanelHead
         label="Position"
         title="Held in this market"
         right={
-          <span className="chip border-white/8 bg-white/[0.03] text-slate-500">
-            <IconLayers size={10} />
-            {rows.length}
-          </span>
+          <div className="flex items-center gap-2">
+            {sellableRows.length > 0 ? (
+              <button
+                type="button"
+                onClick={sellEverything}
+                disabled={sellingAll}
+                title={`Sell every stage that holds shares (${sellableRows.length}) now at the market`}
+                className="rounded-md border border-rose-400/40 bg-rose-400/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-rose-300 transition hover:bg-rose-400/25 disabled:cursor-wait disabled:opacity-50"
+              >
+                {sellingAll ? "Selling…" : "Sell all"}
+              </button>
+            ) : null}
+            <span className="chip border-white/8 bg-white/[0.03] text-slate-500">
+              <IconLayers size={10} />
+              {rows.length}
+            </span>
+          </div>
         }
       />
 

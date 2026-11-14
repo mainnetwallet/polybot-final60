@@ -183,6 +183,11 @@ export interface Snapshot {
   open_orders: OrderRow[];
   /** shares the operator can sell right now (live market, bot running) */
   sellable?: SellableHolding[];
+  /** present only on the reply to a "sell all": which stages went through and which could not be sold */
+  manual_sell_all?: {
+    sold: Array<{ status: string; side: string; filled_size: number }>;
+    failed: Array<{ status: string; side: string; message: string }>;
+  };
   last_order: LastOrder | null;
   market_data: {
     connected: boolean;

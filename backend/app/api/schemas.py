@@ -31,6 +31,10 @@ class ManualSellRequest(BaseModel):
     stage: int = Field(ge=0, le=3)
 
 
+class ManualSellAllRequest(BaseModel):
+    market_id: str
+
+
 class ResetDailyRequest(BaseModel):
     confirm: bool = False
 

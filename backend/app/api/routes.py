@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.api.schemas import (
     KillSwitchRequest,
+    ManualSellAllRequest,
     ManualSellRequest,
     ModeRequest,
     ResetDailyRequest,
@@ -112,6 +113,14 @@ def build_router(
         """Sell what one order's stage still holds, right now, at the market (no confirmation step)."""
         try:
             return await bot.manual_sell(request.market_id, request.side, request.stage)
+        except BotError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/orders/sell-all")
+    async def manual_sell_all(request: ManualSellAllRequest) -> dict:
+        """Sell what every stage still holds in this market, right now, at the market (no confirmation step)."""
+        try:
+            return await bot.manual_sell_all(request.market_id)
         except BotError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
