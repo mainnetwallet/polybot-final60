@@ -54,23 +54,6 @@ function PanelHead({
   );
 }
 
-function humanizeReason(reason: string, finalWindowSeconds: number): string {
-  switch (reason) {
-    case "no_market":
-      return "Waiting for the next market";
-    case "market_not_started":
-      return "Market discovered — observation phase";
-    case "outside_final_window":
-      return `Outside the configured final ${finalWindowSeconds} seconds; trading is disabled`;
-    case "market_expired":
-      return "Market expired — no new orders allowed";
-    case "in_window":
-      return "Final window active — monitoring both asks";
-    default:
-      return reason.replace(/_/g, " ");
-  }
-}
-
 function MarketPanel() {
   const { snapshot } = useBot();
   const remaining = useRemainingSeconds();
@@ -193,7 +176,7 @@ function MarketPanel() {
         />
       )}
 
-      <StrategyStateBlock strategy={strategy} />
+      <TriggerRows strategy={strategy} />
 
       <div className="mt-5 grid grid-cols-2 gap-3 border-t hairline pt-4 sm:grid-cols-4">
         <div>
@@ -306,79 +289,43 @@ function AccountPanel() {
   );
 }
 
-/** Ask-trigger state: phase, UP/DOWN ask vs. threshold, engine reason. Lives inside the active-market panel. */
-function StrategyStateBlock({ strategy }: { strategy: StrategyState }) {
-  const armed = strategy.up_armed || strategy.down_armed;
-  const phase = strategy.in_window ? (armed ? "TRIGGER" : "MONITOR") : "OBSERVE";
-
+/** UP / DOWN ask vs. trigger threshold, shown inside the active-market panel. */
+function TriggerRows({ strategy }: { strategy: StrategyState }) {
   return (
-    <div className="mt-5 border-t hairline pt-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <div className="label">Strategy state</div>
-          <div className="mt-1 text-[12px] text-slate-400">Configured ask-trigger strategy</div>
-        </div>
-        <span
-          className={cx(
-            "chip",
-            phase === "TRIGGER"
-              ? "border-up/30 bg-up/10 text-up"
-              : phase === "MONITOR"
-                ? "border-amber/30 bg-amber/10 text-amber"
-                : "border-white/10 bg-white/5 text-slate-400",
-          )}
-        >
-          {phase}
-        </span>
-      </div>
-
-      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-        {(["UP", "DOWN"] as const).map((side) => {
-          const ask = side === "UP" ? strategy.up_ask : strategy.down_ask;
-          const isArmed = side === "UP" ? strategy.up_armed : strategy.down_armed;
-          return (
-            <div
-              key={side}
-              className={cx(
-                "flex items-center justify-between rounded-lg border px-3 py-2.5",
-                isArmed
-                  ? side === "UP"
-                    ? "border-up/25 bg-up/[0.06]"
-                    : "border-down/25 bg-down/[0.06]"
-                  : "border-white/5 bg-black/20",
-              )}
-            >
-              <div className="flex items-center gap-2">
-                <SideBadge side={side} size="sm" />
-                <span className="mono text-[13px] text-slate-300">{fmtCents(ask)}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="mono text-[10px] text-slate-600">≥ {fmtCents(strategy.trigger_threshold)}</span>
-                {isArmed ? (
-                  <span className={cx("chip", side === "UP" ? "border-up/30 bg-up/10 text-up" : "border-down/30 bg-down/10 text-down")}>
-                    <IconZap size={9} />
-                    Armed
-                  </span>
-                ) : (
-                  <span className="chip border-white/8 bg-white/[0.03] text-slate-500">idle</span>
-                )}
-              </div>
+    <div className="mt-5 grid grid-cols-1 gap-2.5 border-t hairline pt-4 sm:grid-cols-2">
+      {(["UP", "DOWN"] as const).map((side) => {
+        const ask = side === "UP" ? strategy.up_ask : strategy.down_ask;
+        const isArmed = side === "UP" ? strategy.up_armed : strategy.down_armed;
+        return (
+          <div
+            key={side}
+            className={cx(
+              "flex items-center justify-between rounded-lg border px-3 py-2.5",
+              isArmed
+                ? side === "UP"
+                  ? "border-up/25 bg-up/[0.06]"
+                  : "border-down/25 bg-down/[0.06]"
+                : "border-white/5 bg-black/20",
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <SideBadge side={side} size="sm" />
+              <span className="mono text-[13px] text-slate-300">{fmtCents(ask)}</span>
             </div>
-          );
-        })}
-      </div>
-
-      <div className="mt-3 rounded-lg border hairline bg-black/20 px-3 py-2.5">
-        <div className="label">Engine reason</div>
-        <div className="mt-1 text-[12px] leading-relaxed text-slate-300">
-          {humanizeReason(strategy.reason, strategy.final_window_seconds)}
-        </div>
-        {strategy.remaining_seconds !== null && strategy.remaining_seconds !== undefined ? (
-          <div className="mono mt-1.5 text-[10.5px] text-slate-600">
-            T-{fmtNum(Math.max(0, strategy.remaining_seconds), 0)}s · window {strategy.final_window_seconds}s
+            <div className="flex items-center gap-2">
+              <span className="mono text-[10px] text-slate-600">≥ {fmtCents(strategy.trigger_threshold)}</span>
+              {isArmed ? (
+                <span className={cx("chip", side === "UP" ? "border-up/30 bg-up/10 text-up" : "border-down/30 bg-down/10 text-down")}>
+                  <IconZap size={9} />
+                  Armed
+                </span>
+              ) : (
+                <span className="chip border-white/8 bg-white/[0.03] text-slate-500">idle</span>
+              )}
+            </div>
           </div>
-        ) : null}
-      </div>
+        );
+      })}
     </div>
   );
 }
