@@ -93,9 +93,9 @@ class RuntimeSettings(BaseModel):
     stage0_enabled: bool = False
     stage0_start_seconds: int = Field(default=200, ge=1, le=300)
     stage0_end_seconds: int = Field(default=100, ge=0, le=299)
-    stage0_min_ask: float = Field(default=0.60, ge=0.01, le=0.999)
+    stage0_min_ask: float = Field(default=0.69, ge=0.01, le=0.999)
     stage0_max_ask: float = Field(default=0.94, ge=0.01, le=0.999)
-    stage0_min_price_gap_usd: float = Field(default=80.0, ge=0.0, le=1_000_000.0)
+    stage0_min_price_gap_usd: float = Field(default=70.0, ge=0.0, le=1_000_000.0)
     # Stage 0 take-profit in percent above the average buy price, by what stage 0 paid per share:
     #   cost <  stage0_mid_from_ask   -> stage0_take_profit_pct_low  (default 0.60-0.70 buy -> +15 %)
     #   cost <  stage0_high_from_ask  -> stage0_take_profit_pct_mid  (default 0.70-0.80 buy -> +10 %)
@@ -110,8 +110,8 @@ class RuntimeSettings(BaseModel):
     stage1_sell_max_buy: float = Field(default=0.86, ge=0.01, le=0.999)
     # Stage 1 take-profit in percent above the average buy price for shares that cost up to
     # stage1_sell_max_buy (0 = no take-profit for those shares: held to settlement / stop-loss).
-    stage1_take_profit_pct: float = Field(default=10.0, ge=0.0, le=500.0)
-    stage1_sell_price_high: float = Field(default=0.99, ge=0.02, le=0.999)
+    stage1_take_profit_pct: float = Field(default=8.0, ge=0.0, le=500.0)
+    stage1_sell_price_high: float = Field(default=0.98, ge=0.02, le=0.999)
     stage2_sell_enabled: bool = False
     stage2_sell_price: float = Field(default=0.99, ge=0.02, le=0.999)
     # Stop-loss in percent below the average buy price (0 = off). Off when a RuntimeSettings is built

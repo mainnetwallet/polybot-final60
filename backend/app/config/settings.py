@@ -63,8 +63,8 @@ class Settings(BaseSettings):
     )
 
     # --- strategy -------------------------------------------------------
-    trigger_threshold: float = 0.80
-    final_window_seconds: int = 80
+    trigger_threshold: float = 0.85
+    final_window_seconds: int = 90
     # Extra staged entries inside the final window: once `remaining <= stageN_seconds`
     # and a best ask >= stageN_threshold, one more buy per stage (same market).
     stage2_seconds: int = 50
@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     # Price-to-beat filter: a buy needs the current BTC price at least this many USD beyond the
     # price to beat in the bought direction (UP: current >= beat + gap, DOWN: current <= beat - gap).
     # 0 disables the rule. With the rule on, missing/stale BTC data blocks the buy (fail closed).
-    min_price_gap_usd: float = 20.0  # stage 1
+    min_price_gap_usd: float = 35.0  # stage 1
     # Each add-on stage can demand a bigger gap: stage 2 = 25 USD, stage 3 = 30 USD by default.
     stage2_min_price_gap_usd: float = 25.0
     stage3_min_price_gap_usd: float = 30.0
@@ -100,9 +100,9 @@ class Settings(BaseSettings):
     stage0_enabled: bool = True
     stage0_start_seconds: int = 200
     stage0_end_seconds: int = 100
-    stage0_min_ask: float = 0.60
+    stage0_min_ask: float = 0.69
     stage0_max_ask: float = 0.94
-    stage0_min_price_gap_usd: float = 80.0
+    stage0_min_price_gap_usd: float = 70.0
     # Take-profit for stage 0: sell once the best bid is this many percent ABOVE the average price paid per
     # share (cost * (1 + pct / 100), capped at 0.99). The percentage depends on what stage 0 paid per share:
     #   cost <  stage0_mid_from_ask   -> stage0_take_profit_pct_low  (default 0.60-0.70 buy -> +15 %)
@@ -116,21 +116,21 @@ class Settings(BaseSettings):
     stage0_take_profit_pct_high: float = 5.0
     # Stage 1 take-profit: stage 1 shares are sold again as soon as the best bid reaches a price that
     # depends on what they cost per share:
-    #   cost <= stage1_sell_max_buy (0.86) -> cost * (1 + stage1_take_profit_pct / 100), i.e. +10 %
+    #   cost <= stage1_sell_max_buy (0.86) -> cost * (1 + stage1_take_profit_pct / 100), i.e. +8 %
     #                                         (capped at 0.99; 0 = no take-profit for these shares)
-    #   cost above it                      -> stage1_sell_price_high (0.99).
+    #   cost above it                      -> stage1_sell_price_high (0.98).
     stage1_sell_enabled: bool = True
     stage1_sell_max_buy: float = 0.86
-    stage1_take_profit_pct: float = 10.0
-    stage1_sell_price_high: float = 0.99
+    stage1_take_profit_pct: float = 8.0
+    stage1_sell_price_high: float = 0.98
     # Stage 2 take-profit: stage 2 shares are sold as soon as the best bid reaches stage2_sell_price.
     stage2_sell_enabled: bool = True
     stage2_sell_price: float = 0.99
     # Stop-loss per entry stage, in percent of the average price paid per share: once the best bid
     # is at or below cost * (1 - pct / 100), that stage's own shares are sold at the market.
-    # 0 switches the stop-loss off for that stage. Stage 0 = 50 %, stage 1 = 15 %, stage 2 = 9 %, stage 3 = 5 % by default.
-    stage0_stop_loss_pct: float = 50.0
-    stage1_stop_loss_pct: float = 15.0
+    # 0 switches the stop-loss off for that stage. Stage 0 = 70 %, stage 1 = 30 %, stage 2 = 9 %, stage 3 = 5 % by default.
+    stage0_stop_loss_pct: float = 70.0
+    stage1_stop_loss_pct: float = 30.0
     stage2_stop_loss_pct: float = 9.0
     stage3_stop_loss_pct: float = 5.0
     # Stage 0 shares that cost stage0_high_buy_price (0.90) or more use this tighter stop-loss instead of

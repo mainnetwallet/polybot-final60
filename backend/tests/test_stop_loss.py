@@ -66,10 +66,10 @@ def test_stop_loss_is_off_at_zero_and_when_settings_are_built_directly():
     assert only_stage1.stop_loss_price_for(1, 0.85) == pytest.approx(0.7225)
 
 
-def test_app_defaults_are_50_15_9_5_percent_for_stages_0_1_2_3():
+def test_app_defaults_are_70_30_9_5_percent_for_stages_0_1_2_3():
     fields = Settings.model_fields
-    assert fields["stage0_stop_loss_pct"].default == 50.0
-    assert fields["stage1_stop_loss_pct"].default == 15.0
+    assert fields["stage0_stop_loss_pct"].default == 70.0
+    assert fields["stage1_stop_loss_pct"].default == 30.0
     assert fields["stage2_stop_loss_pct"].default == 9.0
     assert fields["stage3_stop_loss_pct"].default == 5.0
 

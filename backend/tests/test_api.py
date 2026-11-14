@@ -404,7 +404,7 @@ def test_server_reset_requires_phrase_and_wipes_data():
         assert ok.json()["bot"]["status"] == "STOPPED"
         assert ok.json()["bot"]["mode"] == "paper"
         # setting overrides are gone -> back to .env default
-        assert client.get("/api/settings").json()["trigger_threshold"] == 0.80
+        assert client.get("/api/settings").json()["trigger_threshold"] == 0.85
 
 
 def test_api_token_is_optional_and_protects_everything_but_health():
@@ -451,15 +451,15 @@ def test_websocket_requires_token_when_configured():
         settings.api_token = ""
 
 
-def test_min_price_gap_setting_defaults_to_20_and_is_patchable():
+def test_min_price_gap_setting_defaults_to_35_and_is_patchable():
     with TestClient(create_app()) as client:
-        assert client.get("/api/settings").json()["min_price_gap_usd"] == 20.0
+        assert client.get("/api/settings").json()["min_price_gap_usd"] == 35.0
         assert client.get("/api/settings").json()["stage2_min_price_gap_usd"] == 25.0
         assert client.get("/api/settings").json()["stage3_min_price_gap_usd"] == 30.0
-        updated = client.patch("/api/settings", json={"min_price_gap_usd": 35})
+        updated = client.patch("/api/settings", json={"min_price_gap_usd": 40})
         assert updated.status_code == 200
-        assert updated.json()["min_price_gap_usd"] == 35.0
-        assert client.get("/api/state").json()["config"]["min_price_gap_usd"] == 35.0
+        assert updated.json()["min_price_gap_usd"] == 40.0
+        assert client.get("/api/state").json()["config"]["min_price_gap_usd"] == 40.0
         assert client.patch("/api/settings", json={"min_price_gap_usd": -1}).status_code == 422
         # 0 switches the rule off
         assert client.patch("/api/settings", json={"min_price_gap_usd": 0}).json()["min_price_gap_usd"] == 0.0
