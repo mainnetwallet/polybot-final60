@@ -57,7 +57,7 @@ export function OrdersTable({
                   <StageChip stage={order.stage} action={order.action} />
                 </td>
                 <td>
-                  <StatusChip status={order.status} />
+                  <StatusChip status={order.status} action={order.action} reason={order.reason} />
                 </td>
                 <td>
                   <ResultChip result={order.result} pnl={order.result_pnl} />

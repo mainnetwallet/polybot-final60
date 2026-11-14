@@ -101,9 +101,30 @@ function statusTone(status: string): string {
   }
 }
 
-export function StatusChip({ status }: { status: string }) {
+export function StatusChip({
+  status,
+  action,
+  reason,
+}: {
+  status: string;
+  action?: string | null;
+  reason?: string | null;
+}) {
   const label = status.replace(/_/g, " ");
-  return <span className={cx("chip", statusTone(status))}>{label}</span>;
+  // Orders: tag the status with what kind of order it is (BUY / SELL / STOP LOSS / TAKE PROFIT).
+  let kind: string | null = null;
+  if (action === "BUY") {
+    kind = "BUY";
+  } else if (action === "SELL") {
+    if (reason?.endsWith("_stop_loss")) kind = "STOP LOSS";
+    else if (reason?.endsWith("_take_profit")) kind = "TAKE PROFIT";
+    else kind = "SELL";
+  }
+  return (
+    <span className={cx("chip", statusTone(status))}>
+      {kind ? `${kind} ${label}` : label}
+    </span>
+  );
 }
 
 export function StageChip({ stage, action }: { stage?: number | null; action?: string | null }) {
@@ -122,7 +143,6 @@ export function StageChip({ stage, action }: { stage?: number | null; action?: s
       title={action === "SELL" ? `Stage ${stage} exit sale (take-profit or stop-loss)` : `Entry stage ${stage}`}
     >
       S{stage}
-      {action === "SELL" ? " SELL" : ""}
     </span>
   );
 }

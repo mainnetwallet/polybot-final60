@@ -1488,6 +1488,7 @@ class TradingBot:
                     "fee": o.fee,
                     "latency_ms": o.latency_ms,
                     "exchange_order_id": o.exchange_order_id,
+                    "reason": o.reason,
                     "created_at": iso_z(o.created_at),
                 }
                 for o in open_orders
