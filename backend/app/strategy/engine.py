@@ -5,8 +5,8 @@ Final N seconds (default 80): monitor UP and DOWN best asks.
 
 Entries are staged. Each stage may place ONE buy per market:
 
-* stage 0 (optional, independent): while stage0_start_seconds (default 200) or fewer remain and the
-  final window has NOT started yet, stage0_min_ask (default 0.60) <= best_ask <= stage0_max_ask (default 0.85). The risk manager also
+* stage 0 (optional, independent): while more than stage0_end_seconds (default 100) and at most stage0_start_seconds (default 200) remain
+  (independent of the final window), stage0_min_ask (default 0.60) <= best_ask <= stage0_max_ask (default 0.85). The risk manager also
   demands the BTC price gap (default $50) and the order manager sells the shares again once the
   best bid is the tier's take-profit percentage above the buy price (15 / 10 / 5 % by buy price, capped at 0.99).
 
@@ -51,10 +51,10 @@ def stage_plan(config: RuntimeSettings) -> list[tuple[int, float, float]]:
 
 
 def stage0_active(config: RuntimeSettings, remaining: float) -> bool:
-    """Stage 0 buys between `stage0_start_seconds` left and the start of the final window."""
+    """Stage 0 buys between `stage0_start_seconds` left and `stage0_end_seconds` left (independent of the final window)."""
     return bool(
         config.stage0_enabled
-        and config.final_window_seconds < remaining <= config.stage0_start_seconds
+        and config.stage0_end_seconds < remaining <= config.stage0_start_seconds
     )
 
 

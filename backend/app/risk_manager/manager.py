@@ -96,12 +96,12 @@ class RiskManager:
         if signal.stage == 0:
             if not config.stage0_enabled:
                 return RiskDecision(False, "stage0_disabled", "stage 0 is switched off")
-            if not (config.final_window_seconds < ctx.remaining_seconds <= config.stage0_start_seconds):
+            if not (config.stage0_end_seconds < ctx.remaining_seconds <= config.stage0_start_seconds):
                 return RiskDecision(
                     False,
                     "outside_stage0_window",
-                    f"stage 0 buys only between {config.stage0_start_seconds}s left and the final "
-                    f"{config.final_window_seconds}s window",
+                    f"stage 0 buys only between {config.stage0_start_seconds}s and "
+                    f"{config.stage0_end_seconds}s left",
                 )
         elif ctx.remaining_seconds > config.final_window_seconds:
             return RiskDecision(False, "outside_final_window", "outside final trading window")

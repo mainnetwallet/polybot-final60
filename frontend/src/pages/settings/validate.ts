@@ -39,6 +39,11 @@ const n = (d: Draft, key: string) => Number(d[key]);
 
 const CROSS_RULES: CrossRule[] = [
   {
+    keys: ["stage0_end_seconds", "stage0_start_seconds"],
+    broken: (d) => n(d, "stage0_end_seconds") >= n(d, "stage0_start_seconds"),
+    message: "Stage 0 end time must be lower than its start time.",
+  },
+  {
     keys: ["stage0_min_ask", "stage0_max_ask"],
     broken: (d) => n(d, "stage0_min_ask") > n(d, "stage0_max_ask"),
     message: "Min ask must not be higher than the stage 0 max ask.",

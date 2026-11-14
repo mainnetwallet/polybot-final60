@@ -41,11 +41,21 @@ export const FIELDS: FieldSpec[] = [
   {
     key: "stage0_start_seconds",
     label: "Stage 0: starts at (seconds left)",
-    hint: "Stage 0 may buy from this many seconds before expiry until the final window starts.",
+    hint: "Stage 0 may start buying when this many seconds are left before expiry.",
     kind: "number",
     step: "1",
     min: "1",
     max: "300",
+    suffix: "s",
+  },
+  {
+    key: "stage0_end_seconds",
+    label: "Stage 0: ends at (seconds left)",
+    hint: "Stage 0 stops buying when this many seconds are left. Independent of the final window.",
+    kind: "number",
+    step: "1",
+    min: "0",
+    max: "299",
     suffix: "s",
   },
   {

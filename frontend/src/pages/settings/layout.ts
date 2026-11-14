@@ -50,9 +50,9 @@ export const TABS: TabSpec[] = [
     id: "stage0",
     label: "Stage 0",
     title: "Early buy + take-profit",
-    description: "Buys before the final window and sells on a tiered take-profit.",
+    description: "Buys between its own start and end time and sells on a tiered take-profit.",
     groups: [
-      { title: "Activation", keys: ["stage0_enabled", "stage0_start_seconds"] },
+      { title: "Activation", keys: ["stage0_enabled", "stage0_start_seconds", "stage0_end_seconds"] },
       {
         title: "Entry band",
         description: "Ask range and BTC gap in which stage 0 may buy.",

@@ -1,4 +1,4 @@
-"""Stage 0: early entry (200s -> final window, ask .60-.85, BTC gap >= $50) + take-profit sell (+15 / +10 / +5 % by buy price)."""
+"""Stage 0: early entry (200s -> 100s, ask .60-.85, BTC gap >= $50) + take-profit sell (+15 / +10 / +5 % by buy price)."""
 
 from __future__ import annotations
 
@@ -55,13 +55,25 @@ def test_stage0_ask_outside_60_85_is_not_a_signal():
     assert result.signals[0].threshold == 0.85
 
 
-def test_stage0_off_before_200s_and_inside_final_window():
+def test_stage0_window_is_200s_to_100s_independent_of_final_window():
     assert evaluate(230, 0.9, 0.1).reason == "outside_final_window"
     assert evaluate(230, 0.9, 0.1).signals == []
-    inside = evaluate(55, 0.9, 0.1)  # final window: stage 0 is over, stage 1 rules apply
-    assert all(s.stage != 0 for s in inside.signals)
-    boundary = evaluate(60.5, 0.8, 0.2)  # just before the final window opens
+    start = evaluate(200, 0.8, 0.2)  # 200s left: stage 0 opens
+    assert any(s.stage == 0 for s in start.signals)
+    boundary = evaluate(100.5, 0.8, 0.2)  # just before stage 0 ends
     assert any(s.stage == 0 for s in boundary.signals)
+    ended = evaluate(100, 0.8, 0.2)  # 100s left: stage 0 is over
+    assert all(s.stage != 0 for s in ended.signals)
+    gap = evaluate(80, 0.8, 0.2, final_window_seconds=60)  # between stage 0 end and the final window: nothing
+    assert all(s.stage != 0 for s in gap.signals)
+    # moving the final window does not move the stage 0 end
+    wide = evaluate(90, 0.8, 0.2, final_window_seconds=120)
+    assert all(s.stage != 0 for s in wide.signals)
+
+
+def test_stage0_end_can_be_changed():
+    result = evaluate(70, 0.8, 0.2, stage0_end_seconds=50)
+    assert any(s.stage == 0 for s in result.signals)
 
 
 def test_stage0_disabled_changes_nothing():

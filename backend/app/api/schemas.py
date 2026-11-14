@@ -57,6 +57,7 @@ class SettingsPatch(BaseModel):
     stage3_min_price_gap_usd: float | None = Field(default=None, ge=0, le=1_000_000)
     stage0_enabled: bool | None = None
     stage0_start_seconds: int | None = Field(default=None, ge=1, le=300)
+    stage0_end_seconds: int | None = Field(default=None, ge=0, le=299)
     stage0_min_ask: float | None = Field(default=None, ge=0.01, le=0.999)
     stage0_max_ask: float | None = Field(default=None, ge=0.01, le=0.999)
     stage0_min_price_gap_usd: float | None = Field(default=None, ge=0, le=1_000_000)

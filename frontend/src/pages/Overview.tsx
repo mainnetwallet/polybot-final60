@@ -179,6 +179,7 @@ function MarketPanel() {
             armed={strategy.up_armed || strategy.down_armed}
             stage0Enabled={strategy.stage0_enabled}
             stage0Start={strategy.stage0_start_seconds}
+            stage0End={strategy.stage0_end_seconds}
             stage2Seconds={strategy.stage2_seconds}
             stage3Seconds={strategy.stage3_seconds}
           />

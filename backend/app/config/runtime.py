@@ -38,6 +38,7 @@ OVERRIDABLE_KEYS = (
     "stage3_min_price_gap_usd",
     "stage0_enabled",
     "stage0_start_seconds",
+    "stage0_end_seconds",
     "stage0_min_ask",
     "stage0_max_ask",
     "stage0_min_price_gap_usd",
@@ -88,6 +89,7 @@ class RuntimeSettings(BaseModel):
     # directly; the app's Settings (.env) turns it on.
     stage0_enabled: bool = False
     stage0_start_seconds: int = Field(default=200, ge=1, le=300)
+    stage0_end_seconds: int = Field(default=100, ge=0, le=299)
     stage0_min_ask: float = Field(default=0.60, ge=0.01, le=0.999)
     stage0_max_ask: float = Field(default=0.85, ge=0.01, le=0.999)
     stage0_min_price_gap_usd: float = Field(default=80.0, ge=0.0, le=1_000_000.0)
@@ -132,6 +134,8 @@ class RuntimeSettings(BaseModel):
             raise ValueError("max_execution_price must be >= trigger_threshold")
         if self.max_execution_price < max(self.stage2_threshold, self.stage3_threshold):
             raise ValueError("max_execution_price must be >= the stage 2/3 thresholds")
+        if self.stage0_end_seconds >= self.stage0_start_seconds:
+            raise ValueError("stage0_end_seconds must be less than stage0_start_seconds")
         if self.stage0_min_ask > self.stage0_max_ask:
             raise ValueError("stage0_min_ask must be <= stage0_max_ask")
         if self.stage0_mid_from_ask > self.stage0_high_from_ask:

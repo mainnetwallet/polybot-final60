@@ -8,6 +8,7 @@ interface CountdownRingProps {
   armed: boolean;
   stage0Enabled?: boolean;
   stage0Start?: number;
+  stage0End?: number;
   stage2Seconds?: number;
   stage3Seconds?: number;
   size?: number;
@@ -19,14 +20,15 @@ export function activeStageLabel(
   finalWindow: number,
   stage0Enabled: boolean,
   stage0Start: number,
+  stage0End: number,
   stage2Seconds: number,
   stage3Seconds: number,
 ): string {
   if (remaining <= 0) return "EXPIRED";
   if (remaining <= stage3Seconds) return "STAGE 3";
   if (remaining <= stage2Seconds) return "STAGE 2";
+  if (stage0Enabled && remaining > stage0End && remaining <= stage0Start) return "STAGE 0";
   if (remaining <= finalWindow) return "STAGE 1";
-  if (stage0Enabled && remaining <= stage0Start) return "STAGE 0";
   return "WAITING";
 }
 
@@ -38,6 +40,7 @@ export function CountdownRing({
   armed,
   stage0Enabled = false,
   stage0Start = 0,
+  stage0End = 0,
   stage2Seconds = 50,
   stage3Seconds = 30,
   size = 176,
@@ -63,7 +66,7 @@ export function CountdownRing({
   const label =
     remaining === null
       ? "NO ACTIVE MARKET"
-      : activeStageLabel(remaining, finalWindow, stage0Enabled, stage0Start, stage2Seconds, stage3Seconds);
+      : activeStageLabel(remaining, finalWindow, stage0Enabled, stage0Start, stage0End, stage2Seconds, stage3Seconds);
 
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }}>

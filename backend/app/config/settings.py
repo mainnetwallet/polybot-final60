@@ -93,12 +93,13 @@ class Settings(BaseSettings):
     # Each add-on stage can demand a bigger gap: stage 2 = 25 USD, stage 3 = 30 USD by default.
     stage2_min_price_gap_usd: float = 25.0
     stage3_min_price_gap_usd: float = 30.0
-    # Stage 0: an early, independent entry with its own take-profit SELL. While `stage0_start_seconds`
-    # (or fewer) remain and the final window has not started yet, buy a side whose best ask is
+    # Stage 0: an early, independent entry with its own take-profit SELL. While more than `stage0_end_seconds`
+    # and at most `stage0_start_seconds` remain (independent of the final window), buy a side whose best ask is
     # <= stage0_max_ask and whose BTC price gap beyond the price to beat is >= stage0_min_price_gap_usd.
     # The shares are sold again as soon as the best bid is the tier's take-profit percentage above the buy price.
     stage0_enabled: bool = True
     stage0_start_seconds: int = 200
+    stage0_end_seconds: int = 100
     stage0_min_ask: float = 0.60
     stage0_max_ask: float = 0.85
     stage0_min_price_gap_usd: float = 80.0

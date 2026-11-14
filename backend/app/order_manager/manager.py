@@ -608,7 +608,7 @@ class OrderManager:
             max_price = config.max_execution_price
             if stage == 0:
                 remaining_s = market.remaining_seconds()
-                if not (config.stage0_enabled and config.final_window_seconds < remaining_s <= config.stage0_start_seconds):
+                if not (config.stage0_enabled and config.stage0_end_seconds < remaining_s <= config.stage0_start_seconds):
                     continue  # stage 0 stops buying when its window is over
                 max_price = config.stage0_max_ask
             book = books.get(market.token_for(side))
