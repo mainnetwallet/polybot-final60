@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { api } from "../api/client";
-import type { OrderRow, PositionRow, SellableHolding, StrategyState } from "../api/types";
+import type { OrderRow, PositionRow, SellableHolding } from "../api/types";
 import { ModeBadge, SideBadge, StageChip } from "../components/Badges";
 import { CountdownRing } from "../components/CountdownRing";
 import { EmptyState } from "../components/EmptyState";
@@ -175,8 +175,6 @@ function MarketPanel() {
           hint="The next market is picked up automatically when it becomes available."
         />
       )}
-
-      <TriggerRows strategy={strategy} />
     </section>
   );
 }
@@ -261,47 +259,6 @@ function AccountPanel() {
         />
       </div>
     </section>
-  );
-}
-
-/** UP / DOWN ask vs. trigger threshold, shown inside the active-market panel. */
-function TriggerRows({ strategy }: { strategy: StrategyState }) {
-  return (
-    <div className="mt-5 grid grid-cols-1 gap-2.5 border-t hairline pt-4 sm:grid-cols-2">
-      {(["UP", "DOWN"] as const).map((side) => {
-        const ask = side === "UP" ? strategy.up_ask : strategy.down_ask;
-        const isArmed = side === "UP" ? strategy.up_armed : strategy.down_armed;
-        return (
-          <div
-            key={side}
-            className={cx(
-              "flex items-center justify-between rounded-lg border px-3 py-2.5",
-              isArmed
-                ? side === "UP"
-                  ? "border-up/25 bg-up/[0.06]"
-                  : "border-down/25 bg-down/[0.06]"
-                : "border-white/5 bg-black/20",
-            )}
-          >
-            <div className="flex items-center gap-2">
-              <SideBadge side={side} size="sm" />
-              <span className="mono text-[13px] text-slate-300">{fmtCents(ask)}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="mono text-[10px] text-slate-600">≥ {fmtCents(strategy.trigger_threshold)}</span>
-              {isArmed ? (
-                <span className={cx("chip", side === "UP" ? "border-up/30 bg-up/10 text-up" : "border-down/30 bg-down/10 text-down")}>
-                  <IconZap size={9} />
-                  Armed
-                </span>
-              ) : (
-                <span className="chip border-white/8 bg-white/[0.03] text-slate-500">idle</span>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
   );
 }
 
